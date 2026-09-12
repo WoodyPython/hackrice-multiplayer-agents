@@ -1,6 +1,20 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** B05 · **Owner:** Role B
+**Reflects:** B05, C02 · **Owner:** Role B (data), Role C (execution guard)
+
+## C02 guard for agent effects
+
+Before accepting an agent's Git/checkpoint effect, hold the appropriate mutation
+gate and call `PgAgentLedger.assertActive(agentInstanceId)`. A previous model
+response is not permission to write: the instance may have expired, been
+canceled, or belong to an old run/boot. Short database writes can instead use
+`withActiveWrite` and its supplied transaction. See the
+[C02 integration notes](../../apps/server/src/agents/README.md).
+
+`AgentExecution.close()` aborts local work; C06 owns scope lifecycle and durable
+run finalization. Late provider usage remains recordable, but late results must
+not change accepted output. The Git runner now uses `/dev/null` for its empty
+global config on Windows as well as Unix; this Git for Windows rejected `NUL`.
 
 D01 already integrates correctly: `GitWorkspaceLifecycleHook` honours the
 fire-and-forget contract, `ensureRepository` provides the self-healing path, and

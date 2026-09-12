@@ -1,6 +1,29 @@
 # For Role C — orchestration against the data layer
 
-**Reflects:** B05 · **Owner:** Role B
+**Reflects:** B05, C02 · **Owner:** Role B (data), Role C (execution)
+
+## C02 execution and accounting
+
+`PgAgentLedger` and `AgentExecution` are available under `src/agents`; their
+[integration notes](../../apps/server/src/agents/README.md) describe the callable
+surface and transaction boundaries. B07's broader metadata service is still
+pending; no schema changes were needed for C02.
+
+Create each instance with a stable task-scoped agent key and the model ID from
+`adapter.getModel(preset)`. Open its execution scope only once prerequisites
+finish. Reuse that scope for model calls, retries, tools, backoff, and human
+waits. Manual attempts create new instances but preserve the budget key.
+
+C06 must close scopes on completion/cancel/shutdown, sweep persisted deadlines,
+and finalize the run after peer agents settle. C02 marks failed required output
+incomplete without prematurely ending other agents. The current HTTP hook
+remains a null implementation until C06 lands.
+
+For database effects, use `ledger.withActiveWrite` with its supplied transaction.
+Do not nest another service transaction inside that callback. Provider usage
+may settle after timeout, cancellation, or restart; it never authorizes a late
+result. Question answers now take the task lock before the question lock and
+commit an expired question before returning its error.
 
 ---
 

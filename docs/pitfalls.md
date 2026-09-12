@@ -7,6 +7,21 @@ evidence behind them.
 Short on purpose. Add an entry when something costs you more than a few minutes
 and would cost the next person the same.
 
+## An expiry that rolled back, and opposite lock orders
+
+**C02, question answers.** The answer path updated an expired question and then
+threw inside its transaction, rolling the expiry back. It now returns the error
+from the transaction and throws after commit. It also locked the question before
+the task, opposite to deadline/cancel enforcement. Both paths now lock the task
+first; concurrent expiry/answer tests exercise the boundary.
+
+## Windows Git rejected its null config path
+
+**C02 verification, D01 runtime.** Fourteen existing Git/runtime tests failed
+with `COMMAND_FAILED`. The underlying error was `unable to access 'NUL': Invalid
+argument` from Git's global configuration override. `/dev/null` works in Git for
+Windows as well as Unix. Changing that path restored the existing tests.
+
 ---
 
 ## A constraint-name match that never matched
