@@ -7,6 +7,28 @@ last pull and know in one line whether any of them need anything from you.
 
 ---
 
+## A01 — Workspace/task UI shell
+**Landed:** 2026-09-12 · `f05acce` · Role A
+**Affects:** Role A; everyone running the root build/test commands
+**Action required:** Run `npm install` at the repository root for the new web workspace. Start the frontend with `npm run dev --workspace @app/web`; the root dev command still starts the server.
+
+- React/TypeScript/Vite shell with workspace navigation, task detail tabs,
+  requirements form, and empty/loading/retryable error previews.
+- All ten shared task statuses map to the five design section 4.3 board columns.
+  Canceled tasks stay in Needs attention for manual retry, never Completed.
+- Fixtures validate against shared schemas. Local posting preserves criteria,
+  selected materials/files/drafts, and output paths, then opens Discussion with
+  no run. Changes reset on reload; API integration remains in later A tickets.
+- No account pages, participant directory, model settings, or owner credentials.
+  Backend, contracts, and migrations are unchanged.
+- Verified: five migrations applied; `npm test` passed 220 backend and eight
+  frontend tests; `npm run build` and `npm run typecheck` passed. Browser visual
+  QA could not run because browser automation was unavailable in this session.
+
+See [`apps/web/README.md`](../apps/web/README.md) for routes and preview controls.
+
+---
+
 ## C01 — Gemini adapter and backend model routing
 **Landed:** 2026-09-12 · `b1be712` · Role C
 **Affects:** Role C only, for now
