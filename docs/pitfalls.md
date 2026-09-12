@@ -119,6 +119,40 @@ and would cost the next person the same.
 
 ---
 
+## A filtered query made three routes answer the wrong question
+
+**B08.** Asking for another workspace's task returned **200 and an empty list**
+on `/tasks/:t/drafts`, `/tasks/:t/events` and `/tasks/:t/materials`. Every
+sibling route — task detail, discussion, agents, reviews, saved-outputs —
+answers 404.
+
+Nothing leaked, and that is the point. All three queries were already scoped to
+workspace *and* task, so no row ever crossed the boundary. What was wrong was
+the claim: an empty 200 says "that task is here and has nothing", which is false
+and, to anything polling a mistyped link, indistinguishable from a quiet task.
+Design §11.4 makes the workspace in the path the access check, so a foreign task
+is absent.
+
+**Why no existing test caught it.** `events.test.ts` had one named *scopes
+events to their workspace* asserting `events` came back `[]` — true of the right
+answer and the wrong one alike, because the filter was never the broken part. It
+never asserted a status, so it could not fail in the way that mattered. The same
+blind spot existed for drafts and materials, which had no cross-workspace test
+at all.
+
+**The shape to watch for:** a listing whose `where` clause makes the wrong
+answer look like a right one. Filtering rows and refusing the request are
+different jobs, and doing the first correctly is not evidence of the second.
+Every one of these read correctly and had done so since it was written.
+
+**Instead:** a route that takes a parent ID proves the parent exists before
+answering about its children, even when the child query would have returned
+nothing anyway. Found only by asking every task-scoped route the same question
+in one sweep — which is what a cross-flow ticket is for, and what no unit test
+was ever going to do.
+
+---
+
 ## A suite that only fails when it is run with the others
 
 **Audit before A08.** `scheduler.test.ts > integrates real parallel C04

@@ -124,14 +124,28 @@ describe('durable events', () => {
     expect(rest.json().latestId).toBe(all.json().latestId);
   });
 
-  it('scopes events to their workspace', async () => {
+  it('reports a task from another workspace as absent, not as silent', async () => {
     const other = (await createWorkspaceViaApi(t.app, { name: 'Other' })).workspaceId;
     const taskId = await makeTask();
     const res = await t.app.inject({
       method: 'GET',
       url: `/api/workspaces/${other}/tasks/${taskId}/events`,
     });
-    expect(res.json().events).toEqual([]);
+
+    /*
+     * This used to assert only that `events` came back empty, which was true
+     * of both the right answer and the wrong one — the query has always been
+     * scoped to workspace and task, so nothing ever leaked either way. What it
+     * did not check was the status, and a 200 here tells a browser "that task
+     * exists in this workspace and nothing has happened to it": false, and
+     * indistinguishable from a quiet task to anything polling a mistyped link.
+     *
+     * Section 11.4: the workspace in the path is the access check, so a foreign
+     * task is absent. Found by the B08 cross-flow sweep.
+     */
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('TASK_NOT_FOUND');
+    expect(res.json().events).toBeUndefined();
   });
 });
 

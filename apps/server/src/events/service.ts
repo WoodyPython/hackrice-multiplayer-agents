@@ -163,6 +163,23 @@ export class TaskEventService {
     taskId: string,
     options: { afterId?: number; limit: number },
   ): Promise<{ events: TaskEvent[]; latestId: string | null }> {
+    /*
+     * A task in another workspace is absent, not an empty progress record.
+     *
+     * The query below is scoped to both IDs, so no event ever crossed the
+     * boundary — but an empty 200 claims "this task is here and nothing has
+     * happened to it", which is false and is exactly what a browser polling a
+     * mistyped link would believe. Every sibling route answers 404. Found by
+     * the B08 cross-flow check, together with the same gap on task drafts.
+     */
+    const task = await this.deps.db
+      .selectFrom('tasks')
+      .select('id')
+      .where('id', '=', taskId)
+      .where('workspace_id', '=', workspaceId)
+      .executeTakeFirst();
+    if (!task) throw new ApiError('TASK_NOT_FOUND', 'No such task in this workspace.');
+
     let query = this.deps.db
       .selectFrom('task_events')
       .selectAll()

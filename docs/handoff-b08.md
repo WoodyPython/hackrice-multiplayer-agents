@@ -25,7 +25,7 @@ done and B08 is the only Role B ticket left.
 | Role | Done | Remaining |
 |---|---|---|
 | A | A01–A04, plus the unblocked half of A07 | A05, A06, rest of A07, A08 |
-| **B** | **B01–B07** | **B08 only** |
+| **B** | **B01–B08** | **none** |
 | C | C01–C07 | C08 |
 | D | D01–D06 | D07, D08 |
 

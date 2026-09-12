@@ -229,6 +229,23 @@ export class PgMaterialService {
    * task_input_links row; C06 unions the two when building the manifest.
    */
   async listForTask(workspaceId: string, taskId: string): Promise<Material[]> {
+    /*
+     * A task in another workspace is absent, not a task with no materials.
+     *
+     * The query is scoped to both IDs, so nothing ever crossed the boundary —
+     * but an empty 200 says "this task is here and nothing is attached", which
+     * is false. Third instance of this pattern found by the B08 cross-flow
+     * check, after task drafts and task events; the shape is always a listing
+     * whose filter makes the wrong answer look like a right one.
+     */
+    const task = await this.deps.db
+      .selectFrom('tasks')
+      .select('id')
+      .where('id', '=', taskId)
+      .where('workspace_id', '=', workspaceId)
+      .executeTakeFirst();
+    if (!task) throw new ApiError('TASK_NOT_FOUND', 'No such task in this workspace.');
+
     const rows = await this.deps.db
       .selectFrom('materials')
       .innerJoin('material_links', 'material_links.material_id', 'materials.id')

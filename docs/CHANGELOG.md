@@ -2,6 +2,54 @@
 
 Newest first. One entry per landed ticket.
 
+## B08 — Data integration and focused checks
+**Landed:** 2026-09-12 · Role B
+**Affects:** everyone. Three status-code fixes; no migration, no dependency.
+**Action required:** `/tasks/:t/drafts`, `/tasks/:t/events` and
+`/tasks/:t/materials` now answer **404** for a task in another workspace where
+they previously answered 200 with an empty list. If anything treated an empty
+list as "no such task", it should now read the status instead.
+
+`test/integration.test.ts` drives all five B08 properties through a workspace
+that has actually been used — task posted, material attached and reused, draft
+edited and checkpointed, review prepared and applied — rather than against an
+empty database. Driven through `startRuntime` and HTTP, because scoping and the
+owner key are enforced at the route and `buildTestApp` does not even register
+the review routes. The flow is a **manual-edit** task, so §2.5's "does not need
+agent execution" means the whole sequence runs with no model provider.
+
+**It found a real defect, in three places.** Asking for another workspace's task
+returned 200 and an empty list on `/tasks/:t/drafts`, `/tasks/:t/events` and
+`/tasks/:t/materials`. Nothing leaked — all three queries were already scoped to
+workspace *and* task — but an empty 200 claims "that task is here and has
+nothing", which is false and, to anything polling a mistyped link,
+indistinguishable from a quiet task. §11.4 makes the workspace in the path the
+access check, so a foreign task is absent. Every sibling route already did this.
+
+**Why nothing caught it:** `events.test.ts` had a test named *scopes events to
+their workspace* asserting the list came back empty — true of the right answer
+and the wrong one alike, since the filter was never the broken part. It never
+asserted a status, so it could not fail in the way that mattered. Drafts and
+materials had no cross-workspace test at all. That test is now rewritten to
+assert the contract rather than a symptom. Recorded in
+[pitfalls](pitfalls.md).
+
+Also covered: owner keys refused across workspaces and never echoed back, an
+`isOwner` body flag ignored, identical bytes staying one material across
+workspace and task uploads but never shared between workspaces, stale
+`expectedVersion` refused on both revise and start with the current version
+returned, a replayed Start resolving to its original run while a rival is
+refused, and a discussion reading back identically from a cold cursor and a
+partial one with its cutoff labelling intact.
+
+Verified: `npm run build`, `integration` (**14**), and the three suites owning
+the changed files — `drafts`, `events`, `materials` (**77**). Mutation-checked
+by reverting the scoping guard and watching the sweep fail.
+
+**B08 was the last Role B ticket.** Role B is complete.
+
+---
+
 ## Residue — History built, retry carries saved work, suite health diagnosed
 **Landed:** 2026-09-12 · Role A
 **Affects:** everyone. One additive Role B route; no migration, no dependency.

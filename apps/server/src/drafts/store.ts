@@ -196,6 +196,28 @@ export class PgDraftStore {
     return toDraftFile(row);
   }
 
+  /**
+   * Confirms a task belongs to this workspace, or reports it absent.
+   *
+   * Section 11.4 makes the workspace in the path the access check, and there is
+   * no identity to deny, so a foreign task is NOT_FOUND and never forbidden.
+   *
+   * The per-task listing needs this explicitly. Its query filters on both IDs,
+   * so a foreign task already returns nothing — but nothing and 200 together
+   * say "this task is here and has no documents", which is a different claim
+   * from "there is no such task here" and the only one of the two that is
+   * false. Every sibling route answers 404; found by the B08 cross-flow check.
+   */
+  async requireTask(workspaceId: string, taskId: string): Promise<void> {
+    const found = await this.deps.db
+      .selectFrom('tasks')
+      .select('id')
+      .where('id', '=', taskId)
+      .where('workspace_id', '=', workspaceId)
+      .executeTakeFirst();
+    if (!found) throw new ApiError('TASK_NOT_FOUND', 'No such task in this workspace.');
+  }
+
   async listActiveForTask(workspaceId: string, taskId: string): Promise<DraftFile[]> {
     const rows = await this.deps.db
       .selectFrom('draft_files')

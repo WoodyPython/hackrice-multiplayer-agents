@@ -53,6 +53,10 @@ export async function registerDraftRoutes(
   /** Active documents in a task, for the editor's file selector (section 4.4). */
   app.get('/api/workspaces/:workspaceId/tasks/:taskId/drafts', async (request, reply) => {
     const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
+    // A foreign task is absent, not an empty list. The query below is already
+    // scoped to both IDs, so this changes no bytes — only the claim the status
+    // makes, which every sibling route gets right.
+    await deps.drafts.requireTask(workspaceId, taskId);
     return reply.send({
       drafts: await deps.drafts.listActiveForTask(workspaceId, taskId),
     });
