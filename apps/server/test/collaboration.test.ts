@@ -320,7 +320,7 @@ describe('D03 live documents', () => {
     const cases: Array<[string, string]> = [
       ['/live/../arbitrary', 'VALIDATION_FAILED'],
       [liveRoomPath(id).replace(id.workspaceId, 'bad'), 'VALIDATION_FAILED'],
-      [liveRoomPath(id).replace('/1', '/0'), 'VALIDATION_FAILED'],
+      [liveRoomPath(id).replace(/\/1$/, '/0'), 'VALIDATION_FAILED'],
       [liveRoomPath({ ...id, workspaceId: randomUUID() }), 'DRAFT_NOT_FOUND'],
       [liveRoomPath({ ...id, taskId: randomUUID() }), 'DRAFT_NOT_FOUND'],
       [liveRoomPath({ ...id, draftFileId: randomUUID() }), 'DRAFT_NOT_FOUND'],

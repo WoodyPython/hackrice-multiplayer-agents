@@ -29,6 +29,18 @@ export interface Repository {
   mainSha: string;
 }
 
+/** Valid only inside withDraftCapture's callback, which owns the workspace lock. */
+export interface DraftGitCapture {
+  readText(path: string): Promise<{ path: string; text: string | null; hash: string | null }>;
+  checkpoint(files: Array<{ path: string; text: string }>): Promise<{ commitSha: string }>;
+}
+
+function checkpointFiles(files: Array<{ path: string; text: string }>) {
+  const batch = files.map(({ path, text }) => { textBytes(text); return { path: filePath(path), text }; });
+  uniquePaths(batch.map(({ path }) => path));
+  return batch;
+}
+
 async function directory(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
   const info = await lstat(path);
@@ -124,11 +136,36 @@ export class LocalGitService implements Pick<GitService,
 
   async checkpoint(input: Parameters<GitService['checkpoint']>[0]) {
     const value = parse(gitCheckpointRequestSchema, input);
-    const batch = value.files.map(({ path, text }) => { textBytes(text); return { path: filePath(path), text }; });
-    uniquePaths(batch.map(({ path }) => path));
+    const batch = checkpointFiles(value.files);
     return this.files(value.workspaceId, async (files, repo) => gitCheckpointResultSchema.parse(
       await files.checkpoint(value.taskId.toLowerCase(), repo.mainSha, batch),
     ));
+  }
+
+  /** D04: acquire workspace first; the caller may then gate the task and record capture. */
+  async withDraftCapture<T>(input: { workspaceId: string; taskId: string },
+    operation: (capture: DraftGitCapture) => Promise<T>): Promise<T> {
+    const value = parse(createDraftRequestSchema, input);
+    const taskId = value.taskId.toLowerCase();
+    return this.files(value.workspaceId, async (files, repo) => {
+      let active = true;
+      const check = () => { if (!active) throw new ApiError('INVALID_STATE', 'Capture scope has ended.'); };
+      try {
+        return await operation({
+          readText: async (path) => {
+            check();
+            const safePath = filePath(path);
+            await files.ensure('human', taskId, repo.mainSha, true);
+            return gitReadTextResultSchema.parse(await files.read({ kind: 'draft', taskId }, safePath));
+          },
+          checkpoint: async (batch) => {
+            check();
+            const validated = parse(gitCheckpointRequestSchema, { ...value, files: batch });
+            return gitCheckpointResultSchema.parse(await files.checkpoint(taskId, repo.mainSha, checkpointFiles(validated.files)));
+          },
+        });
+      } finally { active = false; }
+    });
   }
 
   async applyWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0]) {

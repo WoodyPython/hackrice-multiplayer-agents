@@ -2,6 +2,31 @@
 
 Newest first. One entry per landed ticket.
 
+## D04 — Live draft to Git capture
+**Implemented:** 2026-09-12 · local main worktree (commit pending) · Role D
+**Affects:** Roles A, C, and D
+**Action required:** A07 can use the checkpoint endpoint; C06/D06 should inject
+the runtime's `collaboration.capture`. Read [the D04 capture contract](interfaces/git.md#live-draft-capture-d04),
+including the initiating browser's persistence acknowledgement prerequisite and
+the draft-only meaning of `contextHash`. No migration or dependency is required.
+
+- Shared live-room coordinator and FIFO task gate; capture takes the existing
+  workspace Git lock first. Later updates resume in order without resetting Yjs.
+- Complete active-document text export, including disconnected snapshots and
+  guarded initialization, into one human-draft Git checkpoint.
+- Exact document revisions and deterministic capture digest; checkpoint metadata
+  and `draft.checkpointed` event are committed in one database transaction.
+- Contributor checkpoint HTTP route, safe failure/retry handling, and shutdown
+  draining of capture and queued edits before database cleanup.
+- No Start orchestration, worker integration, reviews, Apply, frontend, migrations,
+  or broadcast changes.
+
+Verified: `npm run build`, `git diff --check`, and `npm test`: 447 backend
+tests (including 25 D04 checks) and 8 frontend tests passed. Focused D01–D03
+Git/runtime regressions and the D03/D04 collaboration run also passed.
+
+---
+
 ## C03 — Orchestrator plan and graph validation
 **Landed:** 2026-09-12 · `16d09d2` · Role C
 **Affects:** Roles B, C, and D

@@ -23,6 +23,7 @@ export interface RoomOptions {
   onIdle: () => void;
   onError: () => void;
   debounceMs?: number;
+  processUpdate?: (operation: () => void) => Promise<void>;
 }
 
 /** Owns document mutations and ordered saves. No Git writes or capture logic. */
@@ -36,6 +37,8 @@ export class LiveRoom {
   private stopping = false;
   private timer?: ReturnType<typeof setTimeout>;
   private saving?: Promise<void>;
+  private queuedBytes = 0;
+  private queuedUpdates = 0;
   private readonly heartbeats = new Map<WebSocket, ReturnType<typeof setInterval>>();
 
   constructor(private readonly options: RoomOptions) {
@@ -54,7 +57,7 @@ export class LiveRoom {
   }
 
   get dirty(): boolean { return this.revision > this.persistedRevision; }
-  get busy(): boolean { return this.saving !== undefined; }
+  get busy(): boolean { return this.saving !== undefined || this.queuedUpdates > 0; }
 
   attach(socket: WebSocket, release: () => void): void {
     this.connections.set(socket, new Set());
@@ -127,7 +130,21 @@ export class LiveRoom {
         sync.writeSyncStep2(reply, this.doc, payload);
         this.send(socket, encoding.toUint8Array(reply));
       } else if (subtype === sync.messageYjsSyncStep2 || subtype === sync.messageYjsUpdate) {
-        this.accept(socket, payload);
+        if (!this.options.processUpdate) { this.accept(socket, payload); return; }
+        if (this.queuedBytes + bytes.byteLength > MAX_LIVE_MESSAGE_BYTES) {
+          socket.close(1009, 'Queued updates too large');
+          return;
+        }
+        this.queuedBytes += bytes.byteLength;
+        this.queuedUpdates++;
+        // Queue at receipt, before any await, so a capture cannot overtake it.
+        void this.options.processUpdate(() => {
+          if (!this.closed) this.accept(socket, payload);
+        }).catch(() => socket.close(1008, 'VALIDATION_FAILED')).finally(() => {
+          this.queuedBytes -= bytes.byteLength;
+          this.queuedUpdates--;
+          this.options.onIdle();
+        });
       } else throw new Error('Unknown sync message');
     } else throw new Error('Unknown message');
   }

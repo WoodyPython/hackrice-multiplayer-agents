@@ -1,6 +1,88 @@
 # Git files and checkpoints
 
-**Reflects:** D03 · **Owner:** Role D
+**Reflects:** D04 · **Owner:** Role D
+
+## Live draft capture (D04)
+
+The runtime now returns `collaboration`, its singleton
+`LiveDocumentCoordinator`. The WebSocket server and checkpoint route use this
+same registry. C06 and D06 should inject its
+`capture({ workspaceId, taskId }): Promise<DraftCapture>` method; do not create
+a second coordinator for the same runtime. Start orchestration and review
+preparation remain those tickets' work.
+
+Contributors can call
+`POST /api/workspaces/:workspaceId/tasks/:taskId/checkpoint` with no body or
+`{}`. The response is HTTP 200 with the existing `DraftCapture` shape:
+
+```ts
+{
+  taskId: string;
+  checkpointSha: string;
+  documentRevisions: Record<string, number>; // draftFileId -> captured revision
+  contextHash: string;
+}
+```
+
+The route validates workspace/task UUIDs and their database relationship.
+It does not require an owner key. Unknown body fields are rejected: callers
+cannot supply text, paths, snapshots, revision claims, or ownership flags.
+Neither Git paths nor Yjs binary state appear in the response.
+
+### A03/A07 acknowledgement boundary
+
+Before Save checkpoint, Start, or Request review, submit local changes and wait
+for the persisted acknowledgement covering the latest accepted update from each
+edited document, using the D03 tracking rules below. A provider sync event or an
+older acknowledgement is insufficient. D04 does not add acknowledgement frames
+or wait indefinitely for edits that have not reached the server.
+
+Capture takes the workspace Git lock, then the task document gate. Update frames
+already queued on that gate are processed first. While capture flushes all
+accepted edits, exports text, commits, and records metadata, later update frames
+wait. They resume in order after release and belong to the next draft revision.
+Other tasks can keep accepting edits. The queued update frame budget is 8 MiB
+per room; overflow disconnects the submitting socket with 1009 for normal
+resynchronization. Capture never replaces a live Y.Doc or closes its epoch.
+
+Every active task document is captured, including revision-zero documents and
+unloaded persisted snapshots. Never-initialized documents are seeded once through
+the existing database guard from the human branch (empty text for an absent
+file). Human-branch files without active documents survive unchanged. A task
+with no documents can still checkpoint its existing human branch.
+
+`contextHash` is a lowercase SHA-256 of UTF-8 `JSON.stringify` applied to an
+object with keys in this order: `taskId`, `checkpointSha`, `documentRevisions`.
+The task ID and revision-map UUID keys are lowercase; the map keys are sorted
+lexicographically. This digest identifies the draft capture only. It does not
+hash requirements, materials, discussion, or C06's complete context manifest.
+Identical text can reuse a Git SHA while a different Yjs revision changes this
+digest (for example, an edit followed by undo).
+
+### Durability and integration
+
+After Git succeeds, one database transaction writes `draft_checkpoints` and a
+`draft.checkpointed` event keyed by `eventKeys.draftCheckpointed(checkpointId)`.
+Its payload contains `checkpointId`, `commitSha`, `documentRevisions`, and
+`contextHash`. Each successful capture records an operation, even if its Git
+head and digest match a previous capture. No broadcast implementation is added.
+
+Closed epochs return `DOCUMENT_EPOCH_CLOSED`; unknown/scoped-out tasks return
+`TASK_NOT_FOUND`. Save, restoration, Git-runtime, and metadata-recording failures
+return `DRAFT_NOT_SAVED` without claiming checkpoint success. Existing Git
+validation errors retain their codes. Saved Yjs edits remain durable even if
+checkpointing fails. If Git succeeds but recording fails, the commit remains;
+retrying unchanged content reuses that head. D02's worktree repair remains in
+effect for `WORKTREE_SYNC_FAILED`. There is no rollback/reset or automatic
+workflow replay. Shutdown drains captures and queued updates before flushing
+rooms and closing the database.
+
+`LocalGitService.withDraftCapture(input, callback)` is an internal scoped
+primitive. Its callback owns the workspace lock and may acquire the task gate,
+use its bound `readText(path)`/`checkpoint(files)` functions, then record the
+capture. Never call public Git methods recursively inside it or retain those
+bound functions after the callback returns. D04 does not implement
+`CollaborationService.isCurrent` or `closeEpoch`; those remain D07.
 
 ## Shared documents (D03)
 
@@ -104,7 +186,7 @@ authoritative state. Slow sockets exceeding the send buffer limit disconnect
 and can resynchronize normally.
 
 D03 does not expose snapshot-write HTTP endpoints or create checkpoints while
-typing. Task gates/capture remain D04; review invalidation and Apply-driven
+typing. D04 adds the explicit capture boundary above; review invalidation and Apply-driven
 epoch closure remain D07. Persisted snapshots restore on demand; workflow
 restart reconciliation remains D08.
 
