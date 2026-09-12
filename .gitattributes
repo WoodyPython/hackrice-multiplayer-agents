@@ -1,0 +1,27 @@
+# Normalize line endings in the repository to LF.
+#
+# This team is mixed Windows/macOS. Without this, a Windows checkout commits
+# CRLF and every file shows as wholly rewritten the moment someone on macOS
+# touches it, which makes review useless and manufactures merge conflicts.
+#
+# Working copies still get native endings on checkout; only what git stores is
+# normalized.
+#
+# Note for db/migrations: the migration runner already normalizes CRLF to LF
+# before checksumming, so an already-applied file will not read as "drifted"
+# just because a teammate is on a different OS. This rule keeps the stored
+# bytes consistent as well.
+* text=auto eol=lf
+
+# Generated; collapse in diffs and never merge by hand.
+package-lock.json linguist-generated=true -diff
+
+# Binary, never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary

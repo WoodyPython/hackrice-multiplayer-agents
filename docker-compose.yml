@@ -1,0 +1,25 @@
+# Local Postgres for development and tests.
+# Matches the major version Supabase runs, so `NULLS NOT DISTINCT` (PG15+),
+# generated UUIDs, and the enum/partial-index features used by db/migrations
+# behave identically here and in the hosted project.
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: hackrice_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "54322:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  db_data:

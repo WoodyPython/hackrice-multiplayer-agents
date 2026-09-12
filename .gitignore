@@ -1,0 +1,28 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+coverage/
+
+# Secrets: never commit. .env.example is the template.
+.env
+.env.*
+!.env.example
+
+# Local Git data root used by Role D (repos/worktrees)
+data/
+
+.DS_Store
+*.log
+
+# Editors
+.idea/
+*.swp
+
+# OS cruft
+Thumbs.db
+desktop.ini
+
+# Test/tool caches
+.vitest/
+.vite/
