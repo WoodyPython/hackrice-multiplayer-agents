@@ -515,6 +515,8 @@ When a shared draft is first opened:
 
 Never seed the same text independently in each browser; merging separately initialized copies can duplicate content.
 
+Two rooms can reach step 3 at once, which would produce exactly that duplication, so seeding is guarded at the storage layer: the write only applies to a document that has no state yet, and a caller that loses is handed what the winner stored rather than being allowed to merge its own copy in. The initial text comes from Git, which the storage layer cannot read, so the caller supplies both the encoded document and the blob SHA it was built from.
+
 A document's schema and epoch are stored explicitly. Reopening it does not replace its contents with the current Git file on every connection.
 
 ### 7.3 Persist edits
@@ -966,6 +968,8 @@ Persist full Yjs binary state and its state vector. Plain text alone cannot reco
 
 Keep database/storage service credentials on the server. Browser clients do not directly mutate tables or storage objects.
 
+This rules out an endpoint that accepts a collaborative document snapshot. Persisting, seeding, and closing an epoch are internal calls the room server makes after validating updates against its authoritative document; exposing any of them would let a link holder replace a document wholesale and bypass every check those updates passed. Opening a draft is a create, and is the only part of that surface a browser reaches.
+
 Disable direct public table access with ordinary database policies. API routes resolve the random workspace ID and validate object ownership by workspace. There is no per-person access policy.
 
 Object keys are generated from workspace/material IDs. Do not expose a public bucket index. API retrieval requires the workspace link's ID and a material associated with that workspace; it does not require a login.
@@ -1241,6 +1245,7 @@ This allocation has no time estimates. Dependencies identify the order in which 
 | apps/web/src/editor | A |
 | apps/server/src/workspaces, tasks, discussion, materials | B |
 | apps/server/src/db and events | B |
+| apps/server/src/drafts | B |
 | apps/server/src/http and config | B |
 | apps/server/src/models, orchestration, agents | C |
 | apps/server/src/git, collaboration, reviews, recovery | D |
@@ -1264,6 +1269,10 @@ These hold across every role. They are not style preferences; each one exists be
 **The contracts package is the source of truth for shapes.** Request and response schemas, status vocabularies, error codes, the section 12.3 interfaces, and the fixed execution limits all live there. Import them rather than redeclaring a matching type, which is what keeps the editor, the API, and the Git service agreeing on the freshness tuple. Treat it as additive-only until integration: adding fields and codes is free, renaming one breaks three branches at once.
 
 **Uniqueness rules belong to the database.** Partial unique indexes and composite foreign keys enforce the section 11.2 constraints, so a service method that forgets to check one still cannot corrupt the invariant. Application code translates the resulting violation into the matching section 12.5 error by inspecting the constraint name, instead of doing a select-then-insert that races. Constraint names are therefore part of the interface; renaming one silently breaks an error mapping.
+
+Matching on a constraint name has a sharp edge worth knowing before you hit it. When a table carries several unique indexes that one insert can violate, the database reports whichever it checks first, and that is the constraint declared with the table rather than the partial index added afterwards. A handler naming the partial index then compiles, reads correctly, and never runs: the violation arrives under a name it does not recognise and escapes as an unhandled error. This is intermittent rather than constant, because it only shows when two writers genuinely overlap.
+
+Two ways out, and the choice depends on what the code is doing. Where the operation is find-or-create, treat any unique violation as "someone else got there first" and re-read; the specific index does not change the response. Where the operation must distinguish outcomes, take the row lock first, as the Start transaction does: serialising the critical section means only one index can be in contention, which makes matching a single name safe again.
 
 **Anything expressed in both SQL and TypeScript needs a test that compares them.** A status set written into an index predicate and also into a constant will diverge, and the failure is invisible: a run status added to the enum but missing from the active-run index would let two attempts run at once. A test that reads the live index definition and compares it to the constant is the only thing that catches this.
 

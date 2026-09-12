@@ -19,6 +19,8 @@ import { PgTaskService } from '../tasks/service.js';
 import { registerTaskRoutes } from '../tasks/routes.js';
 import { PgMaterialService } from '../materials/service.js';
 import { registerMaterialRoutes } from '../materials/routes.js';
+import { PgDraftStore } from '../drafts/store.js';
+import { registerDraftRoutes } from '../drafts/routes.js';
 import type { BlobStore } from '../materials/blob-store.js';
 import { LocalDiskBlobStore } from '../materials/blob-store.js';
 import { registerErrorHandler } from './errors.js';
@@ -181,6 +183,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     blobs: deps.blobs ?? new LocalDiskBlobStore(join(config.gitDataRoot, 'materials')),
   });
   await registerMaterialRoutes(app, { materials });
+
+  const drafts = new PgDraftStore({ db: deps.db });
+  await registerDraftRoutes(app, { drafts });
 
   return app;
 }

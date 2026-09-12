@@ -1,0 +1,431 @@
+import {
+  ApiError,
+  type DraftFile,
+  type OpenDraftResponse,
+  type PersistSnapshotResult,
+} from '@app/contracts';
+import { isUniqueViolation, type Db } from '../db/client.js';
+import type { DraftFileRow } from '../db/types.js';
+import { toIso } from '../http/serialize.js';
+
+/**
+ * B05: collaborative snapshot persistence (design sections 7.1 to 7.3, 11.3).
+ *
+ * The storage half of shared editing. Role D's room server owns the live
+ * in-memory document, the update protocol, and awareness; this owns what
+ * survives a restart.
+ *
+ * Nothing here is reachable over HTTP except opening a draft. Section 11.4:
+ * "Browser clients do not directly mutate tables or storage objects." An
+ * endpoint accepting a Yjs snapshot from a link holder would let anyone
+ * overwrite a document wholesale, bypassing every update the room server
+ * validated, so persist and initialize are in-process calls only.
+ */
+
+export interface DraftStoreDeps {
+  db: Db;
+}
+
+export interface LoadedDraft {
+  draftFile: DraftFile;
+  /** Null until the document has been initialized (section 7.2). */
+  yjsState: Uint8Array | null;
+  stateVector: Uint8Array | null;
+}
+
+export class PgDraftStore {
+  constructor(private readonly deps: DraftStoreDeps) {}
+
+  // -------------------------------------------------------------------------
+  // Opening
+  // -------------------------------------------------------------------------
+
+  /**
+   * The one active document for a task and path, creating it if absent.
+   *
+   * Find-or-create rather than insert: two browsers opening the same file at
+   * once must converge on one row. The partial unique index decides the winner
+   * and the loser re-reads, which is why this cannot be a plain upsert — the
+   * index is partial, so ON CONFLICT cannot name it as an arbiter.
+   */
+  async openForTask(
+    workspaceId: string,
+    taskId: string,
+    path: string,
+  ): Promise<DraftFile> {
+    const existing = await this.findActive(taskId, path);
+    if (existing) return toDraftFile(existing);
+
+    try {
+      const row = await this.deps.db
+        .insertInto('draft_files')
+        .values({ workspace_id: workspaceId, task_id: taskId, path })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return toDraftFile(row);
+    } catch (error) {
+      /*
+       * Any unique violation here means someone else created this document
+       * first, so re-read rather than naming one constraint.
+       *
+       * Naming one would be wrong: draft_files carries two unique indexes that
+       * a concurrent insert can trip — draft_files_epoch_uq on (task, path,
+       * epoch) and the partial draft_files_active_uq on (task, path) — and
+       * Postgres reports whichever it checks first, which is the table
+       * constraint, never the partial index. A catch naming the partial index
+       * compiles, reads correctly, and never fires.
+       */
+      if (isUniqueViolation(error)) {
+        const winner = await this.findActive(taskId, path);
+        if (winner) return toDraftFile(winner);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * "Edit together" (sections 2.5, 12.1).
+   *
+   * Finds or creates the single active manual-edit task for this file, then its
+   * document. Both steps race the same way and resolve the same way: the
+   * database picks a winner and the loser reads it back, so concurrent clicks
+   * converge on one editing session instead of forking the draft.
+   */
+  async openManualEdit(
+    workspaceId: string,
+    input: { path: string; guestLabel: string },
+  ): Promise<OpenDraftResponse> {
+    const existingTask = await this.findActiveManualEditTask(workspaceId, input.path);
+    if (existingTask) {
+      return {
+        taskId: existingTask,
+        draftFile: await this.openForTask(workspaceId, existingTask, input.path),
+        created: false,
+      };
+    }
+
+    let taskId: string;
+    let created = true;
+    try {
+      const task = await this.deps.db
+        .insertInto('tasks')
+        .values({
+          workspace_id: workspaceId,
+          kind: 'manual_edit',
+          manual_source_path: input.path,
+          creator_guest_label: input.guestLabel,
+          title: input.path,
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      taskId = task.id;
+    } catch (error) {
+      if (!isUniqueViolation(error, 'tasks_manual_active_uq')) throw error;
+      const winner = await this.findActiveManualEditTask(workspaceId, input.path);
+      if (!winner) throw error;
+      taskId = winner;
+      created = false;
+    }
+
+    return {
+      taskId,
+      draftFile: await this.openForTask(workspaceId, taskId, input.path),
+      created,
+    };
+  }
+
+  /**
+   * Resolves a room to its document, or refuses.
+   *
+   * Section 12.1: "The same workspace/object checks apply to WebSocket room
+   * resolution. A caller cannot pass an arbitrary room name that opens a
+   * filesystem path." The room server calls this before attaching a socket to
+   * anything, so every element of the triple is checked against the database
+   * rather than trusted from the room name.
+   */
+  async resolveRoom(input: {
+    workspaceId: string;
+    taskId: string;
+    draftFileId: string;
+  }): Promise<DraftFile> {
+    const row = await this.deps.db
+      .selectFrom('draft_files')
+      .selectAll()
+      .where('id', '=', input.draftFileId)
+      .where('task_id', '=', input.taskId)
+      .where('workspace_id', '=', input.workspaceId)
+      .executeTakeFirst();
+    if (!row) throw new ApiError('DRAFT_NOT_FOUND', 'No such document in this task.');
+
+    if (row.status !== 'active') {
+      // Section 7.7: "If the task was completed or the epoch was closed while
+      // disconnected, reject old-epoch writes."
+      throw new ApiError(
+        'DOCUMENT_EPOCH_CLOSED',
+        'This document was closed. Open the current draft instead.',
+        { draftFileId: row.id, epoch: row.epoch },
+      );
+    }
+
+    return toDraftFile(row);
+  }
+
+  async listActiveForTask(workspaceId: string, taskId: string): Promise<DraftFile[]> {
+    const rows = await this.deps.db
+      .selectFrom('draft_files')
+      .selectAll()
+      .where('workspace_id', '=', workspaceId)
+      .where('task_id', '=', taskId)
+      .where('status', '=', 'active')
+      .orderBy('path')
+      .execute();
+    return rows.map(toDraftFile);
+  }
+
+  // -------------------------------------------------------------------------
+  // State
+  // -------------------------------------------------------------------------
+
+  async load(workspaceId: string, draftFileId: string): Promise<LoadedDraft | null> {
+    const row = await this.deps.db
+      .selectFrom('draft_files')
+      .selectAll()
+      .where('id', '=', draftFileId)
+      .where('workspace_id', '=', workspaceId)
+      .executeTakeFirst();
+    if (!row) return null;
+
+    return {
+      draftFile: toDraftFile(row),
+      yjsState: row.yjs_state ? new Uint8Array(row.yjs_state) : null,
+      stateVector: row.state_vector ? new Uint8Array(row.state_vector) : null,
+    };
+  }
+
+  /**
+   * Seeds a document exactly once (section 7.2).
+   *
+   * "Never seed the same text independently in each browser; merging separately
+   * initialized copies can duplicate content." Two rooms racing to initialize
+   * the same document would produce exactly that, so the write is guarded on
+   * `yjs_state is null` and the loser is told to load what the winner stored.
+   *
+   * The initial text comes from Git, which is Role D's to read, so the caller
+   * supplies both the encoded document and the blob SHA it came from.
+   */
+  async initialize(
+    draftFileId: string,
+    input: { yjsState: Uint8Array; stateVector: Uint8Array; baseBlobSha: string | null },
+  ): Promise<{ initialized: boolean; draft: LoadedDraft }> {
+    const updated = await this.deps.db
+      .updateTable('draft_files')
+      .set({
+        yjs_state: Buffer.from(input.yjsState),
+        state_vector: Buffer.from(input.stateVector),
+        base_blob_sha: input.baseBlobSha,
+        updated_at: new Date(),
+      })
+      .where('id', '=', draftFileId)
+      .where('status', '=', 'active')
+      .where('yjs_state', 'is', null)
+      .returningAll()
+      .executeTakeFirst();
+
+    if (updated) {
+      return {
+        initialized: true,
+        draft: {
+          draftFile: toDraftFile(updated),
+          yjsState: input.yjsState,
+          stateVector: input.stateVector,
+        },
+      };
+    }
+
+    const current = await this.requireRow(draftFileId);
+    if (current.status !== 'active') {
+      throw new ApiError('DOCUMENT_EPOCH_CLOSED', 'This document was closed.');
+    }
+    return {
+      initialized: false,
+      draft: {
+        draftFile: toDraftFile(current),
+        yjsState: current.yjs_state ? new Uint8Array(current.yjs_state) : null,
+        stateVector: current.state_vector ? new Uint8Array(current.state_vector) : null,
+      },
+    };
+  }
+
+  /**
+   * Revision-guarded snapshot write (section 11.3).
+   *
+   * "Use ordered per-document saves or a revision guard so an older snapshot
+   * cannot overwrite a newer one after an asynchronous write completes late."
+   *
+   * The guard is in the WHERE clause, not in a read-then-write: a save that
+   * lost a race must be rejected by the database, because the two writes can be
+   * in flight simultaneously and any check performed before the UPDATE is
+   * already stale by the time it runs.
+   *
+   * A rejected save is normal, not an error. The caller's snapshot was simply
+   * superseded by a newer one that already covers those updates.
+   */
+  async persist(
+    draftFileId: string,
+    input: { revision: number; yjsState: Uint8Array; stateVector: Uint8Array },
+  ): Promise<PersistSnapshotResult> {
+    const updated = await this.deps.db
+      .updateTable('draft_files')
+      .set({
+        yjs_state: Buffer.from(input.yjsState),
+        state_vector: Buffer.from(input.stateVector),
+        persisted_revision: input.revision,
+        updated_at: new Date(),
+      })
+      .where('id', '=', draftFileId)
+      .where('status', '=', 'active')
+      .where('persisted_revision', '<', input.revision)
+      .returning('persisted_revision')
+      .executeTakeFirst();
+
+    if (updated) {
+      return { applied: true, persistedRevision: updated.persisted_revision };
+    }
+
+    // Nothing was written. Two very different reasons, and the caller must be
+    // able to tell them apart: a closed epoch is a hard stop, a stale revision
+    // is routine.
+    const current = await this.requireRow(draftFileId);
+    if (current.status !== 'active') {
+      throw new ApiError(
+        'DOCUMENT_EPOCH_CLOSED',
+        'This document was closed and no longer accepts writes.',
+        { draftFileId, epoch: current.epoch },
+      );
+    }
+    return { applied: false, persistedRevision: current.persisted_revision };
+  }
+
+  // -------------------------------------------------------------------------
+  // Epochs
+  // -------------------------------------------------------------------------
+
+  /**
+   * Closes a task's documents to new writes (sections 7.6, 10.5).
+   *
+   * Called after Apply. Section 10.5: "close the task's editing rooms in memory
+   * before releasing the document gate, even if the subsequent database status
+   * write fails" — so the room server's in-memory close is what stops writes
+   * first, and this records it durably. Returns how many rows it closed so the
+   * caller can log a reconciliation that found more or fewer than expected.
+   */
+  async closeEpoch(workspaceId: string, taskId: string): Promise<number> {
+    const closed = await this.deps.db
+      .updateTable('draft_files')
+      .set({ status: 'closed', updated_at: new Date() })
+      .where('workspace_id', '=', workspaceId)
+      .where('task_id', '=', taskId)
+      .where('status', '=', 'active')
+      .returning('id')
+      .execute();
+    return closed.length;
+  }
+
+  /**
+   * Starts a new epoch for a path whose previous document was closed.
+   *
+   * Section 7.6: "Do not overwrite an active Yjs document with agent output or
+   * reuse its old epoch for new approved content." The closed row stays as
+   * history, so a browser holding unsent edits against it can still be told
+   * what happened rather than having its document silently redefined.
+   */
+  async openNextEpoch(
+    workspaceId: string,
+    taskId: string,
+    path: string,
+  ): Promise<DraftFile> {
+    const active = await this.findActive(taskId, path);
+    if (active) return toDraftFile(active);
+
+    const previous = await this.deps.db
+      .selectFrom('draft_files')
+      .select((eb) => eb.fn.max('epoch').as('epoch'))
+      .where('task_id', '=', taskId)
+      .where('path', '=', path)
+      .executeTakeFirst();
+
+    try {
+      const row = await this.deps.db
+        .insertInto('draft_files')
+        .values({
+          workspace_id: workspaceId,
+          task_id: taskId,
+          path,
+          epoch: (previous?.epoch ?? 0) + 1,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return toDraftFile(row);
+    } catch (error) {
+      // Same race as openForTask: two callers computing the same next epoch.
+      if (isUniqueViolation(error)) {
+        const winner = await this.findActive(taskId, path);
+        if (winner) return toDraftFile(winner);
+      }
+      throw error;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+
+  private async findActive(taskId: string, path: string): Promise<DraftFileRow | undefined> {
+    return this.deps.db
+      .selectFrom('draft_files')
+      .selectAll()
+      .where('task_id', '=', taskId)
+      .where('path', '=', path)
+      .where('status', '=', 'active')
+      .executeTakeFirst();
+  }
+
+  private async findActiveManualEditTask(
+    workspaceId: string,
+    path: string,
+  ): Promise<string | undefined> {
+    const row = await this.deps.db
+      .selectFrom('tasks')
+      .select('id')
+      .where('workspace_id', '=', workspaceId)
+      .where('kind', '=', 'manual_edit')
+      .where('manual_source_path', '=', path)
+      .where('status', 'not in', ['completed', 'canceled'])
+      .executeTakeFirst();
+    return row?.id;
+  }
+
+  private async requireRow(draftFileId: string): Promise<DraftFileRow> {
+    const row = await this.deps.db
+      .selectFrom('draft_files')
+      .selectAll()
+      .where('id', '=', draftFileId)
+      .executeTakeFirst();
+    if (!row) throw new ApiError('DRAFT_NOT_FOUND', 'No such document.');
+    return row;
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+/** Metadata only. The binary state is returned separately and never on the wire. */
+function toDraftFile(row: DraftFileRow): DraftFile {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    path: row.path,
+    epoch: row.epoch,
+    baseBlobSha: row.base_blob_sha,
+    persistedRevision: row.persisted_revision,
+    status: row.status,
+    updatedAt: toIso(row.updated_at),
+  };
+}
