@@ -3,7 +3,7 @@
 Newest first. One entry per landed ticket.
 
 ## C04 — Worker tools and checkpoints
-**Status:** Implemented locally 2026-09-12; commit pending · Role C
+**Landed:** 2026-09-12 · `d95a8e8` · Role C
 **Affects:** Roles B, C, and D
 **Action required:** C05 must persist bases/create mutating worktrees before dispatch; C06 supplies captured context and owns cancellation/finalization. Use the shared `WorkerExecutor` and guarded Git capability. Read [C04 integration notes](../apps/server/src/workers/README.md). No migration or dependency is added.
 
@@ -15,9 +15,9 @@ Newest first. One entry per landed ticket.
   state under the Git lock, immediately before updating the worker ref.
 - Checkpoint receipts and completion/failure events retain saved work. C05/C06
   scheduling, integration and HTTP orchestration remain separate tickets.
-- Validation: build passed; full suite passed with 431 backend and eight
-  frontend tests. After the final timer-cancellation adjustment, the server
-  build and all 35 C04 tests passed again.
+- Rebased onto D03's collaboration update, preserving both interfaces and exports.
+- Validation after integration: build passed; full suite passed with 457 backend
+  and eight frontend tests, including all 35 C04 tests.
 
 ---
 
