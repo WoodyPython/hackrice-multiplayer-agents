@@ -2,6 +2,29 @@
 
 Newest first. One entry per landed ticket.
 
+## A02 — Guest workspace entry and browser owner controls
+**Landed:** 2026-09-12 · `a1b704e` · Role A
+**Affects:** Role A; A03/A04 consume the browser session
+**Action required:** Run the API and `npm run dev --workspace @app/web` in separate terminals. A03 should bind its open document's awareness through `bindGuestAwareness`; A04 should take new contribution labels from `useGuest()`. See [the browser interface](interfaces/role-a-browser.md). No new dependency or migration.
+
+- Real creation at `/`, direct entry at `/w/:workspaceId`, clean contribution
+  links, and owner-only workspace name/purpose/guidance updates through B02.
+- Owner keys remain browser-local and workspace-scoped; only metadata reads
+  resolving `isOwner` and owner updates carry `x-owner-key`. Sharing reconstructs
+  a clean frontend URL with no query, fragment, or secret.
+- Editable, validated guest names retain their contributor ID and update the
+  document-awareness binding immediately. Saved contribution labels stay intact.
+  No accounts or participant directory; live editor/transport remains A03/D03.
+- Handles blocked storage, a failed one-time key save, permission loss, missing
+  workspaces, clipboard failure, and duplicate creation clicks. Failed settings
+  saves preserve entered text. A01's fixtures now live under `/demo/w/*`.
+- Verified: the full backend/frontend suite (including 23 frontend tests),
+  production build, typecheck, and a local API smoke
+  check through Vite covering creation, direct links, contributor rejection, and
+  owner updates. Browser visual QA was unavailable in this session.
+
+---
+
 ## C03 — Orchestrator plan and graph validation
 **Landed:** 2026-09-12 · `16d09d2` · Role C
 **Affects:** Roles B, C, and D
