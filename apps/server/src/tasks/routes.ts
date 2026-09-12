@@ -12,6 +12,7 @@ import {
   summarizeInstruction,
   postTaskRequestSchema,
   startTaskRequestSchema,
+  startTaskResponseSchema,
   updateTaskRequestSchema,
   uuidSchema,
 } from '@app/contracts';
@@ -166,12 +167,13 @@ export async function registerTaskRoutes(
   app.post('/api/workspaces/:workspaceId/tasks/:taskId/retry', async (request, reply) => {
     const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
     const body = parseOrThrow(retryTaskRequestSchema, request.body ?? {});
-    const { run, idempotentReplay } = await deps.tasks.retry(workspaceId, taskId, body);
-    return reply.status(202).send({
+    const { run, taskStatus, idempotentReplay } = await deps.tasks.retry(workspaceId, taskId, body);
+    return reply.status(202).send(startTaskResponseSchema.parse({
       runId: run.id,
       attempt: run.attempt,
+      taskStatus,
       idempotentReplay,
-    });
+    }));
   });
 
   app.get('/api/workspaces/:workspaceId/tasks/:taskId/saved-outputs', async (request) => {

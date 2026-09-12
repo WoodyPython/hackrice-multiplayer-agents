@@ -1,5 +1,6 @@
 import type { Transaction } from 'kysely';
 import {
+  ApiError,
   type RefreshHint,
   type TaskEvent,
   type TaskEventType,
@@ -54,6 +55,12 @@ export async function appendEvent(
   db: Appender,
   input: AppendEventInput,
 ): Promise<AppendedEvent> {
+  if (!db.isTransaction) return db.transaction().execute((trx) => appendEvent(trx, input));
+  // Allocate the identity only after serializing this task's writers. Sequence
+  // allocation alone does not imply commit order, which cursor readers need.
+  const task = await db.selectFrom('tasks').select('id').where('id', '=', input.taskId)
+    .where('workspace_id', '=', input.workspaceId).forUpdate().executeTakeFirst();
+  if (!task) throw new ApiError('TASK_NOT_FOUND');
   const inserted = await db
     .insertInto('task_events')
     .values({
@@ -173,6 +180,7 @@ export class TaskEventService {
     const newest = await this.deps.db
       .selectFrom('task_events')
       .select((eb) => eb.fn.max('id').as('id'))
+      .where('workspace_id', '=', workspaceId)
       .where('task_id', '=', taskId)
       .executeTakeFirst();
 

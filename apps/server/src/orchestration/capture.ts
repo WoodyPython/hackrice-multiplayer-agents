@@ -55,71 +55,82 @@ export class StartCapture {
   constructor(private readonly deps: CaptureDeps) {}
 
   async capture(workspaceId: string, taskId: string, runId: string): Promise<CapturedStart> {
-    const { db } = this.deps;
-    const run = await db.selectFrom('runs').selectAll().where('id', '=', runId).executeTakeFirst();
-    // A run from a previous boot was marked interrupted at startup (section
-    // 14.4); resurrecting it here would be exactly the late write that forbids.
-    if (!run || run.boot_id !== this.deps.bootId || !isActiveRunStatus(run.status) ||
-        run.workspace_id !== workspaceId || run.task_id !== taskId) throw new CaptureError('inactive');
-
-    const task = await db.selectFrom('tasks').selectAll().where('id', '=', taskId)
-      .where('workspace_id', '=', workspaceId).executeTakeFirst();
-    if (!task || task.active_run_id !== runId) throw new CaptureError('inactive');
-    // The run fixed its versions at creation and they are never edited. A task
-    // revised in the gap before capture would otherwise be captured as text the
-    // run's own version number does not describe.
-    if (task.version !== run.task_version) throw new CaptureError('task_version_changed');
-
-    const workspace = await db.selectFrom('workspaces').select(['guidance', 'guidance_version'])
-      .where('id', '=', workspaceId).executeTakeFirstOrThrow();
-    if (workspace.guidance_version !== run.guidance_version) throw new CaptureError('guidance_version_changed');
-
+    const metadata = await this.metadata(workspaceId, taskId, runId);
+    const { run, task, workspace, discussion, retry } = metadata;
     const omitted: string[] = [];
     const outputPaths = task.output_paths.filter((path) => keep(path, omitted, 'outputPath'));
-    // Section 2.3: entries above the cutoff never enter any agent's context for
-    // this run, including assignments that have not started yet.
-    const discussion = await db.selectFrom('discussion_entries').select(['seq', 'body'])
-      .where('task_id', '=', taskId).where('seq', '<=', run.discussion_cutoff_seq)
-      .orderBy('seq').execute();
-
     const sources: PlanningContext['sources'] = [];
-    const retry = await readRetry(db, runId);
     const savedOutputs: NonNullable<PlanningContext['savedOutputs']> = [];
     for (const output of retry?.savedOutputs ?? []) {
       const file = await this.deps.git.readText({ workspaceId, target: { kind: 'commit', commitSha: output.commitSha },
         path: output.path, allowedPaths: [output.path] });
       savedOutputs.push({ ...output, hash: file.hash, text: file.text });
     }
-    const materials = await this.materials(workspaceId, taskId, sources, omitted);
+    const materials = await this.materials(workspaceId, metadata.materialIds, metadata.materialRows, sources, omitted);
     const mainSha = (await this.deps.git.initialize(workspaceId)).mainSha;
-    const approvedPaths = await this.approved(workspaceId, taskId, mainSha, sources, omitted);
+    const approvedPaths = await this.approved(workspaceId, metadata.inputs, mainSha, sources, omitted);
     const draft = await this.deps.collaboration.capture({ workspaceId, taskId });
-    const draftFileHashes = await this.draftFiles(workspaceId, taskId, draft.checkpointSha, sources, omitted);
+    const draftFileHashes = await this.draftFiles(workspaceId, metadata.activeDrafts, metadata.inputs, draft.checkpointSha, sources, omitted);
 
     const manifest: ContextManifest = {
-      taskVersion: run.task_version,
-      guidanceVersion: run.guidance_version,
+      taskVersion: run.task_version, guidanceVersion: run.guidance_version,
       discussionCutoffSeq: run.discussion_cutoff_seq,
       materials, approvedPaths, approvedCommitSha: mainSha,
       draftCheckpointSha: draft.checkpointSha, draftFileHashes,
       ...(retry ? { savedOutputs: savedOutputs.map(({ text: _text, ...source }) => source) } : {}),
     };
-
-    // Section 8.4. Combined before planning so a conflict is surfaced without
-    // spending a model call, and without touching main or the live draft.
-    const snapshot = await this.deps.git.combineStartSnapshot({
-      workspaceId, taskId, mainSha, draftSha: draft.checkpointSha,
-    });
+    const snapshot = await this.deps.git.combineStartSnapshot({ workspaceId, taskId, mainSha, draftSha: draft.checkpointSha });
     if (snapshot.snapshotSha === null) throw new CaptureError('snapshot_conflict', snapshot.conflicts);
-
     const parsed = planningContextSchema.safeParse({
-      task: { id: taskId, version: run.task_version, title: task.title, outcome: task.outcome,
-        criteria: task.criteria, outputPaths },
+      task: { id: taskId, version: run.task_version, title: task.title, outcome: task.outcome, criteria: task.criteria, outputPaths },
       guidance: workspace.guidance, manifest, discussion, sources, ...(retry ? { savedOutputs } : {}),
     });
     if (!parsed.success) throw new CaptureError('capture_failed');
-    return { context: parsed.data, inputSnapshotSha: snapshot.snapshotSha,
-      draftCheckpointSha: draft.checkpointSha, omitted };
+    return { context: parsed.data, inputSnapshotSha: snapshot.snapshotSha, draftCheckpointSha: draft.checkpointSha, omitted };
+  }
+
+  /** Snapshot all requirement metadata together; slow Git/blob operations must
+   * not mix a later revision's selections with the captured task version. */
+  private async metadata(workspaceId: string, taskId: string, runId: string) {
+    return this.deps.db.transaction().setIsolationLevel('repeatable read').execute(async (db) => {
+      const run = await db.selectFrom('runs').selectAll().where('id', '=', runId).executeTakeFirst();
+      // A run from a previous boot was marked interrupted at startup (section
+      // 14.4); resurrecting it here would be exactly the late write that forbids.
+      if (!run || run.boot_id !== this.deps.bootId || !isActiveRunStatus(run.status) ||
+          run.workspace_id !== workspaceId || run.task_id !== taskId) throw new CaptureError('inactive');
+
+      const task = await db.selectFrom('tasks').selectAll().where('id', '=', taskId)
+        .where('workspace_id', '=', workspaceId).executeTakeFirst();
+      if (!task || task.active_run_id !== runId) throw new CaptureError('inactive');
+      // The run fixed its versions at creation and they are never edited. A task
+      // revised in the gap before capture would otherwise be captured as text the
+      // run's own version number does not describe.
+      if (task.version !== run.task_version) throw new CaptureError('task_version_changed');
+
+      const workspace = await db.selectFrom('workspaces').select(['guidance', 'guidance_version'])
+        .where('id', '=', workspaceId).executeTakeFirstOrThrow();
+      if (workspace.guidance_version !== run.guidance_version) throw new CaptureError('guidance_version_changed');
+
+      // Section 2.3: entries above the cutoff never enter any agent's context for
+      // this run, including assignments that have not started yet.
+      const discussion = await db.selectFrom('discussion_entries').select(['seq', 'body'])
+        .where('task_id', '=', taskId).where('seq', '<=', run.discussion_cutoff_seq)
+        .orderBy('seq').execute();
+
+      const retry = await readRetry(db, runId);
+      const inputs = await db.selectFrom('task_input_links').select(['material_id', 'approved_path', 'draft_file_id'])
+        .where('task_id', '=', taskId).execute();
+      const attached = await db.selectFrom('material_links as m').leftJoin('discussion_entries as d', 'd.id', 'm.discussion_entry_id')
+        .select('m.material_id').where('m.task_id', '=', taskId)
+        .where((eb) => eb.or([eb('m.discussion_entry_id', 'is', null), eb('d.seq', '<=', run.discussion_cutoff_seq)])).execute();
+      const materialIds = [...new Set([...inputs.flatMap((r) => r.material_id ? [r.material_id] : []), ...attached.map((r) => r.material_id)])];
+      const materialRows = materialIds.length ? await db.selectFrom('materials').select('id')
+        .where('id', 'in', materialIds).where('workspace_id', '=', workspaceId).where('deleted_at', 'is', null)
+        .orderBy('created_at').orderBy('id').execute() : [];
+      const activeDrafts = await db.selectFrom('draft_files').select(['id', 'path']).where('workspace_id', '=', workspaceId)
+        .where('task_id', '=', taskId).where('status', '=', 'active').orderBy('path').execute();
+      return { run, task, workspace, discussion, retry, inputs, materialIds, materialRows, activeDrafts };
+    });
   }
 
   /**
@@ -129,19 +140,9 @@ export class StartCapture {
    * alternative and is worse: a later wholesale replacement of the inputs would
    * drop it just as silently.
    */
-  private async materials(workspaceId: string, taskId: string,
+  private async materials(workspaceId: string, ids: string[], rows: Array<{ id: string }>,
     sources: PlanningContext['sources'], omitted: string[]): Promise<ContextManifest['materials']> {
-    const { db } = this.deps;
-    const [selected, attached] = await Promise.all([
-      db.selectFrom('task_input_links').select('material_id')
-        .where('task_id', '=', taskId).where('material_id', 'is not', null).execute(),
-      db.selectFrom('material_links').select('material_id').where('task_id', '=', taskId).execute(),
-    ]);
-    const ids = [...new Set([...selected.map((r) => r.material_id!), ...attached.map((r) => r.material_id)])];
     if (ids.length === 0) return [];
-    const rows = await db.selectFrom('materials').select(['id'])
-      .where('id', 'in', ids).where('workspace_id', '=', workspaceId).where('deleted_at', 'is', null)
-      .orderBy('created_at').orderBy('id').execute();
     for (const id of ids) if (!rows.some((row) => row.id === id)) omitted.push(`material:${id}`);
 
     const captured: ContextManifest['materials'] = [];
@@ -157,11 +158,9 @@ export class StartCapture {
     return captured;
   }
 
-  private async approved(workspaceId: string, taskId: string, mainSha: string,
+  private async approved(workspaceId: string, links: Array<{ approved_path: string | null }>, mainSha: string,
     sources: PlanningContext['sources'], omitted: string[]): Promise<string[]> {
-    const links = await this.deps.db.selectFrom('task_input_links').select('approved_path')
-      .where('task_id', '=', taskId).where('approved_path', 'is not', null).execute();
-    const candidates = [...new Set(links.map((row) => row.approved_path!))].sort();
+    const candidates = [...new Set(links.flatMap((row) => row.approved_path ? [row.approved_path] : []))].sort();
     const captured: string[] = [];
     for (const path of candidates) {
       if (!keep(path, omitted, 'approved')) continue;
@@ -183,13 +182,10 @@ export class StartCapture {
    * 8.6 lets a worker read them, so the manifest carries their exact blob
    * hashes rather than a live revision that can move underneath a worker.
    */
-  private async draftFiles(workspaceId: string, taskId: string, checkpointSha: string,
+  private async draftFiles(workspaceId: string, active: Array<{ id: string; path: string }>,
+    inputs: Array<{ draft_file_id: string | null }>, checkpointSha: string,
     sources: PlanningContext['sources'], omitted: string[]): Promise<Record<string, string>> {
-    const [active, links] = await Promise.all([
-      this.deps.drafts.listActiveForTask(workspaceId, taskId),
-      this.deps.db.selectFrom('task_input_links').select('draft_file_id')
-        .where('task_id', '=', taskId).where('draft_file_id', 'is not', null).execute(),
-    ]);
+    const links = inputs.filter((row) => row.draft_file_id !== null);
     // A draft selected from another task lives on that task's own branch and is
     // not in this checkpoint. Report it instead of reading the wrong file.
     for (const row of links) {

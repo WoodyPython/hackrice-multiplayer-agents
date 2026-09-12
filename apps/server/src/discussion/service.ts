@@ -15,6 +15,7 @@ import { isPgError, isUniqueViolation, type Db } from '../db/client.js';
 import type { Database } from '../db/types.js';
 import { appendEvent } from '../events/service.js';
 import { toIso } from '../http/serialize.js';
+import { assertTaskMutable, invalidateTaskReviews } from '../tasks/mutation-guard.js';
 
 /**
  * B03: task-local discussion and agent questions (sections 2.3, 2.6).
@@ -142,6 +143,9 @@ export class PgDiscussionService {
     input: PostDiscussionRequest,
   ): Promise<DiscussionEntry> {
     return this.deps.db.transaction().execute(async (trx) => {
+      const task = await trx.selectFrom('tasks').select('id').where('id', '=', taskId)
+        .where('workspace_id', '=', workspaceId).forUpdate().executeTakeFirst();
+      if (!task) throw new ApiError('TASK_NOT_FOUND', 'No such task in this workspace.');
       if (input.clientRequestId) {
         const existing = await trx
           .selectFrom('discussion_entries')
@@ -152,6 +156,8 @@ export class PgDiscussionService {
         if (existing) return this.loadEntry(trx, taskId, existing.id);
       }
 
+      if (input.materialIds.length) await assertTaskMutable(trx, taskId);
+
       const entryId = await this.insertEntry(trx, workspaceId, taskId, {
         actorType: 'guest',
         guestLabel: input.guestLabel,
@@ -161,6 +167,7 @@ export class PgDiscussionService {
 
       if (input.materialIds.length > 0) {
         await this.attachMaterials(trx, workspaceId, taskId, entryId, input.materialIds);
+        await invalidateTaskReviews(trx, taskId, `attachment:${entryId}`);
       }
 
       return this.loadEntry(trx, taskId, entryId);
@@ -283,6 +290,17 @@ export class PgDiscussionService {
         .executeTakeFirst();
       if (!question) throw new ApiError('QUESTION_NOT_FOUND', 'No such question.');
 
+      if (input.clientRequestId) {
+        const existing = await trx.selectFrom('discussion_entries').select('id')
+          .where('task_id', '=', taskId).where('client_request_id', '=', input.clientRequestId).executeTakeFirst();
+        if (existing) {
+          if (question.status === 'answered' && question.answer_entry_id === existing.id) {
+            return { question: toQuestion(question), answerEntry: await this.loadEntry(trx, taskId, existing.id) };
+          }
+          throw new ApiError('INVALID_STATE', 'This request key belongs to a different discussion entry.');
+        }
+      }
+
       if (question.status !== 'open') {
         throw new ApiError(
           'QUESTION_NOT_OPEN',
@@ -310,21 +328,6 @@ export class PgDiscussionService {
           'AGENT_TIMED_OUT',
           'The agent that asked this ran out of time. Retry the task to ask again.',
         );
-      }
-
-      if (input.clientRequestId) {
-        const existing = await trx
-          .selectFrom('discussion_entries')
-          .select('id')
-          .where('task_id', '=', taskId)
-          .where('client_request_id', '=', input.clientRequestId)
-          .executeTakeFirst();
-        if (existing) {
-          return {
-            question: toQuestion(question),
-            answerEntry: await this.loadEntry(trx, taskId, existing.id),
-          };
-        }
       }
 
       const answerEntryId = await this.insertEntry(trx, workspaceId, taskId, {

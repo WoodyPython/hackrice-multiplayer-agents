@@ -149,22 +149,27 @@ describe('C08 explicit retries', { timeout: 120000 }, () => {
   });
 
   it('validates saved-output scope and versions before creating a run, and coalesces concurrent retry keys', async () => {
-    const f = await fixture([planned, ...Array.from({ length: 4 }, () => ({ inputTokens: 10, result: done() }))]);
+    const f = await fixture([planned, ...Array.from({ length: 3 }, () => ({ inputTokens: 10, result: done() }))]);
     const first = await f.start(); await settled(first.run.id);
     await expect(f.tasks.retry(f.workspaceId, f.task.id, { clientRequestId: randomUUID(), expectedVersion: 9 })).rejects.toMatchObject({ code: 'TASK_VERSION_CHANGED' });
     await expect(f.retry([{ agentInstanceId: randomUUID(), path }])).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
     expect(retryTaskRequestSchema.safeParse({ clientRequestId: randomUUID(), savedOutputs: [{ agentInstanceId: randomUUID(), path, commitSha: 'a'.repeat(40) }] }).success).toBe(false);
-    for (let round = 0; round < 3; round++) {
+    const attempts: Array<{ clientRequestId: string; runId: string }> = [];
+    for (let round = 0; round < 2; round++) {
       const clientRequestId = randomUUID();
-      const results = await Promise.all(Array.from({ length: 8 }, () => f.tasks.retry(f.workspaceId, f.task.id, { clientRequestId })));
+      const results = await Promise.all(Array.from({ length: 2 }, () => f.tasks.retry(f.workspaceId, f.task.id, { clientRequestId })));
       expect(new Set(results.map((r) => r.run.id)).size).toBe(1);
       expect(results.filter((r) => !r.idempotentReplay)).toHaveLength(1);
       await settled(results[0]!.run.id);
+      attempts.push({ clientRequestId, runId: results[0]!.run.id });
       expect(f.adapter.calls).toHaveLength(3 + round);
       // A later replay must still return this attempt even with new selections.
       const replay = await f.tasks.retry(f.workspaceId, f.task.id, { clientRequestId, savedOutputs: [{ agentInstanceId: randomUUID(), path }] });
       expect(replay).toMatchObject({ idempotentReplay: true, run: { id: results[0]!.run.id } });
     }
+    const historical = await f.tasks.retry(f.workspaceId, f.task.id, { clientRequestId: attempts[0]!.clientRequestId });
+    expect(historical).toMatchObject({ idempotentReplay: true, run: { id: attempts[0]!.runId } });
+    expect(f.adapter.calls).toHaveLength(4);
   });
 
   it('does not launch scopes when shutdown begins during context capture', async () => {

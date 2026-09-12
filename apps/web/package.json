@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "vitest run"
+    "test": "node ../../scripts/test.mjs run"
   },
   "dependencies": {
     "@app/contracts": "*",

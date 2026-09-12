@@ -15,7 +15,8 @@ import {
 import { isPgError, isUniqueViolation, type Db } from '../db/client.js';
 import type { Database, TaskRow } from '../db/types.js';
 import { appendEvent } from '../events/service.js';
-import { assertCancelable, assertRevisable, assertTransition } from './transitions.js';
+import { assertRevisable, assertTransition } from './transitions.js';
+import { assertTaskMutable, invalidateTaskReviews } from './mutation-guard.js';
 import { toIso } from '../http/serialize.js';
 import { prepareRetry, savedOutputs } from '../orchestration/retry-store.js';
 
@@ -94,6 +95,16 @@ export class PgTaskService {
       });
 
       return this.loadDetail(trx, workspaceId, row.id);
+    }).catch(async (error: unknown) => {
+      // Read only after the failed transaction has rolled back. A concurrent
+      // replay may lose either unique-index race for a manual-edit task.
+      if (input.clientRequestId && (isUniqueViolation(error, 'tasks_client_request_uq') ||
+          (error instanceof ApiError && error.code === 'INVALID_STATE'))) {
+        const existing = await this.deps.db.selectFrom('tasks').select('id')
+          .where('workspace_id', '=', workspaceId).where('client_request_id', '=', input.clientRequestId).executeTakeFirst();
+        if (existing) return this.loadDetail(this.deps.db, workspaceId, existing.id);
+      }
+      throw error;
     });
   }
 
@@ -115,6 +126,7 @@ export class PgTaskService {
   ): Promise<TaskDetail> {
     return this.deps.db.transaction().execute(async (trx) => {
       const task = await this.lockTask(trx, workspaceId, taskId);
+      await assertTaskMutable(trx, taskId);
       assertRevisable(task.status);
 
       if (task.version !== input.expectedVersion) {
@@ -144,6 +156,8 @@ export class PgTaskService {
       if (input.inputs !== undefined) {
         await this.replaceInputs(trx, workspaceId, taskId, input.inputs);
       }
+
+      await invalidateTaskReviews(trx, taskId, `requirements:${nextVersion}`);
 
       await appendEvent(trx, {
         workspaceId,
@@ -193,6 +207,8 @@ export class PgTaskService {
       if (replay) {
         return { run: toRun(replay), taskStatus: task.status, idempotentReplay: true };
       }
+
+      await assertTaskMutable(trx, taskId);
 
       if (task.version !== input.expectedVersion) {
         throw new ApiError(
@@ -291,13 +307,13 @@ export class PgTaskService {
     workspaceId: string,
     taskId: string,
     input: { clientRequestId: string; expectedVersion?: number; savedOutputs?: RetryTaskRequest['savedOutputs'] },
-  ): Promise<{ run: Run; idempotentReplay: boolean }> {
+  ): Promise<{ run: Run; taskStatus: TaskDetail['status']; idempotentReplay: boolean }> {
     const task = await this.readTask(workspaceId, taskId);
     const started = await this.start(workspaceId, taskId, {
       expectedVersion: input.expectedVersion ?? task.version,
       clientRequestId: input.clientRequestId,
     }, { ...input, savedOutputs: input.savedOutputs ?? [] });
-    return { run: started.run, idempotentReplay: started.idempotentReplay };
+    return { run: started.run, taskStatus: started.taskStatus, idempotentReplay: started.idempotentReplay };
   }
 
   async savedOutputs(workspaceId: string, taskId: string) {
@@ -312,14 +328,18 @@ export class PgTaskService {
   async cancel(workspaceId: string, taskId: string): Promise<TaskDetail> {
     const { detail, runId } = await this.deps.db.transaction().execute(async (trx) => {
       const task = await this.lockTask(trx, workspaceId, taskId);
-      assertCancelable(task.status);
+      await assertTaskMutable(trx, taskId);
 
+      if (!task.active_run_id) throw new ApiError('INVALID_STATE', 'This task has no active attempt to cancel.');
       const activeRun = await trx
         .selectFrom('runs')
         .selectAll()
         .where('task_id', '=', taskId)
+        .where('id', '=', task.active_run_id)
         .where('status', 'in', ACTIVE_RUN_STATUSES)
         .executeTakeFirst();
+
+      if (!activeRun) throw new ApiError('INVALID_STATE', 'This task has no active attempt to cancel.');
 
       const now = new Date();
 

@@ -63,7 +63,9 @@ describe('D06 review HTTP and persistence', { timeout: 60_000 }, () => {
     expect(detail.json()).toEqual(result);
     const diff = await runtime.app.inject({ method: 'GET', url: `${reviewUrl(result.review.id)}/diff` });
     expect(diff.json().changedFiles).toEqual(result.changedFiles);
+    const detailRead = vi.spyOn(runtime.git, 'readReview');
     const preview = await runtime.app.inject({ method: 'GET', url: `${reviewUrl(result.review.id)}/preview?path=${path}` });
+    expect(detailRead).not.toHaveBeenCalled();
     expect(preview.json()).toMatchObject({ candidateSha: result.candidateSha, text: 'human draft\n' });
     expect(response.body).not.toContain(root);
     const events = await db.db.selectFrom('task_events').selectAll().where('task_id', '=', taskId).where('type', '=', 'review.ready').execute();

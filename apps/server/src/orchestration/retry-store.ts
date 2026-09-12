@@ -45,7 +45,7 @@ export async function prepareRetry(trx: Transaction<Database>, workspaceId: stri
   return { sourceRunId: previous.id, savedOutputs: selected, ...(checked?.valid ? { plan: checked.plan } : {}) };
 }
 
-export async function readRetry(db: Db, runId: string) {
+export async function readRetry(db: Db | Transaction<Database>, runId: string) {
   const event = await db.selectFrom('task_events').select('payload').where('run_id', '=', runId)
     .where('event_key', '=', `run:${runId}:started`).executeTakeFirst();
   const retry = event?.payload.retry as { sourceRunId: string; savedOutputs: unknown[]; plan?: unknown } | undefined;

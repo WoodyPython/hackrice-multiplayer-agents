@@ -17,7 +17,7 @@ export class PgCheckpointStore {
     await this.db.transaction().execute(async (trx) => {
       const task = await trx.selectFrom('tasks').select('status')
         .where('workspace_id', '=', workspaceId).where('id', '=', capture.taskId)
-        .forShare().executeTakeFirst();
+        .forUpdate().executeTakeFirst();
       if (!task) throw new ApiError('TASK_NOT_FOUND');
       if (task.status === 'completed') throw new ApiError('DOCUMENT_EPOCH_CLOSED');
       const drafts = await trx.selectFrom('draft_files').select(['id', 'status', 'persisted_revision'])

@@ -11,6 +11,7 @@ import {
   type TaskEvent,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { readEventPages } from "../task-polling";
 import { apiMessage } from "../workspace-api";
 import { inputOptionsFrom, type TaskInputOption } from "../task-inputs";
 import { Assignments } from "../components/Assignments";
@@ -21,7 +22,6 @@ import { EmptyState } from "../components/EmptyState";
 import { RequirementForm, type TaskFields } from "../components/RequirementForm";
 import { TaskDetail, tabs, type TaskTab } from "./TaskDetail";
 
-const ACTIVE = ["planning", "working", "needs_input"];
 const RETRYABLE = ["incomplete", "interrupted", "canceled"];
 
 /**
@@ -59,6 +59,10 @@ export function TaskDetailPage({
   isOwner: boolean;
 }) {
   const { taskId } = useParams();
+  return <TaskDetailState key={`${workspaceId}:${taskId?.toLowerCase()}`} workspaceId={workspaceId} taskId={taskId?.toLowerCase()} isOwner={isOwner} />;
+}
+
+function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string; taskId: string | undefined; isOwner: boolean }) {
   const [params] = useSearchParams();
   const { api, session } = useBrowser();
   const [task, setTask] = useState<Task | null>(null);
@@ -67,13 +71,17 @@ export function TaskDetailPage({
   const [status, setStatus] = useState<"loading" | "ready" | "missing" | "error">(
     "loading",
   );
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState<Task | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [nonce, setNonce] = useState(0);
   const [attempts, setAttempts] = useState<TaskAttempt[]>([]);
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const startId = useRef(crypto.randomUUID());
+  const retryId = useRef(crypto.randomUUID());
+  const eventCache = useRef<TaskEvent[]>([]);
+  const actionLock = useRef(false);
   // Read inside the polling loop, which must not restart every time the task
   // status changes — a restarting interval is how a poll ends up firing twice.
   const live = useRef(false);
@@ -99,21 +107,21 @@ export function TaskDetailPage({
           api.listMaterials(workspaceId, controller.signal),
           api.listWorkspaceDrafts(workspaceId, controller.signal),
           api.listTaskAgents(workspaceId, taskId, controller.signal),
-          api.listTaskEvents(workspaceId, taskId, undefined, controller.signal),
+          readEventPages(api, workspaceId, taskId, eventCache.current, controller.signal),
         ]);
         if (controller.signal.aborted || stopped) return;
         setTask(detail);
         setMaterials(mats);
         setDrafts(drafted);
         setAttempts(runs);
-        // Read whole rather than from a cursor: the outcome panel needs the
-        // LATEST start-phase reason, and a cursor-advanced read would hold only
-        // whatever arrived since the last poll.
-        setEvents(log.events);
-        live.current = ACTIVE.includes(detail.status);
+        eventCache.current = log;
+        setEvents(log);
+        live.current = detail.activeRunId !== null;
         setStatus("ready");
+        setPollError(null);
       } catch (error) {
         if (controller.signal.aborted || stopped) return;
+        setPollError(apiMessage(error));
         setStatus(
           error instanceof ApiError && error.code === "TASK_NOT_FOUND"
             ? "missing"
@@ -165,6 +173,8 @@ export function TaskDetailPage({
     );
 
   async function act(run: () => Promise<unknown>) {
+    if (actionLock.current) return;
+    actionLock.current = true;
     setBusy(true);
     setActionError(null);
     try {
@@ -173,23 +183,24 @@ export function TaskDetailPage({
       thread.refresh();
     } catch (error) {
       setActionError(apiMessage(error));
-      // A version conflict means our copy is stale, not that the action was
-      // wrong. Refetch so the next attempt carries the current version.
+      // Refresh task actions after a conflict. An open edit keeps its original
+      // version until the contributor closes and reopens the form.
       if (error instanceof ApiError && error.code === "TASK_VERSION_CHANGED")
         reload();
     } finally {
+      actionLock.current = false;
       setBusy(false);
     }
   }
 
   async function save(fields: TaskFields) {
-    if (!task || !taskId) return;
+    if (!editing || !taskId) return;
     await act(async () => {
       await api.updateTask(workspaceId, taskId, {
-        expectedVersion: task.version,
+        expectedVersion: editing.version,
         ...fields,
       });
-      setEditing(false);
+      setEditing(null);
     });
   }
 
@@ -197,7 +208,7 @@ export function TaskDetailPage({
     task.kind === "agent_task" &&
     task.activeRunId === null &&
     isStartableTaskStatus(task.status);
-  const running = ACTIVE.includes(task.status) && task.activeRunId !== null;
+  const running = task.activeRunId !== null;
   const retryable = RETRYABLE.includes(task.status) && task.activeRunId === null;
 
   const action = (
@@ -240,12 +251,13 @@ export function TaskDetailPage({
           className="primary"
           disabled={busy}
           onClick={() =>
-            void act(() =>
-              api.retryTask(workspaceId, task.id, {
+            void act(async () => {
+              await api.retryTask(workspaceId, task.id, {
                 expectedVersion: task.version,
-                clientRequestId: crypto.randomUUID(),
-              }),
-            )
+                clientRequestId: retryId.current,
+              });
+              retryId.current = crypto.randomUUID();
+            })
           }
         >
           {busy ? "Retrying…" : "Retry from saved work"}
@@ -334,18 +346,18 @@ export function TaskDetailPage({
           optionsNote="Approved files cannot be selected yet — nothing in the system can list them."
           guestLabel={session.getGuest().name}
           initial={{
-            title: task.title,
-            outcome: task.outcome,
-            criteria: task.criteria,
-            outputPaths: task.outputPaths,
-            inputs: task.inputs.flatMap(
+            title: editing.title,
+            outcome: editing.outcome,
+            criteria: editing.criteria,
+            outputPaths: editing.outputPaths,
+            inputs: editing.inputs.flatMap(
               (link): TaskInputOption["value"][] =>
                 link.materialId
-                  ? [{ materialId: link.materialId }]
+                  ? [{ materialId: link.materialId, ...(link.sourceVersion !== null ? { sourceVersion: link.sourceVersion } : {}) }]
                   : link.draftFileId
-                    ? [{ draftFileId: link.draftFileId }]
+                    ? [{ draftFileId: link.draftFileId, ...(link.sourceVersion !== null ? { sourceVersion: link.sourceVersion } : {}) }]
                     : link.approvedPath
-                      ? [{ approvedPath: link.approvedPath }]
+                      ? [{ approvedPath: link.approvedPath, ...(link.sourceVersion !== null ? { sourceVersion: link.sourceVersion } : {}) }]
                       : [],
             ),
           }}
@@ -360,7 +372,7 @@ export function TaskDetailPage({
           }}
           onSubmit={(fields) => void save(fields)}
           onCancel={() => {
-            setEditing(false);
+            setEditing(null);
             setActionError(null);
           }}
         />
@@ -372,7 +384,7 @@ export function TaskDetailPage({
       task={task}
       base={base}
       options={options}
-      banner={<RunOutcome events={events} status={task.status} />}
+      banner={<>{pollError && <p role="alert">{pollError}</p>}<RunOutcome events={events} status={task.status} runId={task.activeRunId ?? [...attempts].sort((a, b) => b.attempt - a.attempt)[0]?.runId} /></>}
       action={action}
       renderTab={renderTab}
       initialTab={
@@ -383,7 +395,7 @@ export function TaskDetailPage({
           : undefined
       }
       onEditRequirements={
-        task.status === "completed" ? undefined : () => setEditing(true)
+        task.status === "completed" ? undefined : () => setEditing(task)
       }
     />
   );

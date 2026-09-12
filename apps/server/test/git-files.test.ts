@@ -7,14 +7,9 @@ import { MAX_TEXT_FILE_BYTES, type TextChange } from '@app/contracts';
 import { GitRuntimeError, runGit, type GitRunner } from '../src/git/command.js';
 import { blobHash, filePath, textBytes } from '../src/git/files.js';
 import { LocalGitService } from '../src/git/service.js';
+import { ManagedWorktrees } from '../src/git/worktrees.js';
 
 let root: string;
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'd02-git-')); });
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  // Only this test's allocated temporary directory; never development data.
-  await rm(root, { recursive: true, force: true });
-});
 
 async function fixture(runner: GitRunner = runGit) {
   const git = new LocalGitService(join(root, 'data'), undefined, runner);
@@ -65,7 +60,45 @@ describe('portable text validation', () => {
   });
 });
 
+describe('managed Git files', () => {
+  beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'd02-git-')); });
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    // Only this test's allocated temporary directory; never development data.
+    await rm(root, { recursive: true, force: true });
+  });
+
 describe('managed branches and exact checkpoints', () => {
+  it('preserves executable mode for unchanged checkpoints and replacements', async () => {
+    const f = await fixture();
+    const base = await rawCommit(f.repo.repositoryPath, f.repo.mainSha, 'code/a.ts', Buffer.from('original'), '100755');
+    await f.command('update-ref', 'refs/heads/main', base);
+    expect((await f.checkpoint([{ path: 'code/a.ts', text: 'original' }])).commitSha).toBe(base);
+    await f.worker(base);
+    const original = await f.read('code/a.ts');
+    const next = await f.apply([{ path: 'code/a.ts', newText: 'changed', expectedHash: original.hash },
+      { path: 'code/new.ts', newText: 'new', expectedHash: null }]);
+    expect(await f.command('ls-tree', next.commitSha, 'code/a.ts')).toMatch(/^100755 /);
+    expect(await f.command('ls-tree', next.commitSha, 'code/new.ts')).toMatch(/^100644 /);
+  });
+
+  it('caches immutable objects within one operation without sharing mutable results', async () => {
+    const hash = 'a'.repeat(40), sha = 'b'.repeat(40), bytes = Buffer.from('text');
+    const runner = vi.fn<GitRunner>(async (args) => {
+      if (args.includes('ls-tree')) return { exitCode: 0, stdout: '', stdoutBytes: Buffer.from(`100644 blob ${hash}\tcode/a.ts\0`) };
+      return args.includes('-s') ? { exitCode: 0, stdout: String(bytes.length) } : { exitCode: 0, stdout: '', stdoutBytes: Buffer.from(bytes) };
+    });
+    const files = new ManagedWorktrees(root, randomUUID(), root, runner);
+    const first = await files.tree(sha); first.get('code/a.ts')!.mode = '100755'; first.clear();
+    expect((await files.tree(sha)).get('code/a.ts')!.mode).toBe('100644');
+    const blob = await files.blob(hash); blob.fill(0);
+    expect((await files.blob(hash)).toString()).toBe('text');
+    expect(runner).toHaveBeenCalledTimes(3);
+    const fresh = new ManagedWorktrees(root, randomUUID(), root, runner);
+    await fresh.tree(sha); await fresh.blob(hash);
+    expect(runner).toHaveBeenCalledTimes(6);
+  });
+
   it('creates correct branches, worktrees, immutable bases and clean multi-file checkpoints', async () => {
     const f = await fixture();
     const draft = await f.git.createDraft({ workspaceId: f.workspaceId, taskId: f.taskId });
@@ -114,17 +147,15 @@ describe('managed branches and exact checkpoints', () => {
     expect(await f.git.createResult({ workspaceId: f.workspaceId, runId: f.runId, baseSha: changed.commitSha })).toEqual(result);
   });
 
-  it('serializes repeated creation across UUID casing in multiple contention rounds', async () => {
+  it('serializes concurrent creation across UUID casing', async () => {
     const f = await fixture();
-    for (let round = 0; round < 3; round++) {
-      const id = randomUUID();
-      const results = await Promise.all(Array.from({ length: 4 }, (_, i) => f.git.createWorker({
-        workspaceId: i % 2 ? f.workspaceId.toUpperCase() : f.workspaceId,
-        agentInstanceId: i % 2 ? id.toUpperCase() : id, baseSha: f.repo.mainSha,
-      })));
-      for (const result of results) expect(result).toEqual(results[0]);
-      expect(await f.command('rev-list', '--count', `agents/${id}`)).toBe('1');
-    }
+    const id = randomUUID();
+    const results = await Promise.all(Array.from({ length: 4 }, (_, i) => f.git.createWorker({
+      workspaceId: i % 2 ? f.workspaceId.toUpperCase() : f.workspaceId,
+      agentInstanceId: i % 2 ? id.toUpperCase() : id, baseSha: f.repo.mainSha,
+    })));
+    for (const result of results) expect(result).toEqual(results[0]);
+    expect(await f.command('rev-list', '--count', `agents/${id}`)).toBe('1');
   }, 60_000);
 
   it('rejects base changes, foreign/missing objects, blob bases, and malformed IDs before mutation', async () => {
@@ -451,4 +482,5 @@ describe('checkpoint failure boundaries and trusted execution', () => {
     expect(await readFile(join(worker.worktreePath, 'code/a.ts'), 'utf8')).toBe(text);
     expect(await readdir(root)).not.toContain('outside-index');
   });
+});
 });

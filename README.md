@@ -31,6 +31,20 @@ npm test
 `npm test` creates and migrates a separate `app_test` database, so it never
 touches development data.
 
+For daily work, run only the affected tests:
+
+```bash
+npm run test:unit                         # model adapters and plan validation; no database
+npm run test --workspace @app/server -- test/tasks.test.ts test/events.test.ts
+npm run test:retry --workspace @app/server # retry integration, including real Git
+npm run test --workspace @app/web          # browser components and collaboration
+```
+
+Every test command incrementally builds the shared contracts before collection,
+including after a pull. `npm test` remains the comprehensive check. Database
+suites share one test database: use one invocation for several files, and never
+run two database test commands concurrently. Each invocation resets it once.
+
 After configuring `.env` and applying migrations, run `npm run dev` for the
 server, or `npm run build && npm start` for the compiled runtime. The API listens
 on port 3000 by default; `GET /health` returns its process boot ID.

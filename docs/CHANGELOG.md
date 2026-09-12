@@ -2,6 +2,40 @@
 
 Newest first. One entry per landed ticket.
 
+## Cross-subsystem reliability and test cost
+
+**Implemented:** 2026-09-12 · working tree
+
+- Protect pending Apply publication from task mutations and reconcile incompatible
+  metadata without overwriting newer state. Invalidate reviews atomically on edits.
+- Return browser-compatible Retry responses, preserve retry keys after uncertain
+  failures, and pin requirements edits to their original version and selections.
+- Cancel surviving workers by active attempt, freeze capture metadata consistently,
+  serialize durable task events, and recognize scoped request/answer replays.
+- Preserve unknown review usage reservations and settle late provider usage without
+  publishing expired assessments. Preserve executable Git file modes.
+- Cache bounded immutable Git objects per operation and validate previews without
+  generating diffs. Consolidate duplicate fixtures and controlled backoff waits.
+- Add HTTP/browser Retry and concurrency regressions. Scoped test commands build
+  contracts automatically; `npm run test:unit` needs no database. `npm test` remains
+  comprehensive with sequential server suites and one database reset.
+- No migration or dependency added. C08 assignment identities, budgets, fresh
+  instances, and immutable saved-output references remain unchanged.
+- Validation: final workspace build and typecheck passed; comprehensive `npm test`
+  passed 645 server tests (765.73s) and 53 web tests (12.02s). DB-free unit tests
+  passed 85 cases (6.24s).
+- Isolated Git timing against `9b99a6b`: the same two-stage merge-resolution case
+  passed in 20.83s before and 11.33s after (whole scoped invocation). This is one
+  sequential sample per version, not a full-suite speedup estimate. Complete
+  worker integration, restart, CAS, cancellation and CRDT checks remain covered.
+- Clean C08 suite timing: 7/7 passed on both versions, 40.40s before and 36.20s
+  after (10.4% reduction in this sample). Both runs used the same dependencies,
+  one fresh test database reset each, and no competing build/test process. The
+  reduced concurrency case retains two same-key callers, a distinct later
+  attempt, and historical replay; unknown usage and late settlement remain tested.
+
+---
+
 ## A07 — Files and manual collaborative drafts (completed)
 **Landed:** 2026-09-12 · Role A
 **Affects:** Role A. Frontend only — no route, migration, or dependency.

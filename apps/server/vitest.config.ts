@@ -14,8 +14,8 @@ export default defineConfig({
     /**
      * Suites share one database, so run files one at a time. Fixtures create
      * their own workspaces and do not collide, but sequential execution keeps
-     * connection counts low and failures readable. The whole run is a few
-     * seconds.
+     * connection counts low and failures readable. Real-Git suites can be slow,
+     * especially on Windows; use the scoped commands while developing.
      */
     fileParallelism: false,
 

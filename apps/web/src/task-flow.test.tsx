@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -7,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { Link, MemoryRouter } from "react-router-dom";
 import { App } from "./App";
 import { BrowserSession } from "./session";
 import { WorkspaceApi } from "./workspace-api";
@@ -174,6 +175,7 @@ function open(path: string, transport: typeof fetch) {
   const api = new WorkspaceApi(session, transport);
   render(
     <MemoryRouter initialEntries={[path]}>
+      <Link to={`/w/${workspaceId}/tasks/20000000-0000-4000-8000-000000000aa2`}>Other task</Link>
       <App session={session} api={api} />
     </MemoryRouter>,
   );
@@ -531,8 +533,9 @@ const attempt = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+let eventSequence = 0;
 const startEvent = (reason: string, payload: Record<string, unknown> = {}) => ({
-  id: crypto.randomUUID(),
+  id: String(++eventSequence),
   taskId,
   runId,
   type: "agent.waiting",
@@ -598,7 +601,7 @@ describe("why an attempt ended", () => {
       [`GET /tasks/${taskId}/events`]: () =>
         json({
           events: [startEvent("context_captured"), startEvent("snapshot_conflict", { paths: ["documents/faq.md"] })],
-          latestId: "9",
+          latestId: String(eventSequence),
         }),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
@@ -617,7 +620,7 @@ describe("why an attempt ended", () => {
       [`GET /tasks/${taskId}/events`]: () =>
         json({
           events: [startEvent("context_captured", { omitted: ["brief.md"] })],
-          latestId: "9",
+          latestId: String(eventSequence),
         }),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
@@ -632,7 +635,7 @@ describe("why an attempt ended", () => {
     const { transport } = server({
       [`GET /tasks/${taskId}`]: () => json({ ...task, status: "incomplete" }),
       [`GET /tasks/${taskId}/events`]: () =>
-        json({ events: [startEvent("some_reason_added_later")], latestId: "9" }),
+        json({ events: [startEvent("some_reason_added_later")], latestId: String(eventSequence) }),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
 
@@ -645,7 +648,7 @@ describe("why an attempt ended", () => {
     const { transport } = server({
       [`GET /tasks/${taskId}`]: () => json({ ...task, status: "working", activeRunId: runId }),
       [`GET /tasks/${taskId}/events`]: () =>
-        json({ events: [startEvent("context_captured")], latestId: "9" }),
+        json({ events: [startEvent("context_captured")], latestId: String(eventSequence) }),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
 
@@ -886,5 +889,74 @@ describe("deep links", () => {
     expect(
       (await screen.findByRole("tab", { name: "Discussion" })).getAttribute("aria-selected"),
     ).toBe("true");
+  });
+});
+
+afterEach(() => vi.useRealTimers());
+
+describe("task refresh regressions", () => {
+  it("retries through the actual response schema and reuses an uncertain intent", async () => {
+    let requests = 0;
+    let current = { ...task, status: "incomplete", activeRunId: null as string | null };
+    const { transport, calls } = server({
+      [`GET /tasks/${taskId}`]: () => json(current),
+      [`POST /tasks/${taskId}/retry`]: () => {
+        if (++requests === 1) return fail("INTERNAL_ERROR", 500);
+        current = { ...current, status: "planning", activeRunId: "70000000-0000-4000-8000-000000000ff1" };
+        return json({ runId: current.activeRunId, attempt: 2, taskStatus: "planning", idempotentReplay: true }, 202);
+      },
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry from saved work" }));
+    await screen.findByText(/We could not confirm the request/);
+    fireEvent.click(screen.getByRole("button", { name: "Retry from saved work" }));
+    await screen.findByRole("button", { name: "Stop this attempt" });
+    const retryCalls = calls.filter((call) => call.url.endsWith("/retry"));
+    expect(retryCalls).toHaveLength(2);
+    expect(retryCalls[0]!.body).toEqual(retryCalls[1]!.body);
+    expect(screen.queryByText(/We could not confirm the request/)).toBeNull();
+  });
+
+  it("pins the edit version and selected identities across a poll", async () => {
+    let current = task;
+    let materials = [material];
+    const { transport, calls } = server({
+      [`GET /tasks/${taskId}`]: () => json(current),
+      "GET /materials": () => json({ materials }),
+      [`PATCH /tasks/${taskId}`]: () => fail("TASK_VERSION_CHANGED", 409),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit requirements" }));
+    fireEvent.change(screen.getByLabelText(/Task title/), { target: { value: "My retained edit" } });
+    vi.useFakeTimers();
+    // The initial poll was scheduled with real timers; a failed save forces a new pull using fake timers.
+    fireEvent.click(screen.getByRole("button", { name: "Save requirements" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    current = { ...task, version: 3, title: "Other user's edit" };
+    materials = [{ ...material, id: "30000000-0000-4000-8000-000000000bb2", filename: "new.md" }, material];
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    fireEvent.click(screen.getByRole("button", { name: "Save requirements" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const saves = calls.filter((call) => call.method === "PATCH");
+    expect(saves).toHaveLength(2);
+    expect(saves[1]!.body).toMatchObject({ expectedVersion: 2, title: "My retained edit", inputs: [{ materialId }] });
+    expect((screen.getByLabelText(/Task title/) as HTMLInputElement).value).toBe("My retained edit");
+  });
+
+  it("clears old editing state immediately when the task route changes", async () => {
+    const { transport } = server();
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit requirements" }));
+    fireEvent.change(screen.getByLabelText(/Task title/), { target: { value: "Old task edit" } });
+    fireEvent.click(screen.getByRole("link", { name: "Other task" }));
+    expect(screen.queryByRole("button", { name: "Save requirements" })).toBeNull();
+    await screen.findByText("Could not load this task");
+  });
+
+  it("lets contributors stop an active run even when task status is incomplete", async () => {
+    const { transport } = server({ [`GET /tasks/${taskId}`]: () => json({ ...task, status: "incomplete", activeRunId: "70000000-0000-4000-8000-000000000ff1" }) });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    await screen.findByRole("button", { name: "Stop this attempt" });
+    expect(screen.queryByRole("button", { name: "Retry from saved work" })).toBeNull();
   });
 });

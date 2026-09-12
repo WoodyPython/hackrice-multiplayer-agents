@@ -10,10 +10,7 @@ import type { DraftFile, Material, TaskInputLink } from "@app/contracts";
 export type TaskInputOption = {
   label: string;
   category: string;
-  value:
-    | { materialId: string }
-    | { draftFileId: string }
-    | { approvedPath: string };
+  value: ({ materialId: string } | { draftFileId: string } | { approvedPath: string }) & { sourceVersion?: string };
 };
 
 /**
@@ -89,4 +86,11 @@ export function selectedIndexes(
       ? [index]
       : [],
   );
+}
+
+
+/** Selection identity excludes the optional pinned version metadata. */
+export function inputIdentity(value: TaskInputOption["value"]): string {
+  return "materialId" in value ? `material:${value.materialId}`
+    : "draftFileId" in value ? `draft:${value.draftFileId}` : `approved:${value.approvedPath}`;
 }

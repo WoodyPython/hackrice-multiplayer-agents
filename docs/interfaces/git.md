@@ -4,6 +4,19 @@
 
 ## Startup recovery (D08)
 
+Pending/ambiguous publication receipts also block task/context mutations. Intent
+creation locks workspace (NO KEY UPDATE), task, then review and revalidates the
+candidate before inserting the receipt. No Git calls run in that transaction.
+Reconciliation refuses to complete incompatible newer task state, records an
+ambiguous receipt, and retains the published Git commit for manual investigation.
+The workspace lock mode remains compatible with foreign-key checks by task writers.
+
+Git object validation caches are confined to a single locked operation: at most
+8 MiB/1,024 blobs and 10,000 entries/128 trees. Returned values are copied; refs,
+disk files and worktree/index validation are never cached. Existing executable
+text files retain their Git mode through checkpoints and worker replacements.
+Preview validates the bound artifact and candidate without generating file diffs.
+
 `startRuntime` interrupts previous-boot execution before building the application and calls `LocalReviewService.reconcilePreviousApplies()` before attaching live transport or opening orchestration. Its returned `recovery` contains interruption counts and apply counts (`applied`, `pending`, `ambiguous`). These are internal diagnostics; public API shapes are unchanged.
 
 Exact candidate equality with main finalizes publication metadata and closes epochs using the same transaction as owner Apply, without moving Git. Exact expected-main equality leaves the operation pending for explicit owner-authenticated Apply with normal freshness checks. Any other main records `ambiguous`/`RUN_INTERRUPTED` and leaves Git untouched. Pending/ambiguous tasks retain the document-write guard. Unrelated tasks remain available. Storage failures abort startup and clean up resources; retry startup after resolving the storage failure.

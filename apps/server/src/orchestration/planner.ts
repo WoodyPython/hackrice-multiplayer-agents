@@ -47,6 +47,7 @@ interface PlannerDeps {
   db: Db; ledger: PgAgentLedger; adapter: ModelAdapter; bootId: string;
   onBackgroundError: (error: unknown) => void;
   now?: () => number;
+  wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 export class OrchestratorPlanner implements OrchestratorPlanningService {
@@ -100,7 +101,7 @@ export class OrchestratorPlanner implements OrchestratorPlanningService {
           if (!(error instanceof ModelAdapterError) || !error.retryable) throw error;
           // Backoff is bounded in duration, never in number of attempts. It
           // remains inside this same instance's fixed deadline and budget.
-          await scope.run((signal) => delay(backoffMs, undefined, { signal }));
+          await scope.run((signal) => this.deps.wait?.(backoffMs, signal) ?? delay(backoffMs, undefined, { signal }));
           backoffMs = Math.min(backoffMs * 2, 30000);
           continue;
         }

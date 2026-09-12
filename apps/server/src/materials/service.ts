@@ -5,6 +5,7 @@ import type { MaterialRow } from '../db/types.js';
 import { type BlobStore, materialObjectKey } from './blob-store.js';
 import { validateUpload } from './validation.js';
 import { toIso } from '../http/serialize.js';
+import { assertTaskMutable, invalidateTaskReviews } from '../tasks/mutation-guard.js';
 
 /**
  * B04: reference materials (design section 3.2).
@@ -136,16 +137,31 @@ export class PgMaterialService {
     }
 
     try {
-      await this.deps.db
-        .insertInto('material_links')
-        .values({
-          workspace_id: workspaceId,
-          material_id: input.materialId,
-          task_id: input.taskId ?? null,
-          discussion_entry_id: input.discussionEntryId ?? null,
-        })
-        .onConflict((oc) => oc.doNothing())
-        .execute();
+      await this.deps.db.transaction().execute(async (trx) => {
+        if (input.taskId) {
+          const task = await trx.selectFrom('tasks').select('id').where('id', '=', input.taskId)
+            .where('workspace_id', '=', workspaceId).forUpdate().executeTakeFirst();
+          if (!task) throw new ApiError('MATERIAL_NOT_FOUND', 'That task does not belong to this workspace.');
+          const existing = await trx.selectFrom('material_links').select('id')
+            .where('workspace_id', '=', workspaceId).where('task_id', '=', input.taskId)
+            .where('material_id', '=', input.materialId)
+            .where('discussion_entry_id', input.discussionEntryId ? '=' : 'is', input.discussionEntryId ?? null)
+            .executeTakeFirst();
+          if (existing) return;
+          await assertTaskMutable(trx, input.taskId);
+        }
+        const added = await trx
+          .insertInto('material_links')
+          .values({
+            workspace_id: workspaceId,
+            material_id: input.materialId,
+            task_id: input.taskId ?? null,
+            discussion_entry_id: input.discussionEntryId ?? null,
+          })
+          .onConflict((oc) => oc.doNothing())
+          .returning('id').executeTakeFirst();
+        if (added && input.taskId) await invalidateTaskReviews(trx, input.taskId, `attachment:${added.id}`);
+      });
     } catch (error) {
       if (isPgError(error) && error.code === '23503') {
         throw new ApiError(

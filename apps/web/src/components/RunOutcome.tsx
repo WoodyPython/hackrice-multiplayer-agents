@@ -61,17 +61,20 @@ const COPY: Record<string, { title: string; detail: string }> = {
 };
 
 /** Reasons that are progress, not failure — never shown as an outcome. */
-const INFORMATIONAL = new Set(["context_captured"]);
+const INFORMATIONAL = new Set(["context_captured", "retry_plan_reused"]);
 
 export function RunOutcome({
   events,
   status,
+  runId,
 }: {
   events: TaskEvent[];
   status: TaskStatus;
+  runId?: string;
 }) {
   const starts = events.filter(
     (event) =>
+      (!runId || event.runId === runId) &&
       event.type === "agent.waiting" &&
       (event.payload as StartPayload).phase === "start",
   );

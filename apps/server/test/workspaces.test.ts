@@ -24,60 +24,28 @@ afterAll(async () => {
 });
 
 describe('POST /api/workspaces', () => {
-  it('returns the id, a contribution URL, and the owner key once', async () => {
-    const res = await t.app.inject({
-      method: 'POST',
-      url: '/api/workspaces',
-      payload: { name: 'Launch prep', purpose: 'Ship the FAQ' },
-    });
-
+  it('creates one workspace with a private encoded owner key, stored hash and lifecycle signal', async () => {
+    const before = t.lifecycle.created.length;
+    const res = await t.app.inject({ method: 'POST', url: '/api/workspaces',
+      payload: { name: 'Launch prep', purpose: 'Ship the FAQ' } });
     expect(res.statusCode).toBe(201);
-    const body = res.json();
-    expect(body.workspaceId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(body.contributionUrl).toBe(contributionUrl(TEST_APP_URL, body.workspaceId));
-    expect(typeof body.ownerKey).toBe('string');
-  });
-
-  it('mints a 256-bit key with no URL-unsafe characters', async () => {
-    const { ownerKey } = await createWorkspaceViaApi(t.app);
-    // 32 random bytes, base64url encoded.
+    const { workspaceId, contributionUrl: url, ownerKey } = res.json();
+    expect(workspaceId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(url).toBe(contributionUrl(TEST_APP_URL, workspaceId));
     expect(ownerKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(Buffer.from(ownerKey, 'base64url')).toHaveLength(32);
-  });
-
-  it('never puts the owner key in the contribution URL', async () => {
-    // Section 1.2: the key "never appears in the shared URL". The URL is the
-    // one thing people paste into group chat.
-    const { contributionUrl: url, ownerKey, workspaceId } = await createWorkspaceViaApi(t.app);
     expect(url).toContain(workspaceId);
     expect(url).not.toContain(ownerKey);
-  });
-
-  it('gives every workspace a different key', async () => {
-    const keys = new Set<string>();
-    for (let i = 0; i < 5; i += 1) {
-      keys.add((await createWorkspaceViaApi(t.app)).ownerKey);
-    }
-    expect(keys.size).toBe(5);
-  });
-
-  it('stores only the hash, never the key itself', async () => {
-    const { workspaceId, ownerKey } = await createWorkspaceViaApi(t.app);
-    const row = await t.handle.db
-      .selectFrom('workspaces')
-      .selectAll()
-      .where('id', '=', workspaceId)
-      .executeTakeFirstOrThrow();
-
+    const row = await t.handle.db.selectFrom('workspaces').selectAll().where('id', '=', workspaceId).executeTakeFirstOrThrow();
     expect(row.owner_key_hash).toEqual(hashOwnerKey(ownerKey));
-    // Belt and braces: the raw key appears nowhere in the persisted row.
     expect(JSON.stringify(row)).not.toContain(ownerKey);
+    expect(t.lifecycle.created.slice(before)).toEqual([workspaceId]);
   });
 
-  it('signals the Git service exactly once per workspace', async () => {
-    const before = t.lifecycle.created.length;
-    const { workspaceId } = await createWorkspaceViaApi(t.app);
-    expect(t.lifecycle.created.slice(before)).toEqual([workspaceId]);
+  it('gives different workspaces different owner keys', async () => {
+    const first = await createWorkspaceViaApi(t.app);
+    const second = await createWorkspaceViaApi(t.app);
+    expect(second.ownerKey).not.toBe(first.ownerKey);
   });
 
   it('rejects a blank name', async () => {

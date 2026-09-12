@@ -14,6 +14,7 @@ import { filePath } from '../git/files.js';
 import { LiveDocumentCoordinator } from '../collaboration/coordinator.js';
 import { ownerKeyMatches } from '../workspaces/owner-key.js';
 import { applyReviewRequestSchema } from '@app/contracts';
+import { invalidateTaskReviews } from '../tasks/mutation-guard.js';
 
 /** Stable context digest; D04's digest alone only identifies the captured draft. */
 function canonical(value: unknown): string {
@@ -53,14 +54,19 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
               throw new ApiError('INPUT_CONFLICT');
             }
             live.close();
-            await this.deps.db.transaction().execute(async (db) => {
-              await db.selectFrom('workspaces').select('id').where('id', '=', operation.workspace_id).forUpdate().executeTakeFirstOrThrow();
+            const compatible = await this.deps.db.transaction().execute(async (db) => {
+              await db.selectFrom('workspaces').select('id').where('id', '=', operation.workspace_id).forNoKeyUpdate().executeTakeFirstOrThrow();
               await db.selectFrom('tasks').select('id').where('id', '=', review.taskId).forUpdate().executeTakeFirstOrThrow();
               const locked = await db.selectFrom('reviews').select('status').where('id', '=', review.id).forUpdate().executeTakeFirstOrThrow();
-              if (!['ready', 'applied'].includes(locked.status)) throw new ApiError('RUN_INTERRUPTED');
+              if (!['ready', 'applied'].includes(locked.status) || !await this.publishedStateMatches(db, review, operation, artifact.context)) {
+                await db.updateTable('apply_operations').set({ status: 'ambiguous', error_code: 'RUN_INTERRUPTED', settled_at: new Date() })
+                  .where('id', '=', operation.id).execute();
+                return false;
+              }
               await this.finalizeApplied(db, review, operation);
+              return true;
             });
-            counts.applied++;
+            if (compatible) counts.applied++; else counts.ambiguous++;
           } else if (head === operation.expected_main_sha) {
             counts.pending++;
           } else {
@@ -71,6 +77,23 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
         })));
     }
     return counts;
+  }
+
+  /** Publication proves Git changed, not that newer task state may be erased. */
+  private async publishedStateMatches(db: Db, review: Review, operation: ApplyOperationRow, context: Record<string, unknown>) {
+    const task = await db.selectFrom('tasks').select(['version', 'status', 'active_run_id']).where('id', '=', review.taskId).executeTakeFirstOrThrow();
+    if (task.version !== review.source.taskVersion || task.active_run_id || task.status === 'canceled') return false;
+    const newerRun = await db.selectFrom('runs').select('id').where('task_id', '=', review.taskId)
+      .where('created_at', '>', operation.created_at).executeTakeFirst();
+    if (newerRun) return false;
+    if (task.status === 'completed') return review.status === 'applied';
+    try {
+      const current = await this.inputs(operation.workspace_id, review.taskId, db);
+      return current.run?.id === (review.runId ?? undefined) && digest({ ...current.context, draft: context.draft }) === review.source.contextHash;
+    } catch (error) {
+      if (error instanceof ApiError && ['INVALID_STATE', 'INPUT_CONFLICT'].includes(error.code)) return false;
+      throw error;
+    }
   }
 
   private async finalizeApplied(db: Db, review: Review, operation: ApplyOperationRow) {
@@ -134,10 +157,8 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
 
   async invalidate(input: { taskId: string; reason: string }): Promise<void> {
     await this.deps.db.transaction().execute(async (db) => {
-      const changed = await db.updateTable('reviews').set({ status: 'stale', updated_at: new Date() })
-        .where('task_id', '=', input.taskId).where('status', 'in', ['building', 'ready', 'conflict']).returningAll().execute();
-      for (const review of changed) await appendEvent(db, { workspaceId: review.workspace_id, taskId: review.task_id, runId: review.run_id,
-        type: 'review.stale', eventKey: eventKeys.reviewStale(review.id, input.reason), payload: { reviewId: review.id, reason: input.reason } });
+      await db.selectFrom('tasks').select('id').where('id', '=', input.taskId).forUpdate().executeTakeFirstOrThrow();
+      await invalidateTaskReviews(db, input.taskId, input.reason);
     });
   }
 
@@ -184,10 +205,11 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
       // The pending row is committed first. Only final validation + the single ref update
       // run under DB row locks, preventing requirements/Start/guidance races.
       try { await this.deps.db.transaction().execute(async (db) => {
-        const lockedWorkspace = await db.selectFrom('workspaces').selectAll().where('id', '=', workspaceId).forUpdate().executeTakeFirstOrThrow();
+        const lockedWorkspace = await db.selectFrom('workspaces').selectAll().where('id', '=', workspaceId).forNoKeyUpdate().executeTakeFirstOrThrow();
         await db.selectFrom('tasks').selectAll().where('id', '=', review.taskId).forUpdate().executeTakeFirstOrThrow();
         const lockedReview = await db.selectFrom('reviews').selectAll().where('id', '=', reviewId).forUpdate().executeTakeFirstOrThrow();
-        if (alreadyApplied && !['ready', 'applied'].includes(lockedReview.status)) throw new ApiError('RUN_INTERRUPTED', 'Published review metadata requires reconciliation.');
+        if (alreadyApplied && (!['ready', 'applied'].includes(lockedReview.status) ||
+            !await this.publishedStateMatches(db, review, operation!, artifact.context))) throw new ApiError('RUN_INTERRUPTED', 'Published review metadata requires reconciliation.');
         if (!ownerKeyMatches(input.ownerKey, lockedWorkspace.owner_key_hash)) throw new ApiError('OWNER_KEY_REQUIRED', 'This action requires the workspace owner key.');
         if (!alreadyApplied) {
           if (lockedReview.status !== 'ready' || lockedReview.candidate_sha !== candidateSha) throw new ApiError('REVIEW_STALE');
@@ -213,7 +235,10 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
         // A failed SQL commit does not roll Git back. Leave its receipt pending and
         // keep rooms closed if publication happened; the next authorized Apply reconciles it.
         const currentMain = await git.main().catch((failure: unknown) => { live.close(); throw failure; });
-        if (currentMain === candidateSha) live.close();
+        if (currentMain === candidateSha) {
+          live.close();
+          if (alreadyApplied && error instanceof ApiError && error.code === 'RUN_INTERRUPTED') await this.store.settle(reviewId, 'ambiguous', 'RUN_INTERRUPTED');
+        }
         else if (currentMain !== review.source.mainSha) {
           live.close();
           await this.store.settle(reviewId, 'ambiguous', 'RUN_INTERRUPTED');
@@ -277,9 +302,15 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
   }
 
   async preview(workspaceId: string, reviewId: string, path: string) {
-    const detail = await this.read(workspaceId, reviewId);
+    workspaceId = uuidSchema.parse(workspaceId).toLowerCase(); reviewId = uuidSchema.parse(reviewId).toLowerCase();
+    const review = await this.scoped(workspaceId, reviewId);
+    if (!review.candidateSha) throw new ApiError('INVALID_STATE', 'This review has no completed candidate build.');
+    const artifact = await this.deps.git.readReviewArtifact({ workspaceId, reviewId, candidateSha: review.candidateSha });
+    if (canonical(artifact.source) !== canonical(review.source) || digest(artifact.context) !== review.source.contextHash) {
+      throw new ApiError('INPUT_CONFLICT', 'Stored candidate does not match the review sources.');
+    }
     path = filePath(path);
-    return this.deps.git.previewReview({ workspaceId, reviewId, candidateSha: detail.candidateSha, path });
+    return this.deps.git.previewReview({ workspaceId, reviewId, candidateSha: review.candidateSha, path });
   }
 
   resolve(input: Parameters<ReviewService['resolve']>[0]): Promise<Review>;

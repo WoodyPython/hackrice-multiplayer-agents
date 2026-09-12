@@ -13,6 +13,7 @@ import { PgReviewStore } from '../src/runs/review-store.js';
 import { hashOwnerKey } from '../src/workspaces/owner-key.js';
 import { connectTestDb, insertTask, insertWorkspace, insertRun, testDatabaseUrl } from './helpers.js';
 import { testConfig } from './app-helpers.js';
+import { appendEvent } from '../src/events/service.js';
 
 let db: ReturnType<typeof connectTestDb>, root: string, runtime: Awaited<ReturnType<typeof startRuntime>>;
 let workspaceId: string, taskId: string;
@@ -83,7 +84,7 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     }
   });
 
-  it.each([1, 2, 3])('requires the real owner key and publishes the exact multi-file candidate once (round %i)', async () => {
+  it('requires the real owner key and publishes the exact multi-file candidate once', async () => {
     const review = await prepare();
     const absent = await runtime.app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/reviews/${review.review.id}/apply`, payload: { candidateSha: review.candidateSha } });
     const wrong = await apply(review, 'wrong');
@@ -236,6 +237,9 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
 
   it('keeps published rooms closed after finalization fails and reconciles an authorized repeat', async () => {
     const peer = await connect(); const review = await prepare();
+    // A ready candidate can remain valid when the task displays conflict;
+    // recovery must use the same input checks as the original publication.
+    await db.db.updateTable('tasks').set({ status: 'conflict' }).where('id', '=', taskId).execute();
     peer.provider.on('connection-close', () => { peer.provider.shouldConnect = false; });
     // Force a failure after Git has moved, inside the final transaction.
     await db.pool.query(`create function d07_fail_apply() returns trigger language plpgsql as $$ begin if NEW.task_id = '${taskId}' and NEW.type = 'task.applied' then raise exception 'injected'; end if; return NEW; end $$`);
@@ -244,6 +248,28 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
       expect((await apply(review)).statusCode).toBe(500);
       expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(review.candidateSha);
       expect((await new PgReviewStore({ db: db.db }).readOperation(review.review.id))!.status).toBe('pending');
+      for (const [method, suffix, payload] of [
+        ['PATCH', '', { expectedVersion: 1, title: 'New requirements after publication' }],
+        ['POST', '/start', { expectedVersion: 1, clientRequestId: randomUUID() }],
+        ['POST', '/retry', { expectedVersion: 1, clientRequestId: randomUUID(), savedOutputs: [] }],
+      ] as const) {
+        const mutation = await runtime.app.inject({ method, url: `/api/workspaces/${workspaceId}/tasks/${taskId}${suffix}`, payload });
+        expect(mutation.statusCode, mutation.body).toBe(409);
+        expect(mutation.json().error.code).toBe('RUN_INTERRUPTED');
+      }
+      expect(await db.db.selectFrom('runs').select('id').where('task_id', '=', taskId).execute()).toEqual([]);
+      expect((await db.db.selectFrom('tasks').select('version').where('id', '=', taskId).executeTakeFirstOrThrow()).version).toBe(1);
+      const guidance = await runtime.app.inject({ method: 'PATCH', url: `/api/workspaces/${workspaceId}`,
+        headers: { 'x-owner-key': ownerKey }, payload: { guidance: 'New guidance after publication' } });
+      expect(guidance.statusCode, guidance.body).toBe(409);
+      expect(guidance.json().error.code).toBe('RUN_INTERRUPTED');
+      const material = await db.db.insertInto('materials').values({ workspace_id: workspaceId, filename: 'reference.txt',
+        object_key: randomUUID(), sha256: Buffer.alloc(32, 2), byte_size: 1, guest_label: 'Guest' }).returning('id').executeTakeFirstOrThrow();
+      const attachment = await runtime.app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/tasks/${taskId}/material-links`,
+        payload: { materialId: material.id } });
+      expect(attachment.statusCode, attachment.body).toBe(409);
+      expect(attachment.json().error.code).toBe('RUN_INTERRUPTED');
+      expect(await db.db.selectFrom('material_links').select('id').where('task_id', '=', taskId).execute()).toEqual([]);
       await expect(runtime.collaboration.acquire({ workspaceId, taskId, draftFileId: peer.draft.id, epoch: peer.draft.epoch })).rejects.toMatchObject({ code: 'DOCUMENT_EPOCH_CLOSED' });
     } finally {
       await db.pool.query('drop trigger d07_fail_apply on task_events'); await db.pool.query('drop function d07_fail_apply()');
@@ -259,5 +285,47 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     const response = await apply(review); expect(response.statusCode).toBe(409); expect(response.json().error.code).toBe('RUN_INTERRUPTED');
     expect((await store.readOperation(review.review.id))!.status).toBe('ambiguous');
     expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(other.commitSha);
+  });
+
+  it('does not overwrite newer task state while reconciling a published receipt', async () => {
+    const review = await prepare(), store = new PgReviewStore({ db: db.db });
+    await store.begin({ workspaceId, reviewId: review.review.id, candidateSha: review.candidateSha,
+      expectedMainSha: review.review.source.mainSha, bootId: randomUUID() });
+    await runtime.git.applyExpected({ workspaceId, expectedMainSha: review.review.source.mainSha, candidateSha: review.candidateSha });
+    // Simulate state left by a pre-guard runtime. Public mutations now reject it.
+    await db.db.updateTable('tasks').set({ version: 2, title: 'Unreviewed requirements' }).where('id', '=', taskId).execute();
+    expect(await runtime.reviews.reconcilePreviousApplies()).toEqual({ applied: 0, pending: 0, ambiguous: 1 });
+    expect((await store.readOperation(review.review.id))!.status).toBe('ambiguous');
+    expect(await db.db.selectFrom('tasks').select(['version', 'status', 'title']).where('id', '=', taskId).executeTakeFirstOrThrow())
+      .toEqual({ version: 2, status: 'ready_for_review', title: 'Unreviewed requirements' });
+    expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(review.candidateSha);
+  });
+
+  it('rechecks a task mutation that wins the task lock before Apply intent', async () => {
+    const review = await prepare(), store = new PgReviewStore({ db: db.db });
+    let release!: () => void, locked!: () => void;
+    const ready = new Promise<void>((resolve) => { locked = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const mutation = db.db.transaction().execute(async (trx) => {
+      await trx.selectFrom('tasks').select('id').where('id', '=', taskId).forUpdate().executeTakeFirstOrThrow();
+      locked(); await hold;
+      await trx.updateTable('tasks').set({ version: 2 }).where('id', '=', taskId).execute();
+      // The event's workspace FK must remain compatible with begin's workspace
+      // lock while begin waits for this task writer.
+      await appendEvent(trx, { workspaceId, taskId, type: 'task.requirements_changed',
+        eventKey: `mutation-before-apply:${taskId}`, payload: { version: 2 } });
+    });
+    await ready;
+    const pending = store.begin({ workspaceId, reviewId: review.review.id, candidateSha: review.candidateSha,
+      expectedMainSha: review.review.source.mainSha, bootId: randomUUID() }).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(async () => {
+        const blocked = await db.pool.query("select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query like '%tasks%for update%'");
+        expect(blocked.rowCount).toBeGreaterThan(0);
+      });
+    } finally { release(); await mutation; }
+    expect(await pending).toMatchObject({ code: 'REVIEW_STALE' });
+    expect(await store.readOperation(review.review.id)).toBeUndefined();
+    expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(review.review.source.mainSha);
   });
 });

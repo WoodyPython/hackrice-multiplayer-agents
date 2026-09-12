@@ -19,6 +19,7 @@ import { LocalDiskBlobStore } from '../src/materials/blob-store.js';
 import { PgMaterialService } from '../src/materials/service.js';
 import type { AgentResponse, ModelAdapter } from '../src/models/index.js';
 import { OrchestratorPlanner, ParallelAssignmentScheduler, StartOrchestrator } from '../src/orchestration/index.js';
+import { StartCapture } from '../src/orchestration/capture.js';
 import { PgTaskService } from '../src/tasks/service.js';
 import { PgWorkerStore } from '../src/workers/store.js';
 import { BOOT_ID, connectTestDb, insertWorkspace } from './helpers.js';
@@ -173,6 +174,39 @@ async function commitOnMain(workspaceId: string, files: Array<{ path: string; te
 // ---------------------------------------------------------------------------
 
 describe('C06 explicit start', { timeout: 180_000 }, () => {
+  it('snapshots requirements and selections together and excludes later discussion attachments', async () => {
+    const workspaceId = await insertWorkspace(db.db);
+    await commitOnMain(workspaceId, [
+      { path: 'documents/old.md', text: 'Old selected file' },
+      { path: 'documents/new.md', text: 'New selected file' },
+    ]);
+    const detail = await post(workspaceId);
+    const early = await materials.upload(workspaceId, { filename: 'early.md', bytes: Buffer.from('Earlier evidence'), guestLabel: 'Guest Cedar' });
+    const late = await materials.upload(workspaceId, { filename: 'late.md', bytes: Buffer.from('Later evidence'), guestLabel: 'Guest Cedar' });
+    await discussion.post(workspaceId, detail.id, { body: 'Earlier comment', guestLabel: 'Guest Cedar', materialIds: [early.material.id] });
+    await tasks.revise(workspaceId, detail.id, { expectedVersion: 1, inputs: [{ approvedPath: 'documents/old.md' }] });
+    const recorder = new PgTaskService({ db: db.db, bootId: BOOT_ID, orchestration: { onRunCreated() {}, onCancelRequested() {} } });
+    const started = await recorder.start(workspaceId, detail.id, { expectedVersion: 2, clientRequestId: randomUUID() });
+    await discussion.post(workspaceId, detail.id, { body: 'Later comment', guestLabel: 'Guest Cedar', materialIds: [late.material.id] });
+    let reached!: () => void, release!: () => void;
+    const reading = new Promise<void>((resolve) => { reached = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const capture = new StartCapture({ db: db.db, bootId: BOOT_ID, git, drafts, collaboration,
+      materials: { readSelected: async (w, id) => { reached(); await gate; return materials.readSelected(w, id); } } });
+    const pending = capture.capture(workspaceId, detail.id, started.run.id);
+    try {
+      await Promise.race([reading, pending]);
+      await tasks.revise(workspaceId, detail.id, { expectedVersion: 2, title: 'Revised title', inputs: [{ approvedPath: 'documents/new.md' }] });
+    } finally { release(); }
+    const captured = await pending;
+    expect(captured.context.task).toMatchObject({ version: 2, title: 'Launch FAQ' });
+    expect(captured.context.manifest.approvedPaths).toEqual(['documents/old.md']);
+    expect(captured.context.manifest.materials.map((m) => m.materialId)).toEqual([early.material.id]);
+    expect(captured.context.discussion).toEqual([{ seq: 1, body: 'Earlier comment' }]);
+    expect((await task(detail.id)).version).toBe(3);
+    expect(JSON.stringify(captured.context)).not.toContain('Later evidence');
+  });
+
   it('captures selected inputs, plans, dispatches, and settles the run for review', async () => {
     const workspaceId = await insertWorkspace(db.db, 'C06 start');
     const approvedSha = await commitOnMain(workspaceId, [{ path: 'documents/policy.md', text: 'Approved policy' }]);

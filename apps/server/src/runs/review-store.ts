@@ -1,5 +1,5 @@
 import { ApiError, type Review, type ReviewSource } from '@app/contracts';
-import { isUniqueViolation, type Db } from '../db/client.js';
+import { type Db } from '../db/client.js';
 import type { ApplyOperationRow, ReviewRow } from '../db/types.js';
 import { toIso, toIsoOrNull } from '../http/serialize.js';
 
@@ -91,15 +91,14 @@ export class PgReviewStore {
    * published must not be rewritten by later activity.
    */
   async invalidateForTask(taskId: string, reason: string): Promise<number> {
-    const rows = await this.deps.db
-      .updateTable('reviews')
-      .set({ status: 'stale', updated_at: new Date() })
-      .where('task_id', '=', taskId)
-      .where('status', 'in', ['building', 'ready', 'conflict'])
-      .returning('id')
-      .execute();
-    void reason;
-    return rows.length;
+    return this.deps.db.transaction().execute(async (db) => {
+      await db.selectFrom('tasks').select('id').where('id', '=', taskId).forUpdate().executeTakeFirst();
+      const rows = await db.updateTable('reviews').set({ status: 'stale', updated_at: new Date() })
+        .where('task_id', '=', taskId).where('status', 'in', ['building', 'ready', 'conflict'])
+        .returning('id').execute();
+      void reason;
+      return rows.length;
+    });
   }
 
   /**
@@ -193,8 +192,28 @@ export class PgReviewStore {
     candidateSha: string;
     bootId: string;
   }): Promise<{ operation: ApplyOperationRow; created: boolean }> {
-    try {
-      const row = await this.deps.db
+    return this.deps.db.transaction().execute(async (db) => {
+      const workspace = await db.selectFrom('workspaces').select('guidance_version')
+        .where('id', '=', input.workspaceId).forNoKeyUpdate().executeTakeFirstOrThrow();
+      const scoped = await db.selectFrom('reviews').select('task_id').where('id', '=', input.reviewId)
+        .where('workspace_id', '=', input.workspaceId).executeTakeFirst();
+      if (!scoped) throw new ApiError('REVIEW_NOT_FOUND');
+      const task = await db.selectFrom('tasks').select(['version', 'status', 'active_run_id'])
+        .where('id', '=', scoped.task_id).forUpdate().executeTakeFirstOrThrow();
+      const review = await db.selectFrom('reviews').selectAll().where('id', '=', input.reviewId)
+        .forUpdate().executeTakeFirstOrThrow();
+      const existing = await db.selectFrom('apply_operations').selectAll().where('review_id', '=', input.reviewId).executeTakeFirst();
+      if (existing) {
+        if (existing.candidate_sha !== input.candidateSha || existing.expected_main_sha !== input.expectedMainSha) throw new ApiError('INPUT_CONFLICT');
+        return { operation: existing, created: false };
+      }
+      if (review.status !== 'ready' || review.candidate_sha !== input.candidateSha || review.main_sha !== input.expectedMainSha ||
+          task.active_run_id || ['completed', 'canceled'].includes(task.status) || task.version !== review.task_version ||
+          workspace.guidance_version !== review.guidance_version) throw new ApiError('REVIEW_STALE');
+      const pending = await db.selectFrom('apply_operations as a').innerJoin('reviews as r', 'r.id', 'a.review_id')
+        .select('a.id').where('r.task_id', '=', scoped.task_id).where('a.status', 'in', ['pending', 'ambiguous']).executeTakeFirst();
+      if (pending) throw new ApiError('RUN_INTERRUPTED');
+      const row = await db
         .insertInto('apply_operations')
         .values({
           workspace_id: input.workspaceId,
@@ -207,12 +226,7 @@ export class PgReviewStore {
         .returningAll()
         .executeTakeFirstOrThrow();
       return { operation: row, created: true };
-    } catch (error) {
-      if (!isUniqueViolation(error)) throw error;
-      const existing = await this.readOperation(input.reviewId);
-      if (!existing) throw error;
-      return { operation: existing, created: false };
-    }
+    });
   }
 
   async settle(

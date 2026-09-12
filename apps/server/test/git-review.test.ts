@@ -24,13 +24,28 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'd06-git-'));
   workspaceId = randomUUID(); taskId = randomUUID(); reviewId = randomUUID(); git = new LocalGitService(root);
   repository = (await git.ensureRepository(workspaceId)).repositoryPath;
-  approved = (await checkpoint(randomUUID(), [{ path, text: original }])).commitSha;
+  approved = await sourceCommit((await git.initialize(workspaceId)).mainSha, original);
   await command('update-ref', 'refs/heads/main', approved);
 });
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
-async function agent(base: string, text: string | null, name = path) {
+/** Valid immutable sources for merge tests; worker integration has its own suite. */
+async function sourceCommit(base: string, text: string | null, name = path) {
+  const indexFile = join(root, `source-index-${randomUUID()}`);
+  const prefix = ['--git-dir', repository];
+  await runGit([...prefix, 'read-tree', base], { indexFile });
+  const hash = text === null ? '0'.repeat(40) : (await runGit([...prefix, 'hash-object', '-w', '--stdin', '--no-filters'], { input: text })).stdout.trim();
+  await runGit([...prefix, 'update-index', '-z', '--index-info'], { indexFile, input: `${text === null ? '0' : '100644'} ${hash}\t${name}\0` });
+  const tree = (await runGit([...prefix, 'write-tree'], { indexFile })).stdout.trim();
+  return command('commit-tree', tree, '-p', base, '-m', 'Review source fixture');
+}
+
+async function agent(base: string, text: string | null, name = path, integrate = false) {
   const runId = randomUUID(), agentInstanceId = randomUUID();
+  if (!integrate) {
+    const sha = await sourceCommit(base, text, name);
+    return { sha, runId, agentInstanceId, workerSha: sha };
+  }
   await git.createResult({ workspaceId, runId, baseSha: base });
   await git.createWorker({ workspaceId, agentInstanceId, baseSha: base });
   const prior = await git.readText({ workspaceId, target: { kind: 'commit', commitSha: base }, path: name, allowedPaths: [name] });
@@ -80,7 +95,7 @@ describe('D06 Git review candidates', { timeout: 120_000 }, () => {
 
   it('merges separate human and agent edits in the same file and preserves integrated/worker branches', async () => {
     const start = await checkpoint(taskId, []);
-    const worker = await agent(start.commitSha, original.replace('fifth', 'agent'));
+    const worker = await agent(start.commitSha, original.replace('fifth', 'agent'), path, true);
     const human = await checkpoint(taskId, [{ path, text: original.replace('first', 'human') }]);
     const result = await build(source(human.commitSha, worker.sha));
     expect(result.conflicts).toEqual([]);

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { reviewDetailSchema, type AgentResponse, type ReviewDetail } from '@app/contracts';
+import { AGENT_TIMEOUT_MS, reviewDetailSchema, type AgentResponse, type ReviewDetail } from '@app/contracts';
 import type { DbHandle } from '../src/db/client.js';
 import { FakeModelAdapter } from '../src/models/fake.js';
 import { ModelAdapterError } from '../src/models/types.js';
@@ -41,7 +41,7 @@ const structured = (summary: string, limitations: string[] = []): AgentResponse 
 
 describe('C07 review assessment', () => {
   beforeEach(() => { db = connectTestDb(); });
-  afterEach(async () => { await db.close(); });
+  afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); await db.close(); });
 
   const budget = (taskId: string, agentKey: string) =>
     db.db.selectFrom('task_agent_budgets').selectAll().where('task_id', '=', taskId).where('agent_key', '=', agentKey).executeTakeFirst();
@@ -129,13 +129,68 @@ describe('C07 review assessment', () => {
       { inputTokens: 10, result: failure },
       { inputTokens: 10, result: structured('Second attempt succeeded.') },
     ]);
-    const assessor = new ReviewAssessor({ db: db.db, adapter, reviews: reader, now: () => new Date() });
+    const wait = vi.fn(async (_ms: number, signal: AbortSignal) => { signal.throwIfAborted(); });
+    const assessor = new ReviewAssessor({ db: db.db, adapter, reviews: reader, wait });
     const result = await assessor.assess({ workspaceId, taskId, reviewId: detail.review.id });
     expect(result.summary).toBe('Second attempt succeeded.');
     expect(adapter.calls).toHaveLength(2);
+    expect(wait).toHaveBeenCalledWith(1000, expect.any(AbortSignal));
     const row = await budget(taskId, `review:${detail.review.id}`);
     // 7 (failed attempt's reported usage) + 500 (the fake step's default usage).
     expect(row).toMatchObject({ consumed_tokens: 507, reserved_tokens: 0 });
+  });
+
+  it.each(['success', 'failure', 'missing_total'] as const)('retains reservations for unknown usage on %s', async (kind) => {
+    const { workspaceId, taskId, reader, detail } = await fixture();
+    const usage = kind === 'missing_total' ? { status: 'reported' as const } : { status: 'unknown' as const };
+    const adapter = new FakeModelAdapter([{ inputTokens: 10, result: kind === 'failure'
+      ? new ModelAdapterError('provider_error', 'Unknown bill', false)
+      : { ...structured('Finding.'), usage } }]);
+    const assessor = new ReviewAssessor({ db: db.db, adapter, reviews: reader });
+    const assessment = assessor.assess({ workspaceId, taskId, reviewId: detail.review.id });
+    if (kind === 'failure') await expect(assessment).rejects.toBeInstanceOf(ModelAdapterError);
+    else await assessment;
+    const row = await budget(taskId, `review:${detail.review.id}`);
+    expect(row!.reserved_tokens).toBeGreaterThan(0);
+    expect(row!.consumed_tokens).toBe(0);
+    // A new candidate cannot reuse the unaccounted allowance.
+    detail.candidateSha = sha();
+    const next = new ReviewAssessor({ db: db.db, reviews: reader,
+      adapter: new FakeModelAdapter([{ inputTokens: 10, result: structured('Unused') }]) });
+    await expect(next.assess({ workspaceId, taskId, reviewId: detail.review.id })).rejects.toMatchObject({ code: 'token_exhausted' });
+  });
+
+  it.each(['count', 'generate'] as const)('times out an abort-ignoring %s and never publishes its late result', async (phase) => {
+    const { workspaceId, taskId, reader, detail } = await fixture();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reached = false;
+    const adapter = new FakeModelAdapter([{ inputTokens: 10, result: async () => {
+      reached = true; await gate; return structured('Too late');
+    } }]);
+    if (phase === 'count') vi.spyOn(adapter, 'countInput').mockImplementation(async () => {
+      reached = true; await gate; return 10;
+    });
+    const background: unknown[] = [];
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const assessor = new ReviewAssessor({ db: db.db, adapter, reviews: reader, onBackgroundError: (e) => background.push(e) });
+    const pending = assessor.assess({ workspaceId, taskId, reviewId: detail.review.id });
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'timed_out' });
+    try {
+      await vi.waitFor(() => expect(reached).toBe(true));
+      await vi.advanceTimersByTimeAsync(AGENT_TIMEOUT_MS);
+      await rejected;
+    } finally { vi.useRealTimers(); release(); }
+    if (phase === 'generate') {
+      await vi.waitFor(async () => expect(await budget(taskId, `review:${detail.review.id}`))
+        .toMatchObject({ consumed_tokens: 500, reserved_tokens: 0 }));
+    } else {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(await budget(taskId, `review:${detail.review.id}`)).toBeUndefined();
+      expect(adapter.calls).toHaveLength(0);
+    }
+    expect(await events(taskId)).toHaveLength(0);
+    expect(background).toEqual([]);
   });
 
   it('rejects a blocked response without recording a fabricated finding', async () => {

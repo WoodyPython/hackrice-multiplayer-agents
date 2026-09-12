@@ -82,8 +82,7 @@ input counting and C02 reservations. It creates/removes its own synthetic
 database records, sends no workspace content, and logs only usage/status.
 Real-call verification is currently blocked: `GEMINI_API_KEY` is not configured.
 
-D08 has not landed: runtime startup does not yet invoke prior-boot interruption
-or reconcile pending applies. The recovery method is tested as an explicit
-handoff; this does not establish end-to-end restart recovery. C08's real-call
-and D08 integration requirements therefore remain unverified. A05 can add the
-saved-output picker using the additive endpoints above.
+D08 runtime startup interrupts prior-boot runs and reconciles pending applies.
+The retry suite verifies retry after that interruption seam; runtime recovery
+has separate integration coverage. Real-provider verification still requires
+GEMINI_API_KEY. A05 can add the saved-output picker using the additive endpoints above.

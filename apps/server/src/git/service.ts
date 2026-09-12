@@ -345,6 +345,12 @@ export class LocalGitService implements Pick<GitService,
     });
   }
 
+  async readReviewArtifact(input: { workspaceId: string; reviewId: string; candidateSha: string }) {
+    const value = parse(reviewIdentity, input);
+    return this.files(value.workspaceId, (files, repo) =>
+      new ReviewGit(repo.repositoryPath, files, this.git).read(value.reviewId.toLowerCase(), value.candidateSha));
+  }
+
   async resolveReview(input: { workspaceId: string; reviewId: string } & ResolveCandidateRequest) {
     const identity = parse(reviewIdentity, { ...input, candidateSha: input.expectedCandidateSha });
     const request = parse(resolveCandidateRequestSchema, {

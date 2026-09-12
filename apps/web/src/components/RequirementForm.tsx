@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { postTaskRequestSchema } from "@app/contracts";
-import type { TaskInputOption } from "../task-inputs";
+import { inputIdentity, type TaskInputOption } from "../task-inputs";
 
 /** The fields §2.1 puts on the form, shared by posting and revising. */
 export type TaskFields = {
@@ -48,15 +48,11 @@ export function RequirementForm({
   heading?: { eyebrow: string; title: string; blurb: string };
 }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [selected, setSelected] = useState<number[]>(() =>
-    options.flatMap((option, index) =>
-      (initial?.inputs ?? []).some(
-        (value) => JSON.stringify(value) === JSON.stringify(option.value),
-      )
-        ? [index]
-        : [],
-    ),
-  );
+  const [selected, setSelected] = useState<TaskInputOption["value"][]>(() => initial?.inputs ?? []);
+  const identity = inputIdentity;
+  const choices = [...options, ...selected.filter((value) => !options.some((option) => identity(option.value) === identity(value)))
+    .map((value) => ({ value, category: "Selected input (no longer listed)",
+      label: "approvedPath" in value ? value.approvedPath : "materialId" in value ? value.materialId : value.draftFileId }))];
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,7 +67,7 @@ export function RequirementForm({
       outcome: String(data.get("outcome") ?? ""),
       criteria: lines("criteria"),
       outputPaths: lines("outputPaths"),
-      inputs: selected.map((index) => options[index]!.value),
+      inputs: selected,
     };
     // Validate against the post schema in both modes: it carries every field
     // constraint, and field-level errors are what the form needs to render.
@@ -163,23 +159,23 @@ export function RequirementForm({
       <fieldset>
         <legend>Selected inputs</legend>
         <p className="muted">Give the task the context it needs.</p>
-        {options.length === 0 ? (
+        {choices.length === 0 ? (
           <p className="muted">
             Nothing to select yet. Upload a reference material, or open a file
             with Edit together, and it will appear here.
           </p>
         ) : (
-          options.map((option, index) => (
-            <label className="input-option" key={`${option.category}:${option.label}`}>
+          choices.map((option) => (
+            <label className="input-option" key={identity(option.value)}>
               <input
                 type="checkbox"
                 name="inputs"
-                checked={selected.includes(index)}
+                checked={selected.some((value) => identity(value) === identity(option.value))}
                 onChange={(event) =>
                   setSelected((current) =>
                     event.target.checked
-                      ? [...current, index]
-                      : current.filter((value) => value !== index),
+                      ? [...current, option.value]
+                      : current.filter((value) => identity(value) !== identity(option.value)),
                   )
                 }
               />

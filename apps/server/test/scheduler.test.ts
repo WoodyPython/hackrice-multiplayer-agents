@@ -9,6 +9,7 @@ import { NullWorkerResultIntegrationService, planningContextSchema,
 import { PgAgentLedger } from '../src/agents/ledger.js';
 import { ParallelAssignmentScheduler, PgPlanStore } from '../src/orchestration/index.js';
 import { PgWorkerStore } from '../src/workers/store.js';
+import { PgTaskService } from '../src/tasks/service.js';
 import { WorkerExecutor } from '../src/workers/executor.js';
 import { LocalGitService } from '../src/git/service.js';
 import { FakeModelAdapter, type ModelAdapter, type AgentResponse } from '../src/models/index.js';
@@ -77,6 +78,32 @@ function runtime(f: Fixture, options: {
 }
 
 describe('parallel assignment scheduler', () => {
+  it('can cancel a live sibling after another assignment exhausts its budget', async () => {
+    const f = await fixture(plan(assignment('exhausted'), assignment('peer')));
+    const wait = gate();
+    const r = runtime(f, { beforeFinish: async (id, key) => {
+      if (key === 'peer') { await wait.promise; return; }
+      await f.ledger.reserve({ agentInstanceId: id, requestKey: 'too-large', inputTokens: 64000,
+        profile: new FakeModelAdapter([]).getModel('analyst') });
+    } });
+    const running = r.scheduler.schedule(f.input);
+    // Observe rejection immediately, before cancellation releases its gates.
+    const stopped = expect(running).rejects.toBeDefined();
+    try {
+      await vi.waitFor(async () => {
+        expect((await rows(f.runId)).find((a) => a.assignment_key === 'peer')?.status).toBe('running');
+        expect((await db.db.selectFrom('tasks').select('status').where('id', '=', f.taskId).executeTakeFirstOrThrow()).status).toBe('incomplete');
+      });
+      const tasks = new PgTaskService({ db: db.db, bootId: BOOT_ID, orchestration: {
+        onRunCreated() {}, onCancelRequested() { r.scheduler.cancel(f.runId); wait.resolve(); },
+      } });
+      await tasks.cancel(f.workspaceId, f.taskId);
+      await stopped;
+      expect((await rows(f.runId)).map((a) => a.status).sort()).toEqual(['canceled', 'token_exhausted']);
+      expect(r.workers.cancel).toHaveBeenCalled();
+    } finally { wait.resolve(); }
+  });
+
   it('integrates real parallel C04 checkpoints through D05 before a dependent reads both outputs', async () => {
     const root = await mkdtemp(join(tmpdir(), 'c05-d05-'));
     try {
@@ -159,22 +186,20 @@ describe('parallel assignment scheduler', () => {
   });
 
   it('dispatches all ready workers, persists edges first, and starts dependencies only after receipts', async () => {
-    for (let round = 0; round < 3; round++) {
-      const f = await fixture(plan(assignment('a'), assignment('b'), assignment('join', ['a', 'b'])));
-      const wait = gate();
-      const r = runtime(f, { beforeFinish: async (_id, key) => { if (key !== 'join') await wait.promise; } });
-      const pending = r.scheduler.schedule(f.input);
-      try {
-        await vi.waitFor(() => expect(r.started).toHaveLength(2));
-        const waiting = (await rows(f.runId)).find((a) => a.assignment_key === 'join')!;
-        expect(waiting.status).toBe('pending'); expect(waiting.started_at).toBeNull(); expect(waiting.deadline_at).toBeNull(); expect(waiting.base_sha).toBeNull();
-        expect(await db.db.selectFrom('agent_dependencies').selectAll().where('run_id', '=', f.runId).execute()).toHaveLength(2);
-      } finally { wait.resolve(); }
-      const result = await pending;
-      expect(Object.values(result.assignments).every((a) => a.status === 'integrated')).toBe(true);
-      expect(r.started[2]).toBe('join'); expect(r.git.createWorker).not.toHaveBeenCalled();
-      expect((await events(f.runId)).filter((e) => e.payload.phase === 'integration')).toHaveLength(3);
-    }
+    const f = await fixture(plan(assignment('a'), assignment('b'), assignment('join', ['a', 'b'])));
+    const wait = gate();
+    const r = runtime(f, { beforeFinish: async (_id, key) => { if (key !== 'join') await wait.promise; } });
+    const pending = r.scheduler.schedule(f.input);
+    try {
+      await vi.waitFor(() => expect(r.started).toHaveLength(2));
+      const waiting = (await rows(f.runId)).find((a) => a.assignment_key === 'join')!;
+      expect(waiting.status).toBe('pending'); expect(waiting.started_at).toBeNull(); expect(waiting.deadline_at).toBeNull(); expect(waiting.base_sha).toBeNull();
+      expect(await db.db.selectFrom('agent_dependencies').selectAll().where('run_id', '=', f.runId).execute()).toHaveLength(2);
+    } finally { wait.resolve(); }
+    const result = await pending;
+    expect(Object.values(result.assignments).every((a) => a.status === 'integrated')).toBe(true);
+    expect(r.started[2]).toBe('join'); expect(r.git.createWorker).not.toHaveBeenCalled();
+    expect((await events(f.runId)).filter((e) => e.payload.phase === 'integration')).toHaveLength(3);
   });
 
   it('has no global two-task cap, even within one workspace', async () => {

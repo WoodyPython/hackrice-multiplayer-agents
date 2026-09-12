@@ -215,8 +215,12 @@ export class StartOrchestrator implements OrchestrationHook {
   /** Durable, human-readable "why", with no provider or filesystem text in it. */
   private async event(runId: string, reason: string, payload: Record<string, unknown>): Promise<void> {
     await this.deps.db.transaction().execute(async (trx) => {
-      const run = await trx.selectFrom('runs').selectAll().where('id', '=', runId).executeTakeFirst();
-      if (!run || run.boot_id !== this.deps.bootId || !isActiveRunStatus(run.status)) return;
+      const seed = await trx.selectFrom('runs').select('task_id').where('id', '=', runId).executeTakeFirst();
+      if (!seed) return;
+      const task = await trx.selectFrom('tasks').select('active_run_id').where('id', '=', seed.task_id)
+        .forUpdate().executeTakeFirst();
+      const run = await trx.selectFrom('runs').selectAll().where('id', '=', runId).forUpdate().executeTakeFirst();
+      if (!run || task?.active_run_id !== runId || run.boot_id !== this.deps.bootId || !isActiveRunStatus(run.status)) return;
       await appendEvent(trx, {
         workspaceId: run.workspace_id, taskId: run.task_id, runId,
         eventKey: `run:${runId}:start:${reason}`, type: 'agent.waiting',

@@ -22,7 +22,7 @@ import { ModelAdapterError, type AgentMessage, type AgentResponse, type ModelAda
  * before calling, settle after every outcome (including a failure), and never
  * return budget on failure without usable usage (design section 9.3). What
  * does not: this never touches `agent_instances`, so it makes no Git or task
- * writes and needs no run/boot/deadline check before recording its result.
+ * writes and needs no active-run check. Its own deadline still gates results.
  */
 
 export class ReviewAssessmentError extends Error {
@@ -62,6 +62,8 @@ export interface ReviewAssessorDeps {
   adapter: Pick<ModelAdapter, 'getModel' | 'countInput' | 'generate'>;
   reviews: ReviewReader;
   now?: () => Date;
+  wait?: (ms: number, signal: AbortSignal) => Promise<void>;
+  onBackgroundError?: (error: unknown) => void;
 }
 
 export class ReviewAssessor implements ReviewAssessmentService {
@@ -69,8 +71,8 @@ export class ReviewAssessor implements ReviewAssessmentService {
   constructor(private readonly deps: ReviewAssessorDeps) {}
   private now(): Date { return this.deps.now?.() ?? new Date(); }
 
-  /** Coalesces identical concurrent requests; the durable event key is the
-   * cross-process backstop against a genuine race spending budget twice. */
+  /** Coalesces identical concurrent requests in this runtime. The durable event
+   * key prevents duplicate findings; it is not a cross-process provider claim. */
   assess(input: { workspaceId: string; taskId: string; reviewId: string }): Promise<ReviewAssessment> {
     const key = input.reviewId;
     const existing = this.inFlight.get(key);
@@ -111,8 +113,22 @@ export class ReviewAssessor implements ReviewAssessmentService {
     const deadline = this.now().getTime() + AGENT_TIMEOUT_MS;
     const timer = setTimeout(() => controller.abort(new ReviewAssessmentError('timed_out')), AGENT_TIMEOUT_MS);
     timer.unref?.();
+    let onAbort: () => void = () => {};
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(new ReviewAssessmentError('timed_out'));
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+    });
+    // Only generate owns settlement. Timeout rejects the caller while that
+    // same operation remains responsible for any late provider usage.
+    const operation = this.generate(input.taskId, input.workspaceId, agentKey, profile, messages, controller.signal, deadline);
+    void operation.catch((error: unknown) => {
+      if (controller.signal.aborted && !(error instanceof ReviewAssessmentError) && !(error instanceof ModelAdapterError)) {
+        this.deps.onBackgroundError?.(error);
+      }
+    });
     try {
-      const response = await this.generate(input.taskId, input.workspaceId, agentKey, profile, messages, controller.signal, deadline);
+      const response = await Promise.race([operation, aborted]);
+      this.checkDeadline(controller.signal, deadline);
       if (response.blockReason) throw new ReviewAssessmentError('blocked_response');
       if (response.finishReason !== 'STOP') throw new ReviewAssessmentError('invalid_response');
       let parsed: unknown;
@@ -126,10 +142,21 @@ export class ReviewAssessor implements ReviewAssessmentService {
       });
       // Section 13.3: never let provider text or internal paths reach the
       // durable log outside this validated, structured shape.
-      await appendEvent(this.deps.db, { workspaceId: input.workspaceId, taskId: input.taskId, runId: null,
-        eventKey, type: 'review.assessed', payload: { reviewId: input.reviewId, candidateSha: detail.candidateSha, result } });
+      await this.deps.db.transaction().execute(async (trx) => {
+        this.checkDeadline(controller.signal, deadline);
+        await appendEvent(trx, { workspaceId: input.workspaceId, taskId: input.taskId, runId: null,
+          eventKey, type: 'review.assessed', payload: { reviewId: input.reviewId, candidateSha: detail.candidateSha, result } });
+        this.checkDeadline(controller.signal, deadline);
+      });
       return result;
-    } finally { clearTimeout(timer); }
+    } catch (error) {
+      this.checkDeadline(controller.signal, deadline);
+      throw error;
+    } finally { clearTimeout(timer); controller.signal.removeEventListener('abort', onAbort); }
+  }
+
+  private checkDeadline(signal: AbortSignal, deadline: number) {
+    if (signal.aborted || this.now().getTime() >= deadline) throw new ReviewAssessmentError('timed_out');
   }
 
   /** Reserve -> generate -> settle, retried on a retryable provider error
@@ -141,20 +168,23 @@ export class ReviewAssessor implements ReviewAssessmentService {
       responseJsonSchema: RESPONSE_SCHEMA, messages };
     let backoff = 1000;
     while (true) {
-      signal.throwIfAborted();
+      this.checkDeadline(signal, deadline);
       const inputTokens = await this.deps.adapter.countInput(structuredClone(request), signal);
+      this.checkDeadline(signal, deadline);
       const reservation = await this.reserve(taskId, workspaceId, agentKey, inputTokens, profile);
       let sent = false, response: AgentResponse | undefined;
       try {
-        signal.throwIfAborted();
+        this.checkDeadline(signal, deadline);
         sent = true;
         response = await this.deps.adapter.generate(structuredClone(request), { maxOutputTokens: reservation.maxOutputTokens }, signal);
       } catch (error) {
         await this.settle(taskId, agentKey, reservation.reservedTokens, !sent
           ? { status: 'reported', totalTokens: 0 }
           : error instanceof ModelAdapterError ? error.usage : { status: 'unknown' });
+        this.checkDeadline(signal, deadline);
         if (error instanceof ModelAdapterError && error.retryable && this.now().getTime() < deadline) {
-          await delay(backoff, undefined, { signal });
+          try { await (this.deps.wait?.(backoff, signal) ?? delay(backoff, undefined, { signal })); }
+          catch (waitError) { this.checkDeadline(signal, deadline); throw waitError; }
           backoff = Math.min(backoff * 2, 30000);
           continue;
         }
@@ -184,12 +214,13 @@ export class ReviewAssessor implements ReviewAssessmentService {
   }
 
   private async settle(taskId: string, agentKey: string, reservedTokens: number, usage: ModelUsage): Promise<void> {
+    if (usage.status !== 'reported' || usage.totalTokens === undefined) return;
+    const totalTokens = usage.totalTokens;
     await this.deps.db.transaction().execute(async (trx) => {
       const budget = await trx.selectFrom('task_agent_budgets').selectAll()
         .where('task_id', '=', taskId).where('agent_key', '=', agentKey).forUpdate().executeTakeFirstOrThrow();
-      const known = usage.status === 'reported' && usage.totalTokens !== undefined;
       await trx.updateTable('task_agent_budgets').set({
-        consumed_tokens: known ? budget.consumed_tokens + usage.totalTokens! : budget.consumed_tokens,
+        consumed_tokens: budget.consumed_tokens + totalTokens,
         reserved_tokens: budget.reserved_tokens - reservedTokens, updated_at: this.now(),
       }).where('task_id', '=', taskId).where('agent_key', '=', agentKey).execute();
     });

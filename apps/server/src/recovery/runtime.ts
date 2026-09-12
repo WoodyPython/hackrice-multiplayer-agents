@@ -122,7 +122,8 @@ export async function startRuntime(options: RuntimeOptions) {
     collaboration.onAcceptedChange = (taskId, revisionMark) => reviews.invalidate({ taskId, reason: revisionMark });
     // C07: a fresh assessment reads the review's own current candidate rather
     // than any run, so it needs only the review reader, not the Git service.
-    const reviewAssessments = new ReviewAssessor({ db: db.db, adapter, reviews });
+    const reviewAssessments = new ReviewAssessor({ db: db.db, adapter, reviews,
+      onBackgroundError: (error) => app?.log.error({ err: error }, 'review usage settlement failed after timeout') });
     const reviewEvidence = new ReviewEvidenceComposer({ db: db.db });
     await registerReviewRoutes(app, reviews, { evidence: reviewEvidence, assessments: reviewAssessments });
     const applies = await reviews.reconcilePreviousApplies();

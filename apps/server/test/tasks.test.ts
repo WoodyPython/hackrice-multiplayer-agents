@@ -82,10 +82,6 @@ describe('posting is inert', () => {
     // Section 2.1: posting makes no Gemini request. The hook is the only path
     // to orchestration, and it must not have fired.
     expect(t.orchestration.created.length).toBe(before);
-  });
-
-  it('records a task.posted event', async () => {
-    const task = await postTask(t.app, workspaceId);
     const events = await t.handle.db
       .selectFrom('task_events')
       .selectAll()

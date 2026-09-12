@@ -1,4 +1,3 @@
-import { sql } from 'kysely';
 import {
   ApiError,
   type UpdateWorkspaceRequest,
@@ -11,6 +10,7 @@ import type { Workspace as WorkspaceRow } from '../db/types.js';
 import { contributionUrl } from '../config.js';
 import { generateOwnerKey, hashOwnerKey, ownerKeyMatches } from './owner-key.js';
 import { toIso } from '../http/serialize.js';
+import { assertWorkspaceMutable, invalidateTaskReviews } from '../tasks/mutation-guard.js';
 
 /**
  * B02: anonymous workspaces (design sections 1.2, 12.1, 12.2).
@@ -93,36 +93,32 @@ export class PgWorkspaceService implements WorkspaceService {
    * 11.5 re-compares the stored guidance version at Apply, so bumping it for a
    * name edit would invalidate every pending review for no reason.
    *
-   * Written as one statement rather than read-then-write so two concurrent
-   * owner edits cannot both read the old version and produce a single bump.
+   * Serialized under the workspace lock, including review invalidation.
    */
   async updateGuidance(
     workspaceId: string,
     input: UpdateWorkspaceRequest,
   ): Promise<Workspace> {
-    const name = input.name?.trim() ?? null;
-    const purpose = input.purpose ?? null;
-    const guidance = input.guidance ?? null;
-
-    const result = await sql<WorkspaceRow>`
-      update workspaces set
-        name     = coalesce(${name}::text, name),
-        purpose  = coalesce(${purpose}::text, purpose),
-        guidance = coalesce(${guidance}::text, guidance),
-        guidance_version = guidance_version + case
-          when ${guidance}::text is not null
-           and ${guidance}::text is distinct from guidance
-          then 1 else 0 end,
-        updated_at = now()
-      where id = ${workspaceId}::uuid
-      returning *
-    `.execute(this.deps.db);
-
-    const row = result.rows[0];
-    if (!row) throw new ApiError('WORKSPACE_NOT_FOUND', 'No such workspace.');
-
-    // The caller already proved ownership to reach this method.
-    return toPublicWorkspace(row, true);
+    return this.deps.db.transaction().execute(async (trx) => {
+      // No key changes: remain compatible with task writers' FK key-share locks.
+      const current = await trx.selectFrom('workspaces').selectAll().where('id', '=', workspaceId)
+        .forNoKeyUpdate().executeTakeFirst();
+      if (!current) throw new ApiError('WORKSPACE_NOT_FOUND', 'No such workspace.');
+      const changed = input.guidance !== undefined && input.guidance !== current.guidance;
+      if (changed) await assertWorkspaceMutable(trx, workspaceId);
+      const row = await trx.updateTable('workspaces').set({
+        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+        ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
+        ...(input.guidance !== undefined ? { guidance: input.guidance } : {}),
+        guidance_version: current.guidance_version + Number(changed), updated_at: new Date(),
+      }).where('id', '=', workspaceId).returningAll().executeTakeFirstOrThrow();
+      if (changed) {
+        const tasks = await trx.selectFrom('tasks').select('id').where('workspace_id', '=', workspaceId)
+          .orderBy('id').forUpdate().execute();
+        for (const task of tasks) await invalidateTaskReviews(trx, task.id, `guidance:${row.guidance_version}`);
+      }
+      return toPublicWorkspace(row, true);
+    });
   }
 
   private async findRow(workspaceId: string): Promise<WorkspaceRow | undefined> {

@@ -60,9 +60,10 @@ async function session(f: Awaited<ReturnType<typeof fixture>>, service: GuardedW
   const controller = new AbortController();
   return { tools, controller, invoke: (name: string, args: Record<string, unknown>) => tools.invoke(call(name, args), controller.signal) };
 }
-function executor(adapter: FakeModelAdapter, service: GuardedWorkerGitService = git) {
+function executor(adapter: FakeModelAdapter, service: GuardedWorkerGitService = git,
+  wait?: (ms: number, signal: AbortSignal) => Promise<void>) {
   return new WorkerExecutor({ db: db.db, ledger, adapter, git: service, materials,
-    now: () => clock, onBackgroundError: (error) => errors.push(error) });
+    now: () => clock, wait, onBackgroundError: (error) => errors.push(error) });
 }
 async function state(id: string) { return db.db.selectFrom('agent_instances').selectAll().where('id', '=', id).executeTakeFirstOrThrow(); }
 async function events(id: string, type: string) {
@@ -221,7 +222,9 @@ describe('budgeted worker tool loop and human waits', () => {
     const f = await fixture();
     const adapter = new FakeModelAdapter([{ inputTokens: 10, result: new ModelAdapterError('rate_limited', 'Retry', true, 429, { status: 'reported', totalTokens: 10 }) },
       { inputTokens: 20, result: done() }]);
-    await executor(adapter).execute(f);
+    const wait = vi.fn(async (_ms: number, signal: AbortSignal) => { signal.throwIfAborted(); });
+    await executor(adapter, git, wait).execute(f);
+    expect(wait).toHaveBeenCalledWith(1000, expect.any(AbortSignal));
     const agent = await state(f.agentInstanceId);
     expect(new Date(agent.deadline_at!).getTime() - new Date(agent.started_at!).getTime()).toBe(AGENT_TIMEOUT_MS);
     expect(adapter.calls).toHaveLength(2);

@@ -6,6 +6,7 @@ import {
   type Material,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { readDiscussionPages } from "../task-polling";
 import { apiMessage } from "../workspace-api";
 import { EmptyState } from "./EmptyState";
 
@@ -321,14 +322,8 @@ function DiscussionItem({
   );
 }
 
-/**
- * Poll the thread forward from the highest seq already held.
- *
- * Additive by construction: `afterSeq` means a refetch returns only what is
- * new, so polling frequently costs little and a duplicate poll changes nothing.
- * That is what makes a refresh hint safe to act on without deduplicating it —
- * the interface note's "if your refetch is idempotent, you have handled every
- * case the transport can produce".
+/** Refresh the complete thread because questions and cutoff labels mutate in place.
+ * Publish only a successful paginated snapshot; failed refreshes keep the last good thread.
  */
 export function useDiscussion(workspaceId: string, taskId: string | undefined) {
   const { api } = useBrowser();
@@ -338,25 +333,6 @@ export function useDiscussion(workspaceId: string, taskId: string | undefined) {
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
-  const seen = useRef(0);
-  /**
-   * Forces the next pull to start from zero.
-   *
-   * `afterSeq` is an append cursor, and answering a question changes an entry
-   * that is already below the cursor: its `question.status` goes open →
-   * answered in place. Polling additively would leave that entry rendering
-   * "open" with an answer box under it forever. So a mutation this client
-   * performed re-reads the whole thread and merges by id, while ordinary
-   * polling stays additive.
-   */
-  const rescan = useRef(false);
-
-  useEffect(() => {
-    seen.current = 0;
-    setEntries([]);
-    setLatestSeq(0);
-  }, [taskId]);
-
   useEffect(() => {
     if (!taskId) return;
     const controller = new AbortController();
@@ -365,26 +341,9 @@ export function useDiscussion(workspaceId: string, taskId: string | undefined) {
 
     const pull = async () => {
       try {
-        const from = rescan.current ? 0 : seen.current;
-        rescan.current = false;
-        const page = await api.listDiscussion(
-          workspaceId,
-          taskId,
-          from,
-          controller.signal,
-        );
+        const page = await readDiscussionPages(api, workspaceId, taskId, controller.signal);
         if (controller.signal.aborted || stopped) return;
-        if (page.entries.length > 0) {
-          seen.current = Math.max(
-            seen.current,
-            ...page.entries.map((entry) => entry.seq),
-          );
-          setEntries((current) => {
-            const byId = new Map(current.map((entry) => [entry.id, entry]));
-            for (const entry of page.entries) byId.set(entry.id, entry);
-            return [...byId.values()].sort((a, b) => a.seq - b.seq);
-          });
-        }
+        setEntries(page.entries);
         setLatestSeq(page.latestSeq);
         setCutoff(page.activeRunCutoffSeq);
         setFailure(null);
@@ -413,7 +372,6 @@ export function useDiscussion(workspaceId: string, taskId: string | undefined) {
     failure,
     /** Call after a write: re-reads in full so in-place changes are picked up. */
     refresh: () => {
-      rescan.current = true;
       setNonce((value) => value + 1);
     },
   };

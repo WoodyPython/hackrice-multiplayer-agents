@@ -45,9 +45,9 @@ async function fixture() {
   const agent = await ledger.createInstance({ runId, agentKey: 'orchestrator', assignmentKey: 'orchestrator', preset: 'orchestrator', modelId: 'fake' });
   return { runId, taskId, agentInstanceId: agent.id, context };
 }
-function planner(adapter: FakeModelAdapter) {
+function planner(adapter: FakeModelAdapter, wait?: (ms: number, signal: AbortSignal) => Promise<void>) {
   return new OrchestratorPlanner({ db: handle.db, ledger, adapter, bootId: BOOT_ID,
-    now: () => clock, onBackgroundError: (e) => { errors.push(e); } });
+    now: () => clock, wait, onBackgroundError: (e) => { errors.push(e); } });
 }
 async function artifacts(agentId: string) {
   return handle.db.selectFrom('task_events').selectAll()
@@ -147,7 +147,9 @@ describe('orchestrator planning with real persistence and budget accounting', ()
       { inputTokens: 20, result: new ModelAdapterError('rate_limited', 'Retry later', true, 429, { status: 'reported', totalTokens: 25 }) },
       { inputTokens: 20, result: response() },
     ]);
-    await planner(adapter).plan(f);
+    const wait = vi.fn(async (_ms: number, signal: AbortSignal) => { signal.throwIfAborted(); });
+    await planner(adapter, wait).plan(f);
+    expect(wait).toHaveBeenCalledWith(1000, expect.any(AbortSignal));
     const calls = await handle.db.selectFrom('model_calls').select('request_key').where('agent_id', '=', f.agentInstanceId).execute();
     expect(calls).toHaveLength(2); expect(new Set(calls.map((c) => c.request_key)).size).toBe(2);
     expect((await handle.db.selectFrom('task_agent_budgets').select('consumed_tokens').where('task_id', '=', f.taskId).executeTakeFirstOrThrow()).consumed_tokens).toBe(125);

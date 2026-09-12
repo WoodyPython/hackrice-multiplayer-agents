@@ -22,6 +22,7 @@ Text-only replies are not completion. Tool errors require correction, never a pe
 interface Deps {
   db: Db; ledger: PgAgentLedger; adapter: ModelAdapter; git: GuardedWorkerGitService;
   materials: Pick<MaterialService, 'readSelected'>; onBackgroundError: (error: unknown) => void; now?: () => number;
+  wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 export class WorkerExecutor implements WorkerExecutionService {
   private readonly store: PgWorkerStore;
@@ -72,7 +73,7 @@ export class WorkerExecutor implements WorkerExecutionService {
         } catch (error) {
           if (!(error instanceof ModelAdapterError) || !error.retryable) throw error;
           await this.store.providerWait(id, requestKey, backoff, true, scope.signal);
-          await scope.run((signal) => waitForWorker(backoff, signal));
+          await scope.run((signal) => this.deps.wait?.(backoff, signal) ?? waitForWorker(backoff, signal));
           await this.store.providerWait(id, requestKey, backoff, false, scope.signal);
           backoff = Math.min(backoff * 2, 30000); continue;
         }

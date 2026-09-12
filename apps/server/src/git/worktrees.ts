@@ -12,6 +12,12 @@ export type Tree = Map<string, Entry>;
 
 /** Only constructed inside LocalGitService.withRepository: this class never locks. */
 export class ManagedWorktrees {
+  // Immutable objects only, scoped to one locked public operation. Never cache
+  // refs or filesystem checks: both must detect changes on the next access.
+  private readonly blobs = new Map<string, Buffer>();
+  private blobBytes = 0;
+  private readonly trees = new Map<string, Tree>();
+  private treeEntries = 0;
   constructor(
     private readonly root: string,
     private readonly workspaceId: string,
@@ -44,6 +50,8 @@ export class ManagedWorktrees {
   }
 
   async tree(sha: string): Promise<Tree> {
+    const cached = this.trees.get(sha);
+    if (cached) return new Map([...cached].map(([path, entry]) => [path, { ...entry }]));
     const result = await this.command(['ls-tree', '-r', '-z', '--full-tree', sha], { binary: true });
     let listing: string;
     try { listing = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(result.stdoutBytes!); }
@@ -58,16 +66,26 @@ export class ManagedWorktrees {
       entries.set(path, { mode: mode!, hash: hash! });
     }
     portablePaths(entries.keys());
+    if (this.treeEntries + entries.size <= 10_000 && this.trees.size < 128) {
+      this.trees.set(sha, new Map([...entries].map(([path, entry]) => [path, { ...entry }])));
+      this.treeEntries += entries.size;
+    }
     return entries;
   }
 
   async blob(hash: string): Promise<Buffer> {
+    const cached = this.blobs.get(hash);
+    if (cached) return Buffer.from(cached);
     const size = Number((await this.command(['cat-file', '-s', hash])).stdout.trim());
     if (!Number.isSafeInteger(size) || size < 0) throw new GitRuntimeError('INVALID_BLOB');
     if (size > MAX_TEXT_FILE_BYTES) throw new ApiError('VALIDATION_FAILED', 'File exceeds the 1 MiB limit.');
     const { stdoutBytes } = await this.command(['cat-file', 'blob', hash], { binary: true });
     if (!stdoutBytes || stdoutBytes.length !== size) throw new GitRuntimeError('INVALID_BLOB');
     decodeText(stdoutBytes);
+    if (this.blobBytes + size <= 8 * 1024 * 1024 && this.blobs.size < 1024) {
+      this.blobs.set(hash, Buffer.from(stdoutBytes));
+      this.blobBytes += size;
+    }
     return stdoutBytes;
   }
 
@@ -391,7 +409,7 @@ export class ManagedWorktrees {
       else {
         const bytes = textBytes(change.newText);
         replacements.set(change.path, bytes);
-        proposed.set(change.path, { mode: '100644', hash: blobHash(bytes) });
+        proposed.set(change.path, { mode: current.get(change.path)?.mode ?? '100644', hash: blobHash(bytes) });
       }
     }
     // Also reject file/directory transitions within one batch: no implicit
@@ -420,7 +438,7 @@ export class ManagedWorktrees {
           const bytes = replacements.get(path)!;
           const hash = (await this.command(['hash-object', '-w', '--stdin', '--no-filters'], { input: bytes })).stdout.trim();
           if (hash !== next.hash) throw new GitRuntimeError('INVALID_BLOB');
-          records += `100644 ${hash}\t${path}\0`;
+          records += `${next.mode} ${hash}\t${path}\0`;
         }
       }
       await this.command(['update-index', '-z', '--index-info'], { indexFile, input: records });
