@@ -412,13 +412,23 @@ Default to readable content. Put Git commit IDs and operation metadata in Detail
 
 All contributors can discuss changes. Only the owner key enables application. The server performs the same check; hiding a button is insufficient.
 
-**Two gaps stand between this section and a screen.** There is no read path to a
-task's current review: `reviewId` is not on the task detail shape, and the only
-way to obtain one is `POST /tasks/:t/review`, which prepares a candidate and is
-therefore a mutation — not something a page may call on load. And there is no
-apply route at all; `applyReviewRequestSchema` and `applyReviewResponseSchema`
-exist in `@app/contracts` with nothing behind them. Both are needed before the
-Changes tab can be more than an explanation of why it is empty.
+**A review is requested, never automatic.** A task reaches `ready_for_review`
+when its assignments integrate, and no review row exists at that point —
+nothing calls prepare on its behalf. So the review screen for such a task shows
+that state and offers to prepare one; the absence of a review is reported as
+"not requested yet" and never as "no changes", which is a different claim
+entirely.
+
+That is deliberate rather than an omission. Preparing builds a Git candidate and
+refuses from a dozen states — while a run is active, before every assignment has
+completed, when a selected material has gone missing — and those refusals are
+only intelligible as the answer to something a person asked for. It also keeps
+two people opening the same tab from racing each other into a candidate build.
+
+`GET /tasks/:t/reviews` is the read path, returning review metadata newest
+first. It exists because the mutation above cannot be used to discover what a
+screen is looking at. It carries no candidate artifact: reading one means
+reading Git, and a review that is still `building` has no SHA to read.
 
 ### 4.7 Minimal error states
 

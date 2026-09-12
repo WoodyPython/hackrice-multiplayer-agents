@@ -9,8 +9,11 @@ import {
   draftFileSchema,
   isSupportedTextExtension,
   listDiscussionResponseSchema,
+  applyReviewResponseSchema,
   listTaskAgentsResponseSchema,
+  listTaskReviewsResponseSchema,
   materialSchema,
+  reviewDetailSchema,
   taskEventSchema,
   openDraftResponseSchema,
   postTaskRequestSchema,
@@ -29,6 +32,10 @@ import {
   type DraftFile,
   type ListDiscussionResponse,
   type Material,
+  type ApplyReviewResponse,
+  type ResolveCandidateRequest,
+  type Review,
+  type ReviewDetail,
   type TaskAttempt,
   type TaskEvent,
   type OpenDraftResponse,
@@ -321,6 +328,126 @@ export class WorkspaceApi {
           signal,
         ),
       );
+  }
+
+  // --- reviews -------------------------------------------------------------
+
+  /**
+   * Reviews on a task, newest first — metadata only (§4.6).
+   *
+   * This is the read path that lets a screen find out what it is looking at.
+   * `POST /tasks/:t/review` builds a Git candidate and refuses from a dozen
+   * states, so it cannot be called on load just to discover an ID.
+   */
+  async listTaskReviews(
+    workspaceId: string,
+    taskId: string,
+    signal?: AbortSignal,
+  ): Promise<Review[]> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(taskId);
+    return listTaskReviewsResponseSchema.parse(
+      await this.request(
+        `/${workspaceId}/tasks/${taskId}/reviews`,
+        "GET",
+        undefined,
+        workspaceId,
+        signal,
+      ),
+    ).reviews;
+  }
+
+  /**
+   * The candidate behind one review: changed files, diffs, conflicts.
+   *
+   * Reads the Git artifact, so it fails with `INVALID_STATE` for a review that
+   * is still `building` and has no candidate SHA. Callers check status first.
+   */
+  async readReview(
+    workspaceId: string,
+    reviewId: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewDetail> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(reviewId);
+    return reviewDetailSchema.parse(
+      await this.request(
+        `/${workspaceId}/reviews/${reviewId}`,
+        "GET",
+        undefined,
+        workspaceId,
+        signal,
+      ),
+    );
+  }
+
+  /**
+   * Build a review candidate for this task (§2.5, "request review").
+   *
+   * A real mutation with real preconditions — it refuses while a run is active,
+   * before assignments have all completed, and when a selected material has
+   * gone missing. Only ever called from an explicit user action.
+   */
+  async prepareReview(
+    workspaceId: string,
+    taskId: string,
+  ): Promise<ReviewDetail> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(taskId);
+    return reviewDetailSchema.parse(
+      await this.request(
+        `/${workspaceId}/tasks/${taskId}/review`,
+        "POST",
+        {},
+        workspaceId,
+      ),
+    );
+  }
+
+  /**
+   * Resolve conflicting paths. §10.2: this creates a NEW candidate rather than
+   * editing the approved one in place, so `candidateSha` changes and anything
+   * holding the old one is now stale.
+   */
+  async resolveReview(
+    workspaceId: string,
+    reviewId: string,
+    input: ResolveCandidateRequest,
+  ): Promise<ReviewDetail> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(reviewId);
+    return reviewDetailSchema.parse(
+      await this.request(
+        `/${workspaceId}/reviews/${reviewId}/resolve`,
+        "POST",
+        input,
+        workspaceId,
+      ),
+    );
+  }
+
+  /**
+   * Owner apply (§10.3). The owner key travels in the header, added by
+   * `request` — never in the body, and an `isOwner` flag in one would be
+   * ignored. `candidateSha` must equal the review's current candidate, so a
+   * browser looking at a superseded one is refused rather than applying it.
+   */
+  async applyReview(
+    workspaceId: string,
+    reviewId: string,
+    candidateSha: string,
+    clientRequestId: string,
+  ): Promise<ApplyReviewResponse> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(reviewId);
+    return applyReviewResponseSchema.parse(
+      await this.request(
+        `/${workspaceId}/reviews/${reviewId}/apply`,
+        "POST",
+        { candidateSha, clientRequestId },
+        workspaceId,
+      ),
+    );
   }
 
   // --- discussion ----------------------------------------------------------

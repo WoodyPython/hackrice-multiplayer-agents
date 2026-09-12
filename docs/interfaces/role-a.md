@@ -200,6 +200,40 @@ never as a permission. A forged hint should at worst cause a wasted refetch.
 Missed and duplicate hints are both normal. If your refetch is idempotent, you
 have handled every case the transport can produce.
 
+## Reviews
+
+`GET /tasks/:t/reviews` → `{ reviews: Review[] }`, newest first. **Metadata
+only.** `GET /reviews/:id` reads the candidate out of Git, and a `building`
+review has no SHA to read, so a list of details would cost a Git read per row
+and fail on the newest one. Pick the review you want, then fetch that detail.
+
+`currentReview(reviews)` in `@app/contracts` is the one definition of which
+review a screen should show — a live one (`building`/`ready`/`conflict`/
+`stale`) if there is one, else the most recent `applied`. Use it rather than
+re-deriving the rule.
+
+**A review is requested, never automatic.** A task reaches `ready_for_review`
+when its assignments integrate, and no review row exists until someone calls
+`POST /tasks/:t/review`. An empty list therefore means "nobody has asked",
+not "there are no changes".
+
+That prepare call is a real mutation: it builds a Git candidate and answers
+`INVALID_STATE` while a run is active, before every assignment has completed, or
+from a completed/canceled task, and `INPUT_CONFLICT` when a selected material
+has gone missing. Drive it from an explicit action only.
+
+**Resolving a conflict creates a NEW candidate** (§10.2) — it never edits the
+approved one in place. `candidateSha` changes, so anything holding the previous
+one is stale. Both `POST /reviews/:id/resolve` and `POST /reviews/:id/apply`
+name the SHA they expect, which is what stops a browser applying a candidate
+that moved underneath it.
+
+Conflict sides are `human_draft`, `agent_result`, `approved_main`, and
+`combined_task`. §10.2 forbids labelling any of them "ours": the UI has to say
+which source each one is.
+
+---
+
 ## Agents
 
 `GET /tasks/:t/agents` returns `{ attempts: TaskAttempt[] }`, newest attempt
@@ -256,7 +290,6 @@ people click the same file, not a collision to report.
 
 | Needed | For | Owner |
 |---|---|---|
-| A `reviewId` on task detail, or a read path to the current review | A06 — `POST /tasks/:t/review` is a mutation, and nothing else exposes the ID. C07 added `GET /reviews/:id/evidence` and `POST /reviews/:id/assess`, but both need an ID you cannot obtain without mutating | B |
 | An approved-file **listing** (Git has `readText(path)` only — no tree op) | A07's Files view and the approved-file input picker (§2.1, §4.1) | D, then B |
 | A workspace-wide `apply_operations` listing + route | History (§4.1). Table and store already exist; empty until D07 | B |
 

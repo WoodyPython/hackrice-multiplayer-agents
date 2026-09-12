@@ -597,6 +597,73 @@ describe('reviews', () => {
   });
 });
 
+describe('finding the reviews on a task', () => {
+  /**
+   * The discovery route exists because the only other path to a review ID is
+   * POST /tasks/:t/review, which builds a Git candidate and refuses from a
+   * dozen states. A screen cannot call that to find out what it is showing.
+   */
+  async function listReviews(taskId: string, ws = workspaceId) {
+    return t.app.inject({
+      method: 'GET',
+      url: `/api/workspaces/${ws}/tasks/${taskId}/reviews`,
+    });
+  }
+
+  async function review(taskId: string) {
+    return reviews.create({
+      workspaceId, taskId, runId: null,
+      source: {
+        taskVersion: 1, guidanceVersion: 1, mainSha: fakeSha('main'),
+        humanSha: fakeSha('human'), resultSha: null, documentRevisions: {},
+        contextHash: 'ctx',
+      },
+    });
+  }
+
+  it('returns reviews newest first, including historical ones', async () => {
+    const taskId = await makeTask();
+    const older = await review(taskId);
+    await reviews.markReady(older.id, fakeSha('old'));
+    const newer = await review(taskId);
+
+    const body = (await listReviews(taskId)).json();
+    expect(body.reviews.map((r: { id: string }) => r.id)).toEqual([newer.id, older.id]);
+    // A stale or applied review is not noise: it explains why an Apply that was
+    // offered a moment ago no longer is.
+    expect(body.reviews[1].status).toBe('ready');
+  });
+
+  it('carries metadata only, never the candidate artifact', async () => {
+    const taskId = await makeTask();
+    await review(taskId);
+
+    const raw = (await listReviews(taskId)).body;
+    // Reading a candidate means reading Git, and a building review has no SHA
+    // to read. Details would cost one Git read per row and fail on the newest.
+    expect(raw).not.toContain('changedFiles');
+    expect(raw).not.toContain('conflicts');
+    expect(JSON.parse(raw).reviews[0].candidateSha).toBeNull();
+  });
+
+  it('is empty for a task nobody has requested review on', async () => {
+    const taskId = await makeTask();
+    const res = await listReviews(taskId);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().reviews).toEqual([]);
+  });
+
+  it('reports a task from another workspace as absent', async () => {
+    const taskId = await makeTask();
+    await review(taskId);
+    const other = (await createWorkspaceViaApi(t.app, { name: 'Elsewhere reviews' })).workspaceId;
+
+    const res = await listReviews(taskId, other);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('TASK_NOT_FOUND');
+  });
+});
+
 describe('apply operations', () => {
   async function readyReview(taskId: string) {
     const review = await reviews.create({

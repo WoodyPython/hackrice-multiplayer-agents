@@ -16,6 +16,7 @@ import { PgWorkspaceService } from '../workspaces/service.js';
 import { registerWorkspaceRoutes } from '../workspaces/routes.js';
 import { PgDiscussionService } from '../discussion/service.js';
 import { PgTaskService } from '../tasks/service.js';
+import { PgReviewStore } from '../runs/review-store.js';
 import { PgRunStore } from '../runs/run-store.js';
 import { registerTaskRoutes } from '../tasks/routes.js';
 import { PgMaterialService } from '../materials/service.js';
@@ -205,7 +206,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   });
 
-  await registerTaskRoutes(app, { tasks, discussion, runs: new PgRunStore({ db: deps.db, bootId: config.bootId }) });
+  await registerTaskRoutes(app, {
+    tasks,
+    discussion,
+    runs: new PgRunStore({ db: deps.db, bootId: config.bootId }),
+    reviews: new PgReviewStore({ db: deps.db }),
+  });
 
   const materials = new PgMaterialService({
     db: deps.db,

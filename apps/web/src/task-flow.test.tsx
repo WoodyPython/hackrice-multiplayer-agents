@@ -156,6 +156,8 @@ function server(overrides: Record<string, (call: Call) => Response> = {}) {
         return json({ entries: [entry()], latestSeq: 1, activeRunCutoffSeq: null });
       case `GET /tasks/${taskId}/agents`:
         return json({ attempts: [] });
+      case `GET /tasks/${taskId}/reviews`:
+        return json({ reviews: [] });
       case `GET /tasks/${taskId}/events`:
         return json({ events: [], latestId: null });
       default:
@@ -647,5 +649,179 @@ describe("why an attempt ended", () => {
 
     await screen.findByRole("tab", { name: "Agents" });
     expect(screen.queryByText(/did not complete/)).toBeNull();
+  });
+});
+
+const reviewId = "80000000-0000-4000-8000-000000000bb9";
+const candidateSha = "a".repeat(40);
+const DIFF = ["@@ -1 +1 @@", "-old", "+new"].join("\n");
+
+const reviewRow = (over: Record<string, unknown> = {}) => ({
+  id: reviewId,
+  taskId,
+  runId: null,
+  source: {
+    taskVersion: 2, guidanceVersion: 1, mainSha: "b".repeat(40),
+    humanSha: "c".repeat(40), resultSha: null, documentRevisions: {},
+    contextHash: "ctx",
+  },
+  candidateSha,
+  status: "ready",
+  createdAt: at,
+  updatedAt: at,
+  ...over,
+});
+
+const reviewDetail = (over: Record<string, unknown> = {}) => ({
+  candidateSha,
+  candidateComplete: true,
+  conflicts: [],
+  changedFiles: [
+    { path: "docs/contributing.md", changeKind: "modified", diff: DIFF, beforeHash: "d".repeat(40), afterHash: "e".repeat(40) },
+  ],
+  generatedCodeWasNotExecuted: true,
+  review: reviewRow(),
+  ...over,
+});
+
+/** Renders the Changes tab as owner unless told otherwise. */
+async function openChanges(
+  overrides: Parameters<typeof server>[0],
+  owner = true,
+) {
+  const user = userEvent.setup();
+  const session = new BrowserSession();
+  if (owner) session.saveOwner(workspaceId, "owner-key-for-tests-1234567890");
+  const { transport, calls } = server({
+    "GET ": () => json({ ...workspace, isOwner: owner }),
+    ...overrides,
+  });
+  const api = new WorkspaceApi(session, transport);
+  render(
+    <MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
+      <App session={session} api={api} />
+    </MemoryRouter>,
+  );
+  await user.click(await screen.findByRole("tab", { name: "Changes" }));
+  return { user, calls };
+}
+
+describe("review", () => {
+  it("offers to prepare one rather than claiming there are no changes", async () => {
+    const { user, calls } = await openChanges({});
+    expect(await screen.findByText("No review has been requested yet")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Prepare review" }));
+    // Nothing prepares a review automatically, so the absence of one is not
+    // evidence that the work produced no changes.
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/review"))).toBe(true),
+    );
+  });
+
+  it("shows the diff and lets an owner apply the candidate it is looking at", async () => {
+    const { user, calls } = await openChanges({
+      [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow()] }),
+      [`GET /reviews/${reviewId}`]: () => json(reviewDetail()),
+      [`POST /reviews/${reviewId}/apply`]: () =>
+        json({ status: "applied", appliedCommitSha: candidateSha, alreadyApplied: false }),
+    });
+
+    const panel = await screen.findByRole("tabpanel");
+    expect(within(panel).getByText("docs/contributing.md")).toBeTruthy();
+    expect(within(panel).getByText("modified")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Apply these changes" }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/apply"))).toBe(true),
+    );
+    const apply = calls.find((c) => c.url.endsWith("/apply"))!;
+    // Sending the SHA we rendered is what stops a browser applying a candidate
+    // that moved underneath it.
+    expect((apply.body as Record<string, unknown>).candidateSha).toBe(candidateSha);
+  });
+
+  it("hides Apply from a contributor but still shows the changes", async () => {
+    await openChanges(
+      {
+        [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow()] }),
+        [`GET /reviews/${reviewId}`]: () => json(reviewDetail()),
+      },
+      false,
+    );
+
+    const panel = await screen.findByRole("tabpanel");
+    expect(within(panel).getByText("docs/contributing.md")).toBeTruthy();
+    // Presentation only -- the server checks the key on every apply. §4.6:
+    // "hiding a button is insufficient."
+    expect(screen.queryByRole("button", { name: "Apply these changes" })).toBeNull();
+    expect(screen.getByText(/Only the workspace owner can apply/)).toBeTruthy();
+  });
+
+  it("blocks Apply on a stale review and offers a refresh", async () => {
+    await openChanges({
+      [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow({ status: "stale" })] }),
+      [`GET /reviews/${reviewId}`]: () => json(reviewDetail({ review: reviewRow({ status: "stale" }) })),
+    });
+
+    // §4.7: "Review stale | Disable Apply and offer Refresh review".
+    expect(await screen.findByText("This review is out of date")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh review" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Apply these changes" })).toBeNull();
+  });
+
+  it("names each conflicting side and refuses Apply until every file is decided", async () => {
+    const conflicted = reviewDetail({
+      review: reviewRow({ status: "ready" }),
+      conflicts: [
+        {
+          path: "docs/contributing.md",
+          stage: "human_agent",
+          sides: [
+            { side: "human_draft", text: "what people wrote", sha: "f".repeat(40) },
+            { side: "agent_result", text: "what the agent wrote", sha: "0".repeat(40) },
+          ],
+        },
+      ],
+    });
+    const { user, calls } = await openChanges({
+      [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow()] }),
+      [`GET /reviews/${reviewId}`]: () => json(conflicted),
+      [`POST /reviews/${reviewId}/resolve`]: () => json(reviewDetail()),
+    });
+
+    // §10.2: never label both sides "ours". Each one says which source it is.
+    expect(await screen.findByText("What people wrote in the shared draft")).toBeTruthy();
+    expect(screen.getByText("What the agents produced")).toBeTruthy();
+    // A conflicted candidate must not be publishable.
+    expect(
+      (screen.getByRole("button", { name: "Apply these changes" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    await user.click(screen.getByRole("radio", { name: /What people wrote/ }));
+    await user.click(screen.getByRole("button", { name: "Use these versions" }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/resolve"))).toBe(true),
+    );
+    const resolve = calls.find((c) => c.url.endsWith("/resolve"))!;
+    const body = resolve.body as { expectedCandidateSha: string; resolutions: unknown[] };
+    // Resolving builds a NEW candidate, so the one being replaced is named.
+    expect(body.expectedCandidateSha).toBe(candidateSha);
+    expect(body.resolutions).toEqual([
+      { path: "docs/contributing.md", choice: "human_draft" },
+    ]);
+  });
+
+  it("does not read a candidate for a review that is still building", async () => {
+    const { calls } = await openChanges({
+      [`GET /tasks/${taskId}/reviews`]: () =>
+        json({ reviews: [reviewRow({ status: "building", candidateSha: null })] }),
+    });
+
+    expect(await screen.findByText(/still being built/)).toBeTruthy();
+    // Reading it means reading a Git artifact that does not exist yet, which
+    // the server answers with INVALID_STATE.
+    expect(calls.some((c) => c.url.endsWith(`/reviews/${reviewId}`))).toBe(false);
   });
 });

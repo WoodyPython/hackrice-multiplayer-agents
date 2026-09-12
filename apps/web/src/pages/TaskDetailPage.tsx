@@ -14,6 +14,7 @@ import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
 import { inputOptionsFrom, type TaskInputOption } from "../task-inputs";
 import { Assignments } from "../components/Assignments";
+import { Changes } from "../components/Changes";
 import { Discussion, useDiscussion } from "../components/Discussion";
 import { RunOutcome } from "../components/RunOutcome";
 import { EmptyState } from "../components/EmptyState";
@@ -45,7 +46,18 @@ const POLL_IDLE_MS = 5000;
  * the other is the server's unique active-run index, which we cannot see from
  * here and must not assume is doing the work alone.
  */
-export function TaskDetailPage({ workspaceId }: { workspaceId: string }) {
+export function TaskDetailPage({
+  workspaceId,
+  isOwner,
+}: {
+  workspaceId: string;
+  /**
+   * Presentation only. The server checks the owner key on every apply, so this
+   * decides what to render and never what is permitted (§4.6: "hiding a button
+   * is insufficient").
+   */
+  isOwner: boolean;
+}) {
   const { taskId } = useParams();
   const { api, session } = useBrowser();
   const [task, setTask] = useState<Task | null>(null);
@@ -298,10 +310,14 @@ export function TaskDetailPage({ workspaceId }: { workspaceId: string }) {
         return <Assignments attempts={attempts} />;
       case "Changes":
         return (
-          <EmptyState title="Review is not connected yet">
-            Combined changes, conflicts, and owner Apply arrive with the review
-            handoff (C07) and owner apply (D07).
-          </EmptyState>
+          <Changes
+            task={task}
+            isOwner={isOwner}
+            onApplied={() => {
+              reload();
+              thread.refresh();
+            }}
+          />
         );
     }
   }

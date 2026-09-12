@@ -2,6 +2,57 @@
 
 Newest first. One entry per landed ticket.
 
+## A06 — Review and conflict UI
+**Landed:** 2026-09-12 · Role A
+**Affects:** everyone. One additive Role B route; no migration, no dependency.
+**Action required:** Pull and `npm run build` (contracts gained schemas).
+
+- **New route, `GET /tasks/:t/reviews`** (Role B, over the existing
+  `PgReviewStore.listForTask`). This was the missing read path: the only other
+  way to reach a review ID was `POST /tasks/:t/review`, which builds a Git
+  candidate and refuses from a dozen states — a screen cannot call that on load
+  to discover what it is showing.
+  Metadata only, deliberately: `GET /reviews/:id` reads the candidate out of
+  Git, and a `building` review has no SHA to read, so a list of details would
+  cost a Git read per row and fail on the newest one.
+- **`currentReview()`** added to contracts so "which review does this screen
+  show" has one definition instead of a rule each caller re-derives.
+- **Changes tab**: diffs per changed file, owner Apply, conflict resolution by
+  whole-file choice, and the stale path.
+
+**A design gap this surfaced, now amended in §4.6.** A task reaches
+`ready_for_review` when its assignments integrate (`start.ts`), and **no review
+row exists at that point** — nothing calls prepare on its behalf. §4.6 described
+what a review displays and never said who creates one. The tab now reports that
+state as "no review has been requested yet" and offers to prepare one, because
+the absence of a review is not the same claim as "there are no changes". Keeping
+it explicit also means prepare's refusals are the answer to something a person
+asked for, and two people opening the tab do not race into a candidate build.
+
+**Behaviours worth knowing before touching this code:**
+
+- **Apply sends the candidate SHA that was rendered.** A review that moved
+  underneath the browser is refused rather than silently applying something
+  else. Same for resolve's `expectedCandidateSha`.
+- **Resolving builds a new candidate** (§10.2), never editing the approved one,
+  so the SHA changes and anything holding the old one is stale by design.
+- **Apply is hidden without an owner key, and that is presentation only.** The
+  server checks the key on every apply — §4.6: "hiding a button is
+  insufficient." There is a test asserting a contributor still sees the changes.
+- **Conflict sides are named** — `human_draft`, `agent_result`, `approved_main`,
+  `combined_task`. §10.2 forbids labelling any of them "ours".
+- Manual text resolution is not built. Whole-file choice covers §4.6's "explicit
+  resolution"; a conflict editor is a separate pass.
+
+Verified: `npm run build`, the web suite (**51**, up from 45), and the backend
+suites this touches — `runs`, `tasks` (**67**, `runs` up from 33 to 38). The full
+backend suite was not run; nothing here reaches the Git or orchestration suites,
+and `git-integration.test.ts` alone still costs 17 minutes with a failing test
+that needs Role C or D.
+
+Mutation-checked: applying a SHA other than the rendered one, and allowing Apply
+while conflicts are unresolved — both fail the tests that should catch them.
+
 ## C08 — Manual retries and failure cases
 **Implemented:** 2026-09-12 · working tree · Role C
 **Affects:** Roles A, B, C, and D

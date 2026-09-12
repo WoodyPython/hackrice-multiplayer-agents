@@ -6,6 +6,7 @@ import {
   retryTaskRequestSchema,
   listDiscussionQuerySchema,
   listTaskAgentsResponseSchema,
+  listTaskReviewsResponseSchema,
   listTasksQuerySchema,
   postDiscussionRequestSchema,
   summarizeInstruction,
@@ -16,6 +17,7 @@ import {
 } from '@app/contracts';
 import { parseOrThrow } from '../http/errors.js';
 import type { PgDiscussionService } from '../discussion/service.js';
+import type { PgReviewStore } from '../runs/review-store.js';
 import type { PgRunStore } from '../runs/run-store.js';
 import type { PgTaskService } from './service.js';
 
@@ -34,6 +36,7 @@ export interface TaskRouteDeps {
   tasks: PgTaskService;
   discussion: PgDiscussionService;
   runs: PgRunStore;
+  reviews: PgReviewStore;
 }
 
 export async function registerTaskRoutes(
@@ -100,6 +103,28 @@ export async function registerTaskRoutes(
             instructionSummary: summarizeInstruction(instruction),
           })),
         })),
+      }),
+    );
+  });
+
+  /**
+   * Reviews on this task, newest first (section 4.6).
+   *
+   * This exists because the only other way to reach a review ID is
+   * `POST /tasks/:t/review`, which builds a Git candidate and refuses from a
+   * dozen states — a screen cannot call that on load to find out what it is
+   * looking at.
+   *
+   * Metadata only. `GET /reviews/:id` reads the candidate artifact out of Git,
+   * which a `building` review has no SHA for; returning details here would cost
+   * a Git read per row and fail on the newest one.
+   */
+  app.get('/api/workspaces/:workspaceId/tasks/:taskId/reviews', async (request, reply) => {
+    const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
+    await deps.tasks.readTask(workspaceId, taskId);
+    return reply.send(
+      listTaskReviewsResponseSchema.parse({
+        reviews: await deps.reviews.listForTask(taskId),
       }),
     );
   });

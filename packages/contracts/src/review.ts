@@ -41,6 +41,39 @@ export const reviewSchema = z.object({
 export type Review = z.infer<typeof reviewSchema>;
 
 /**
+ * Every review on a task, newest first (section 4.6).
+ *
+ * Metadata only, deliberately. `ReviewDetail` carries the candidate's changed
+ * files and conflicts, which means reading the Git artifact — and a review that
+ * is still `building` has no `candidateSha` to read, so a list of details would
+ * both cost one Git read per row and fail on the newest one. The browser picks
+ * the review it wants from this and fetches that one detail.
+ *
+ * Earlier reviews are retained rather than filtered to the current one: an
+ * `applied` review is the durable record of what was applied, and a `stale` one
+ * explains why an Apply that used to be offered no longer is.
+ */
+export const listTaskReviewsResponseSchema = z.object({
+  reviews: z.array(reviewSchema),
+});
+export type ListTaskReviewsResponse = z.infer<typeof listTaskReviewsResponseSchema>;
+
+/**
+ * Which review a screen should show, given the list above.
+ *
+ * One definition rather than a rule each caller re-derives. `superseded` and
+ * `applied` are both historical, but they are not the same: an applied review
+ * is the outcome and is worth showing when nothing newer exists, whereas a
+ * superseded one has been replaced by a later attempt at the same thing.
+ */
+export function currentReview(reviews: Review[]): Review | null {
+  const live = reviews.find((review) =>
+    ['building', 'ready', 'conflict', 'stale'].includes(review.status),
+  );
+  return live ?? reviews.find((review) => review.status === 'applied') ?? null;
+}
+
+/**
  * Section 10.2: "'Current' must identify whether it means the human draft or
  * approved workspace; never label both simply 'ours'."
  */

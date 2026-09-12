@@ -217,7 +217,12 @@ function LiveWorkspace({ id }: { id: string }) {
             <Route path="tasks/new" element={<NewTask workspaceId={id} />} />
             <Route
               path="tasks/:taskId"
-              element={<TaskDetailPage workspaceId={id} />}
+              element={
+                <TaskDetailPage
+                  workspaceId={id}
+                  isOwner={visibleWorkspace.isOwner}
+                />
+              }
             />
             <Route
               path="settings"
