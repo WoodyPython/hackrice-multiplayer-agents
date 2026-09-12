@@ -2,6 +2,21 @@
 
 Newest first. One entry per landed ticket.
 
+## A03 - Simultaneous editor binding
+**Landed:** 2026-09-12 - Role A
+**Affects:** Role A; A04/A07 can link to shared task drafts
+**Action required:** Run `npm install`. Production must proxy `/live` WebSockets to the Node runtime; Vite development and preview already do so. No migration.
+
+- Added `/w/:workspaceId/tasks/:taskId/drafts`, active-document selection,
+  Monaco/Yjs binding, shared cursors with live guest renames, and inert Markdown preview.
+- Server persistence acknowledgements drive Saved; queued writes and offline
+  edits remain unsaved. Reconnect retains the local Yjs document. Closed/rejected
+  epochs stop reconnecting and expose recovery text.
+- Task posting, file creation, execution, and review flows remain their own tickets.
+- Verified: frontend production build/typecheck and 27 frontend tests, including
+  two real WebSocket clients against D03 for convergence, awareness, persistence,
+  and offline reconnect. No manual two-browser visual check was performed.
+
 ## Fix — restore `withDraftCapture`, wire Supabase storage, handoff docs
 **Landed:** 2026-09-12 · Role B
 **Affects:** everyone

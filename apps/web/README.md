@@ -1,4 +1,4 @@
-﻿# Workspace frontend — A01 / A02
+# Workspace frontend - A01 / A02 / A03
 
 Install from the **repository root** and run the API and frontend in separate terminals:
 
@@ -39,7 +39,7 @@ and serve the SPA for `/w/*`; deployment is owned by Role D.
   reloading before saving can lose it. A name can still be used in memory when
   storage is blocked, with a visible persistence notice.
 
-Task posting, discussion, files, history, editor, and review remain later-ticket
+Task posting, discussion, files, history, and review remain later-ticket
 integrations. Real workspaces do not show or submit sample tasks. No agent is
 started by creation or posting in the sample.
 
@@ -52,13 +52,12 @@ All ten `TASK_STATUSES` map to the five design section 4.3 columns. Canceled
 tasks remain under Needs attention; dragging cannot change status. Demo posting
 uses the current guest label, and later name changes do not rewrite old cards.
 
-## A03 cursor integration
+## Guest cursor integration
 
 See [the A02 browser interface](../../docs/interfaces/role-a-browser.md) for the
 session hook and `bindGuestAwareness`. It publishes the current label immediately
 and on renames, without reconnecting or changing identity. A03 attaches it to
-the active document's `provider.awareness`; A02 does not create a document room
-or a participant directory.
+the active document's awareness; there is no participant directory.
 
 ## Verification
 
@@ -73,3 +72,18 @@ Frontend tests cover both A01 and A02, including creation double-clicks, owner
 key isolation, storage failures, direct entry, permission loss, settings saves,
 guest persistence, cross-tab names, and awareness updates. Browser visual QA
 still requires a browser-enabled session.
+
+## A03 shared editor
+
+Open `/w/:workspaceId/tasks/:taskId/drafts` for an existing task with active
+B05 drafts. Share that address to edit the same document in another browser.
+The document selector reads the existing drafts API; creating tasks and opening
+manual-edit drafts from Files remain A04/A07.
+
+Monaco binds the server-initialized Yjs `content` text and awareness cursors.
+Markdown preview does not execute raw HTML or load external images. Saved means
+the server has acknowledged durable persistence, not merely received an update.
+Keep the tab open while offline: reconnection merges its retained document.
+Closed/rejected documents stop reconnecting and expose text for recovery.
+Vite proxies `/live` WebSockets; production must route `/live` to the same Node
+runtime as `/api`. Monaco and its worker are bundled locally, with no CDN.

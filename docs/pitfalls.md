@@ -257,3 +257,10 @@ both wrong and unnecessary.
 
 **Instead:** when a generic wrapper is "obviously" needed, check what the type
 actually resolves to before applying it twenty-two times.
+
+## Monaco 0.56 changed its package exports
+
+**A03.** The historical `monaco-editor/esm/vs/...` import fails in the production
+bundle with Monaco 0.56. Worker imports now use `monaco-editor/editor/...`.
+`y-monaco` still uses the old editor API path, so Vite aliases that exact import
+to the new export. Typechecking alone did not catch this; the Vite build did.

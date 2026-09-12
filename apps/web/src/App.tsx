@@ -20,6 +20,7 @@ import { EmptyState } from "./components/EmptyState";
 import { GuestNameControl } from "./components/GuestNameControl";
 import { CreateWorkspace } from "./pages/CreateWorkspace";
 import { WorkspaceSettings } from "./pages/WorkspaceSettings";
+import { TaskDrafts } from "./pages/TaskDrafts";
 
 function ShareWorkspace({ id }: { id: string }) {
   const [copied, setCopied] = useState(false);
@@ -199,6 +200,7 @@ function LiveWorkspace({ id }: { id: string }) {
             </div>
           )}
           <Routes>
+            <Route path="tasks/:taskId/drafts" element={<TaskDrafts workspaceId={id} />} />
             <Route
               index
               element={
