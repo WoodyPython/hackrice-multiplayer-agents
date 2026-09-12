@@ -4,7 +4,7 @@ Anonymous collaborators create tasks, discuss requirements, and co-edit drafts.
 An explicit **Start** action freezes a snapshot and dispatches parallel Gemini
 agents. The workspace creator reviews the exact combined result and applies it.
 
-**New here? Start with [SETUP.md](SETUP.md).** Wiring against the data layer? See [HANDOFF.md](HANDOFF.md).
+**New here? Start with [SETUP.md](SETUP.md).** Working alongside other roles? [docs/](docs) has the changelog, the per-role interface notes, and the handoff procedure.
 
 Full specification: [hackrice-final-mvp-design.md](hackrice-final-mvp-design.md).
 

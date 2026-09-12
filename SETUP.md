@@ -157,7 +157,9 @@ covers everything until then.
 
 ## Before you wire against the API
 
-[HANDOFF.md](HANDOFF.md) has the per-role notes from Role B: the error envelope, the owner-key header, which status codes carry meaning, the contracts each hook must honour, and the mistakes that have already cost time on this codebase. Read your section before writing request code.
+Read [docs/interfaces/](docs/interfaces) for your role: the error envelope, the owner-key header, which status codes carry meaning beyond success, and the contracts each hook must honour.
+
+Then skim [docs/CHANGELOG.md](docs/CHANGELOG.md) from wherever you last left off. Every entry says in one line whether it needs anything from you. [docs/README.md](docs/README.md) has the full procedure for landing and picking up work.
 
 ## Three rules
 

@@ -1294,6 +1294,20 @@ Two ways out, and the choice depends on what the code is doing. Where the operat
 
 Local setup, the verification command, and the per-role starting points are in SETUP.md at the repository root.
 
+### 15.3 Handoff between roles
+
+Roles own disjoint directories, so most work proceeds without coordination. The exceptions are the moments one role starts consuming what another built, and those are worth a procedure rather than a conversation nobody can find later.
+
+Landing a ticket means four things, not one. Record what landed and whether it requires anything of anyone, in a changelog ordered newest-first so a reader can start from wherever they last looked. Update the interface notes for whoever consumes the surface, if its contract moved. Write down anything that went wrong in a way that would go wrong again for the next person. And amend this document if behaviour changed, rather than leaving the code as the only record: that is the difference between a decision and a surprise.
+
+Picking work up is the mirror of that. Pull and migrate, read the changelog forward from your last position, read the interface notes for the surfaces you are about to call, and skim the recorded failures once.
+
+Needing something another role owns is not a reason to wait or to reach into their directory. Define the interface in the contracts package, ship an implementation that does nothing so you are unblocked, and record that it is waiting. Both cross-role seams in this design were built that way and integrated without a conflict.
+
+Interface notes state the last ticket they were checked against. Behind the changelog means unverified, not wrong, and the code is the tiebreaker. None of it is generated, so it drifts unless updating it is part of landing work rather than a cleanup task for later.
+
+These live in docs/ at the repository root.
+
 ## 16. Individually scoped implementation tasks
 
 Every row is a single-owner work package. “Expected behavior” defines what that component must do and can be checked in isolation or against the listed prerequisites. It is not a separate release checklist.
