@@ -15,6 +15,7 @@
     "test:models": "vitest run --config vitest.models.config.ts",
     "test:agents": "vitest run --config vitest.agents.config.ts",
     "test:planning": "vitest run --config vitest.planning.config.ts",
+    "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:watch": "vitest"
   },
   "dependencies": {
