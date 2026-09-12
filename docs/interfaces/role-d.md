@@ -1,6 +1,6 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** B07, C02, C05, C06, C07 · **Owner:** Role B (data), Role C (execution guard)
+**Reflects:** B07, C02, C05, C06, C07, plus the A06/A07 requests below · **Owner:** Role B (data), Role C (execution guard)
 
 ## C07 additions to `reviews/routes.ts`
 
@@ -182,6 +182,35 @@ typing.
 by a dead process. Reconcile each against main per §10.5: the candidate already
 on main means it succeeded, main still at the expected value means it never ran,
 anything else is ambiguous and stops.
+
+## What Role A needs from you (A06, A07)
+
+Two things, in priority order.
+
+**D07's apply path, which three screens wait on.** It is unblocked now — D06 has
+landed and B02 was always there — and it is the single highest-leverage ticket
+left: it unblocks A06's Changes tab, it is half of what B08 needs (C07 is the
+other half, also unblocked, and the two are independent), and it is what first
+writes `apply_operations`, which is the entire content of the History screen.
+`applyReviewRequestSchema` and `applyReviewResponseSchema` are already in
+`@app/contracts` with nothing behind them.
+
+Also needed for A06: some way for the browser to **discover a task's review
+without mutating anything**. Today the only path to a review ID is
+`POST /tasks/:t/review`, which prepares a candidate — a page cannot call that on
+load. A `reviewId` on `TaskDetail` would do; that part is Role B's.
+
+**A listing operation for approved files.** `GitService.readText(path)` reads one
+file at a known path, and there is no tree or list operation anywhere, so nothing
+in the system can answer "what is on main". That blocks the Files screen's
+approved section (§4.1) and the approved-file category in the task input picker
+(§2.1) — both currently say the data is unavailable rather than showing an empty
+list, because "no approved files" is a claim we cannot support.
+
+A path list at a commit is enough; content comes from `readText` per file as
+it is opened.
+
+---
 
 ## Startup reconciliation
 

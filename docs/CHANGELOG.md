@@ -2,6 +2,60 @@
 
 Newest first. One entry per landed ticket.
 
+## Docs — A05 re-scoped against C05/C06, and the agents gap narrowed
+**Landed:** 2026-09-12 · Role A
+**Affects:** whoever starts A05, and whoever adds the agents route
+**Action required:** None. Read *Starting A05* in
+[the Role A interface](interfaces/role-a.md#starting-a05-what-is-and-is-not-blocked)
+before picking up A05.
+
+C05 and C06 landed for real (`98c6f14`, `b88eac7`), so the frontend's picture of
+execution changed and the documents said otherwise. Re-checked against `main`:
+
+- **Start is no longer inert.** `recovery/runtime.ts` assembles the real
+  `StartOrchestrator`; `buildApp` still defaults to `NullOrchestrationHook`,
+  which is why tasks move under `npm run dev` and not under `buildTestApp`.
+- **A05 splits in two, and only one half is blocked.** The run-lifecycle half —
+  start/stop/retry, answering, §4.7's error states — is buildable today against
+  endpoints that exist, using C06's start-phase reason codes (`agent.waiting`
+  with `payload.phase === 'start'`). Build that first: it is what a demo shows.
+- **§4.5's assignment rows are still blocked on one route**, but a much smaller
+  one than before. Everything that section *requires* is on `AgentInstance`, and
+  `PgRunStore.listInstances(runId)` already returns it from a Role B file. Only
+  token usage needs Role C's ledger, and §4.5 marks that optional. Address the
+  route by **task**, not by run: `activeRunId` is null once a run ends, and a
+  finished attempt's assignments are what someone inspecting an `incomplete`
+  task wants to see.
+- Design §4.5 amended to say this rather than the flat "no data source yet" it
+  carried while orchestration did not exist.
+- `context_captured` carries `payload.omitted[]` — selections that could not be
+  captured. Worth surfacing in A05: it is the only signal that a selected input
+  silently did not reach the model.
+
+Also corrected: [`handoff-b08.md`](handoff-b08.md) said C05 was a phantom. It
+was, for about an hour — `6950fc3` added only an npm script pointing at a
+missing vitest config. The real scheduler landed in `98c6f14`. The note is kept,
+because the lesson holds: a commit message is not evidence a ticket landed.
+
+**B08 now waits on exactly two tickets, C07 and D07, and they are independent.**
+Both are unblocked today, so they can run in parallel.
+
+Verified on merged `main`: `npm run build` passes. The full suite was **not**
+re-run to completion for this docs-only change — but a partial run surfaced
+something the team should own:
+
+**`git-integration.test.ts` is now pathological, and one test in it fails.**
+`D05 worker integration > preserves refs and guard errors when cancellation
+rejects prepared fast-forward, merge, or no-op results` ran for **487 seconds**
+and failed; the file as a whole took **17 minutes**. That is most of why a full
+run now costs a quarter of an hour. It is Role D's test and C05 modified it
+(`98c6f14` touched this file), so it needs one of them rather than a guess from
+here. Not a new flake class — `pitfalls.md` already records that an intermittent
+failure with no assertion message is a timeout until proven otherwise — but the
+scale is new and worth treating as a defect rather than a slow test.
+
+---
+
 ## C07 — Reviewer, evidence, and review handoff
 **Implemented:** 2026-09-12 · working tree · Role C
 **Affects:** Roles A, C, and D

@@ -1,6 +1,6 @@
 # For Role C — orchestration against the data layer
 
-**Reflects:** B07, C02, C03, C04, C05, C06, C07 · **Owner:** Role B (data), Role C (execution)
+**Reflects:** B07, C02, C03, C04, C05, C06, C07, plus the A05 request below · **Owner:** Role B (data), Role C (execution)
 
 > **Resolved: `PgAgentLedger` is the ledger.** B07 briefly shipped a second one,
 > `PgBudgetLedger` under `src/runs`; it has been deleted. Yours won on three
@@ -177,6 +177,31 @@ late usage stays permitted, per §9.2. You will see a `check_violation` naming
 up your own `assertActive` rather than replacing it: the trigger catches a write
 that reached the database through some path that forgot to ask.
 
+
+---
+
+## What Role A needs from you (A05)
+
+One thing, and it is optional by the design's own wording.
+
+§4.5 lets the Agents tab show "token usage per task per agent as read-only
+information **if useful**". Everything else that section requires is on
+`AgentInstance` and reachable through Role B's
+`PgRunStore.listInstances(runId)`, so the agents route does not need you to
+build it.
+
+If token display is wanted, `PgAgentLedger` needs a **read** method —
+`recordUsage` returns a `TaskAgentBudget` but nothing reads budgets back for a
+task. A `listBudgets(taskId)` returning `{ agentKey, tokenBudget,
+consumedTokens }` would be enough; the route composes it with the instances.
+
+Two constraints from §4.5 that constrain the shape, not just the UI: the browser
+never sees model IDs, provider settings, budget settings, or timeout controls,
+and instructions reach it as a **summary** — `agentProgressSchema` omits
+`instruction` and carries `instructionSummary` instead. A 20k-character worker
+instruction is not a UI string.
+
+Not urgent. The rest of A05 does not wait on it.
 
 ---
 

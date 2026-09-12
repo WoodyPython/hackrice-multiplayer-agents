@@ -368,14 +368,31 @@ Show token usage per task per agent as read-only information if useful. Do not e
 
 Time left may be displayed for a running agent; its deadline is always fixed by the backend.
 
-**This screen has no data source yet.** `AgentProgress` is defined in
-`@app/contracts` with every field above, and no route serves it: task events
-carry only `{ agentId }`, which is enough to know something happened and not
-enough to render a row. Until an endpoint exists, the Agents tab says so rather
-than showing an empty list — "no agents have run" is a claim the frontend cannot
-support. Note this is separate from orchestration itself being absent: with the
-null orchestration hook in place, Start records an attempt and creates no
-assignments at all.
+**Assignment rows still have no route, though the data now exists.** Since C05
+and C06 a Start really does plan and dispatch, so `agent_instances` rows are
+written and carry every required field above — preset, status, instruction,
+write paths, dependencies, `startedAt` and `deadlineAt`. What is missing is only
+an endpoint. `agentProgressSchema` is defined in `@app/contracts`, and task
+events carry `{ agentId }`, which is enough to know something happened and not
+enough to render a row.
+
+The gap is small and worth stating precisely, because it decides how much of
+this section is buildable:
+
+- Everything this section *requires* comes from `AgentInstance`, and Role B's
+  `PgRunStore.listInstances(runId)` already returns exactly that. A read route
+  over it is the whole job.
+- Token usage is the one field that needs more — it lives in
+  `task_agent_budgets` behind Role C's ledger, which has no read method. This
+  section already marks that display optional ("if useful"), so it need not
+  block the rest.
+- Address the route by task rather than by run. `TaskDetail.activeRunId` is null
+  once a run ends, and the assignments of a finished attempt are exactly what
+  someone reviewing an `incomplete` task needs to look at.
+
+Until the route exists the Agents tab says so, rather than showing an empty
+list: "no agents have run" is a claim the frontend cannot support, and is now
+usually false.
 
 ### 4.6 Review
 
