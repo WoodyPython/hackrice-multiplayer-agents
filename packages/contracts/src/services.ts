@@ -34,7 +34,12 @@ export interface WorkspaceService {
     purpose?: string;
   }): Promise<{ workspaceId: string; contributionUrl: string; ownerKey: string }>;
 
-  resolve(workspaceId: string): Promise<Workspace | null>;
+  /**
+   * ownerKey is advisory and only decides the returned isOwner flag, which
+   * drives what the UI renders. Every owner-only operation re-checks the key
+   * server-side (section 4.6: hiding a button is insufficient).
+   */
+  resolve(workspaceId: string, ownerKey?: string): Promise<Workspace | null>;
 
   /** Timing-safe. Returns false for a missing header and for a wrong key alike. */
   checkOwnerKey(workspaceId: string, ownerKey: string | undefined): Promise<boolean>;
@@ -250,3 +255,35 @@ export class NullOrchestrationHook implements OrchestrationHook {
 }
 
 export type { PostedTask };
+
+// --- The B02 <-> D01 seam --------------------------------------------------
+
+/**
+ * Role B writes the workspace record, then signals the Git service here.
+ * Role D implements it in D01.
+ *
+ * Section 1.1: one workspace corresponds to one internally managed Git
+ * repository. This hook is how that correspondence is established without the
+ * data layer depending on the Git service being present.
+ *
+ * Contract for the implementer:
+ *  - Never throws into the caller. Repository creation must not be able to fail
+ *    a workspace creation request; the response has already been shaped.
+ *  - Idempotent. It may be called for a workspace whose repository already
+ *    exists, after a retry or a restart.
+ *  - Not the only path. The Git service must also ensure the repository exists
+ *    on first access, under the workspace operation lock, so a workspace whose
+ *    hook failed or predates D01 repairs itself rather than staying broken.
+ */
+export interface WorkspaceLifecycleHook {
+  onWorkspaceCreated(input: { workspaceId: string }): void;
+}
+
+/** Stand-in used until D01 lands, and in tests. Records calls for assertions. */
+export class NullWorkspaceLifecycleHook implements WorkspaceLifecycleHook {
+  readonly created: string[] = [];
+
+  onWorkspaceCreated(input: { workspaceId: string }): void {
+    this.created.push(input.workspaceId);
+  }
+}

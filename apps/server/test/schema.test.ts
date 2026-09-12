@@ -16,7 +16,6 @@ import {
   insertRun,
   insertTask,
   insertWorkspace,
-  resetTestDatabase,
 } from './helpers.js';
 
 /**
@@ -34,10 +33,9 @@ let handle: DbHandle;
 let db: Db;
 
 beforeAll(async () => {
-  await resetTestDatabase();
   handle = connectTestDb();
   db = handle.db;
-}, 120_000);
+});
 
 afterAll(async () => {
   await handle?.close();

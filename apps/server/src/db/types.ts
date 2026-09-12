@@ -35,6 +35,15 @@ import type {
  * post-override reality: number.
  */
 
+/**
+ * Timestamp columns.
+ *
+ * Note the absence of a Generated<> wrapper. Generated<Timestamp> nests one
+ * ColumnType inside another, and Selectable cannot unwrap that: a selected
+ * created_at types as the raw ColumnType rather than Date, which breaks every
+ * caller that tries to format it. The insert type here already includes
+ * undefined, so the column is optional on insert and Generated<> buys nothing.
+ */
 type Timestamp = ColumnType<Date, Date | string | undefined, Date | string>;
 
 export interface WorkspacesTable {
@@ -45,8 +54,8 @@ export interface WorkspacesTable {
   guidance: Generated<string>;
   guidance_version: Generated<number>;
   status: Generated<WorkspaceStatus>;
-  created_at: Generated<Timestamp>;
-  updated_at: Generated<Timestamp>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 }
 
 export interface TasksTable {
@@ -63,8 +72,8 @@ export interface TasksTable {
   status: Generated<TaskStatus>;
   active_run_id: string | null;
   discussion_seq: Generated<number>;
-  created_at: Generated<Timestamp>;
-  updated_at: Generated<Timestamp>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 }
 
 export interface DiscussionEntriesTable {
@@ -76,7 +85,7 @@ export interface DiscussionEntriesTable {
   guest_label: string | null;
   body: string;
   client_request_id: string | null;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
 }
 
 export interface MaterialsTable {
@@ -88,7 +97,7 @@ export interface MaterialsTable {
   byte_size: number;
   content_type: Generated<string>;
   guest_label: string | null;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
   deleted_at: Timestamp | null;
 }
 
@@ -98,7 +107,7 @@ export interface MaterialLinksTable {
   material_id: string;
   task_id: string | null;
   discussion_entry_id: string | null;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
 }
 
 export interface DraftFilesTable {
@@ -112,8 +121,8 @@ export interface DraftFilesTable {
   state_vector: Buffer | null;
   persisted_revision: Generated<number>;
   status: Generated<DraftStatus>;
-  created_at: Generated<Timestamp>;
-  updated_at: Generated<Timestamp>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 }
 
 export interface TaskInputLinksTable {
@@ -124,7 +133,7 @@ export interface TaskInputLinksTable {
   draft_file_id: string | null;
   approved_path: string | null;
   source_version: string | null;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
 }
 
 export interface DraftCheckpointsTable {
@@ -133,7 +142,7 @@ export interface DraftCheckpointsTable {
   task_id: string;
   commit_sha: string;
   document_revisions: Generated<Record<string, number>>;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
 }
 
 export interface RunsTable {
@@ -150,7 +159,7 @@ export interface RunsTable {
   result_head_sha: string | null;
   boot_id: string;
   status: Generated<RunStatus>;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
   ended_at: Timestamp | null;
 }
 
@@ -161,8 +170,8 @@ export interface TaskAgentBudgetsTable {
   token_budget: number;
   consumed_tokens: Generated<number>;
   reserved_tokens: Generated<number>;
-  created_at: Generated<Timestamp>;
-  updated_at: Generated<Timestamp>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 }
 
 export interface AgentInstancesTable {
@@ -183,7 +192,7 @@ export interface AgentInstancesTable {
   started_at: Timestamp | null;
   deadline_at: Timestamp | null;
   ended_at: Timestamp | null;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
 }
 
 export interface AgentDependenciesTable {
@@ -201,7 +210,7 @@ export interface AgentQuestionsTable {
   question_entry_id: string;
   answer_entry_id: string | null;
   status: Generated<QuestionStatus>;
-  asked_at: Generated<Timestamp>;
+  asked_at: Timestamp;
   expires_at: Timestamp;
   resolved_at: Timestamp | null;
 }
@@ -217,7 +226,7 @@ export interface ModelCallsTable {
   reserved_tokens: Generated<number>;
   reported_usage: Record<string, unknown> | null;
   status: Generated<ModelCallStatus>;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
   settled_at: Timestamp | null;
 }
 
@@ -229,7 +238,7 @@ export interface TaskEventsTable {
   event_key: string;
   type: string;
   payload: Generated<Record<string, unknown>>;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
 }
 
 export interface ReviewsTable {
@@ -246,8 +255,8 @@ export interface ReviewsTable {
   context_hash: string;
   candidate_sha: string | null;
   status: Generated<ReviewStatus>;
-  created_at: Generated<Timestamp>;
-  updated_at: Generated<Timestamp>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 }
 
 export interface ApplyOperationsTable {
@@ -259,14 +268,14 @@ export interface ApplyOperationsTable {
   status: Generated<ApplyStatus>;
   boot_id: string;
   error_code: string | null;
-  created_at: Generated<Timestamp>;
+  created_at: Timestamp;
   settled_at: Timestamp | null;
 }
 
 export interface SchemaMigrationsTable {
   filename: string;
   checksum: string;
-  applied_at: Generated<Timestamp>;
+  applied_at: Timestamp;
 }
 
 export interface Database {

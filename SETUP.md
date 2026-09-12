@@ -94,10 +94,11 @@ Applied 4 migration(s).
 npm test
 ```
 
-**Expected: `Tests 45 passed (45)`.**
+**Expected: `Tests 79 passed (79)`.**
 
-This is the real check. Those 45 tests exercise every uniqueness rule, foreign
-key, and check constraint in the schema against a live PostgreSQL. If they all
+This is the real check. Those 79 tests exercise every uniqueness rule, foreign
+key, and check constraint in the schema against a live PostgreSQL, plus the
+workspace API: owner-key isolation, log redaction, and version guards. If they all
 pass, your environment matches everyone else's. If they don't, stop and fix it
 before writing code — don't work around it.
 

@@ -52,6 +52,8 @@ A workspace is a shared collection of work, not a personal terminal or virtual m
 
 One workspace corresponds to one internally managed Git repository. Participants never need Git or GitHub accounts.
 
+Creating a workspace writes its database record and then signals the Git service to initialize its repository. The signal is a hook, not an inline call: repository creation must not be able to fail a workspace creation request, and the data layer must not depend on the Git service being present. The Git service additionally ensures the repository exists on first access, under the workspace operation lock. A workspace whose repository was never initialized, because the hook failed or predates the Git service, therefore repairs itself rather than staying broken.
+
 ### 1.2 Anonymous participation and creator ownership
 
 Creating a workspace returns:
@@ -234,7 +236,9 @@ Newer material versions use new IDs. Existing running agents retain the captured
 
 Validate UTF-8, permitted file type, byte size, and path safety. Reject binary data, NUL content, archives, symlinks, and special files.
 
-Retain a simple 1 MiB per-text-file transport limit and a bounded WebSocket payload size to protect parsing and memory. These are file/protocol constraints, not extra agent task, retry, or concurrency limits.
+Retain a simple 1 MiB per-text-file transport limit and a bounded WebSocket payload size to protect parsing and memory. Rate limit workspace creation per client for the same reason: the endpoint is unauthenticated, no endpoint lists workspaces, and each workspace occupies a repository on a fixed-size disk, so unbounded creation is an unrecoverable storage leak rather than a cost question.
+
+These are file, protocol, and storage constraints. They are not extra agent task, retry, or concurrency limits, and section 9.4 still governs agent execution.
 
 Excel editing, office-file conversion, external repository import, and generated-code execution are outside this MVP's implemented surface.
 
@@ -1195,11 +1199,21 @@ This allocation has no time estimates. Dependencies identify the order in which 
 | apps/web/src/editor | A |
 | apps/server/src/workspaces, tasks, discussion, materials | B |
 | apps/server/src/db and events | B |
+| apps/server/src/http and config | B |
 | apps/server/src/models, orchestration, agents | C |
 | apps/server/src/git, collaboration, reviews, recovery | D |
+| apps/server/src/index.ts | D |
 | packages/contracts | B, consumed by all roles |
 | db/migrations | B |
 | deployment/runtime configuration | D |
+
+Two of those rows divide one process and are worth stating plainly, because the API surface and the runtime that hosts it are owned by different people.
+
+apps/server/src/http exports an application factory: a configured server instance with error mapping, request logging and redaction, cross-origin rules, and route registration. It listens to nothing and owns no process state. Every role mounts its routes into it.
+
+apps/server/src/index.ts is the process entrypoint. It loads configuration, assigns the boot ID, prepares the Git data root, builds the application, attaches the live document server to the same HTTP server, listens, and handles shutdown.
+
+The boot ID is generated once per process by the configuration layer, because run and agent records reference it from the moment they exist. Section 14.4's startup routine consumes that value; it does not define it.
 
 ## 16. Individually scoped implementation tasks
 
@@ -1210,7 +1224,7 @@ Every row is a single-owner work package. “Expected behavior” defines what t
 | ID | Task | Depends on | Deliverable and expected behavior |
 |---|---|---|---|
 | B01 | Shared schema and contracts | None | SQL tables, runtime schemas, error/status enums, and service interfaces. Posting, starting, live checkpointing, and review have distinct contracts |
-| B02 | Anonymous workspace creation | B01 | Create/resolve workspace API, generated contribution link, owner-key hashing, owner-only guidance updates. No account, membership, or invitation workflow |
+| B02 | Anonymous workspace creation | B01 | Application factory, configuration and boot ID, create/resolve workspace API, generated contribution link, owner-key hashing, owner-only guidance updates, and the workspace lifecycle hook the Git service implements. Creation is rate limited per client as a transport guard. No account, membership, or invitation workflow |
 | B03 | Posted tasks and task discussion | B02 | Post/revise/start request storage, task reads, discussion entries/attachments, agent-question records, idempotency, expected-version checks. Owns the Start transaction (version check, run creation, active-run guard) and hands the created run to orchestration through an injected hook. Posting invokes no model; duplicate Start cannot create two active attempts |
 | B04 | Workspace/task materials | B03 | Shared upload/read/link implementation backed by Supabase Storage. Immutable IDs/hashes; workspace and task entry points reuse bytes |
 | B05 | Collaborative snapshot persistence | B01, B03 | Store/load Yjs binary state, state vectors, document epochs, and guarded revisions. Older saves cannot overwrite newer snapshots |
@@ -1222,7 +1236,7 @@ Every row is a single-owner work package. “Expected behavior” defines what t
 
 | ID | Task | Depends on | Deliverable and expected behavior |
 |---|---|---|---|
-| D01 | Persistent runtime and Git initialization | B01 | Node runtime with persistent Git path, one repository per workspace, server-created initial main. Existing repositories survive process restart |
+| D01 | Persistent runtime and Git initialization | B01 | Persistent Git path, one repository per workspace, server-created initial main, the workspace lifecycle hook, and an idempotent ensure-repository path used on first access. Existing repositories survive process restart. Also owns the process entrypoint, which wires configuration, the boot ID, the Git data root, and the live document server around the application factory; that wiring can be completed once B02 lands and does not gate the Git work |
 | D02 | Draft/worker branches and safe file API | D01, B02 | Human, worker, and result branch/worktree creation; scoped reads/writes; expected hashes; checkpoint commits. One worker cannot write another's files |
 | D03 | Yjs room server | D02, B05 | Reused WebSocket protocol, shared room initialization, awareness, persistence hooks, revision tracking, closed-epoch rejection. Two clients use one initialized document |
 | D04 | Live draft to Git capture | D03 | Short document gate, save acknowledgement boundary, text export, checkpoint and revision map. Start/review capture accepted edits without resetting editor state |
