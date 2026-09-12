@@ -41,46 +41,72 @@ export class PgDraftStore {
   // -------------------------------------------------------------------------
 
   /**
-   * The one active document for a task and path, creating it if absent.
+   * The one active document for a task and path, creating the next epoch if
+   * none is active.
    *
-   * Find-or-create rather than insert: two browsers opening the same file at
-   * once must converge on one row. The partial unique index decides the winner
-   * and the loser re-reads, which is why this cannot be a plain upsert — the
-   * index is partial, so ON CONFLICT cannot name it as an arbiter.
+   * Two things make this harder than an upsert, and both have bitten:
+   *
+   * The epoch is computed, not fixed. Defaulting to 1 works exactly once: after
+   * Apply closes an epoch (section 7.6), a new document for the same path must
+   * be epoch 2, and inserting epoch 1 collides with the closed row while the
+   * active-document lookup cannot see it. That is a deterministic failure on
+   * the reopen path, not a race.
+   *
+   * Any unique violation means someone else got there first, so the handler
+   * does not name a constraint. Naming one would be wrong: draft_files carries
+   * two unique indexes a concurrent insert can trip — draft_files_epoch_uq on
+   * (task, path, epoch) and the partial draft_files_active_uq on (task, path) —
+   * and Postgres reports whichever it checks first, which is the constraint
+   * declared with the table, never the partial index added later. A handler
+   * naming the partial index compiles, reads correctly, and never runs.
+   *
+   * The retry loop closes the gap between those two: a caller that loses the
+   * race may find the winner chose the same epoch it was about to, so it
+   * recomputes rather than failing. Bounded, because a third attempt would mean
+   * something other than contention is wrong.
    */
   async openForTask(
     workspaceId: string,
     taskId: string,
     path: string,
   ): Promise<DraftFile> {
-    const existing = await this.findActive(taskId, path);
-    if (existing) return toDraftFile(existing);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const existing = await this.findActive(taskId, path);
+      if (existing) return toDraftFile(existing);
 
-    try {
-      const row = await this.deps.db
-        .insertInto('draft_files')
-        .values({ workspace_id: workspaceId, task_id: taskId, path })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      return toDraftFile(row);
-    } catch (error) {
-      /*
-       * Any unique violation here means someone else created this document
-       * first, so re-read rather than naming one constraint.
-       *
-       * Naming one would be wrong: draft_files carries two unique indexes that
-       * a concurrent insert can trip — draft_files_epoch_uq on (task, path,
-       * epoch) and the partial draft_files_active_uq on (task, path) — and
-       * Postgres reports whichever it checks first, which is the table
-       * constraint, never the partial index. A catch naming the partial index
-       * compiles, reads correctly, and never fires.
-       */
-      if (isUniqueViolation(error)) {
-        const winner = await this.findActive(taskId, path);
-        if (winner) return toDraftFile(winner);
+      const highest = await this.deps.db
+        .selectFrom('draft_files')
+        .select((eb) => eb.fn.max('epoch').as('epoch'))
+        .where('task_id', '=', taskId)
+        .where('path', '=', path)
+        .executeTakeFirst();
+
+      try {
+        const row = await this.deps.db
+          .insertInto('draft_files')
+          .values({
+            workspace_id: workspaceId,
+            task_id: taskId,
+            path,
+            epoch: (highest?.epoch ?? 0) + 1,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        return toDraftFile(row);
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+        // Fall through and re-read; the next pass either finds the winner or
+        // computes a fresh epoch above it.
       }
-      throw error;
     }
+
+    const settled = await this.findActive(taskId, path);
+    if (settled) return toDraftFile(settled);
+    throw new ApiError(
+      'CONFLICT',
+      'Could not open this document because it is being created concurrently. Try again.',
+      { path },
+    );
   }
 
   /**
@@ -338,42 +364,19 @@ export class PgDraftStore {
    * reuse its old epoch for new approved content." The closed row stays as
    * history, so a browser holding unsent edits against it can still be told
    * what happened rather than having its document silently redefined.
+   *
+   * Identical to openForTask by construction rather than by coincidence: both
+   * mean "the active document for this path, creating the next epoch if there
+   * is none". Keeping two implementations is how the reopen path came to be
+   * broken in one of them, so this is a name for the call site, not a second
+   * code path.
    */
   async openNextEpoch(
     workspaceId: string,
     taskId: string,
     path: string,
   ): Promise<DraftFile> {
-    const active = await this.findActive(taskId, path);
-    if (active) return toDraftFile(active);
-
-    const previous = await this.deps.db
-      .selectFrom('draft_files')
-      .select((eb) => eb.fn.max('epoch').as('epoch'))
-      .where('task_id', '=', taskId)
-      .where('path', '=', path)
-      .executeTakeFirst();
-
-    try {
-      const row = await this.deps.db
-        .insertInto('draft_files')
-        .values({
-          workspace_id: workspaceId,
-          task_id: taskId,
-          path,
-          epoch: (previous?.epoch ?? 0) + 1,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      return toDraftFile(row);
-    } catch (error) {
-      // Same race as openForTask: two callers computing the same next epoch.
-      if (isUniqueViolation(error)) {
-        const winner = await this.findActive(taskId, path);
-        if (winner) return toDraftFile(winner);
-      }
-      throw error;
-    }
+    return this.openForTask(workspaceId, taskId, path);
   }
 
   // -------------------------------------------------------------------------

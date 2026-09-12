@@ -574,6 +574,10 @@ During the final short Apply operation, the server gates new updates and validat
 
 Do not overwrite an active Yjs document with agent output or reuse its old epoch for new approved content. If a browser has late unsent edits, keep them visible for copying into a new draft and show that they were not applied.
 
+An epoch is a distinct stored document, not a counter on one. Closing an epoch leaves its record intact so a browser holding unsent edits against it can still be told what happened, and opening the path again creates the next number above every epoch that has existed for it. Creating a document therefore computes that number rather than assuming it is the first: assuming works exactly once, and every reopen after an apply fails.
+
+Opening a document for a path means the same thing in both directions, whether nothing has ever existed there or the previous epoch was just closed: return the active document, creating the next epoch if there is none. Keeping two implementations of that is how one of them came to be broken.
+
 ### 7.7 Basic reconnect behavior
 
 Reconnect to the same active document epoch and synchronize Yjs updates against its stored state.
@@ -1277,6 +1281,10 @@ Two ways out, and the choice depends on what the code is doing. Where the operat
 **Anything expressed in both SQL and TypeScript needs a test that compares them.** A status set written into an index predicate and also into a constant will diverge, and the failure is invisible: a run status added to the enum but missing from the active-run index would let two attempts run at once. A test that reads the live index definition and compares it to the constant is the only thing that catches this.
 
 **Cross-role work goes through an injected hook with a null implementation.** When a ticket needs behavior another role owns, define the interface in the contracts package, ship a recorder that does nothing, and let the owning role supply the real one later. This is how workspace creation reaches the Git service and how Start reaches orchestration, and it is why neither side blocks the other. A hook never throws into its caller: the response has already been shaped, so failure is the hook's to record and recover from.
+
+**A computed key must be computed on every path.** Where a row's identity includes a number derived from existing rows, deriving it once and defaulting thereafter produces a bug that hides until the second cycle: the first write succeeds, and the next one collides with a predecessor that the current-row lookup filters out and therefore cannot recover from. Find-or-create with a derived key means read, derive, insert, and re-read on conflict, in a bounded loop.
+
+**Concurrency tests need rounds, not a single pass.** Whether two writers genuinely overlap is a timing accident, so a one-round test can pass consistently against a path that is broken in every run. Repeat the contended operation enough times that a regression fails reliably, and assert each response succeeded before aggregating them — folding an error into a set or a count turns a crash into what looks like a disagreement, and sends the next reader to the wrong place.
 
 **Identifiers are validated at the boundary.** Workspace, task, and document IDs end up in filesystem paths and live-document room names, so every route parses them as UUIDs before anything else runs. That check is what makes section 12.1's promise about arbitrary room names true rather than aspirational.
 

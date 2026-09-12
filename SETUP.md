@@ -155,6 +155,10 @@ covers everything until then.
 
 ---
 
+## Before you wire against the API
+
+[HANDOFF.md](HANDOFF.md) has the per-role notes from Role B: the error envelope, the owner-key header, which status codes carry meaning, the contracts each hook must honour, and the mistakes that have already cost time on this codebase. Read your section before writing request code.
+
 ## Three rules
 
 ### 1. Never edit an applied migration

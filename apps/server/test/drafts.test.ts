@@ -70,14 +70,68 @@ describe('opening a document', () => {
   });
 
   it('converges on one document when opened concurrently', async () => {
-    // Two browsers clicking at once must not fork the draft.
+    /*
+     * Repeated, not a single round. This race was previously broken in every
+     * run and still passed a one-round test roughly a third of the time,
+     * because whether two inserts genuinely overlap is a timing accident.
+     * Twelve rounds makes a regression fail reliably rather than occasionally.
+     */
     const taskId = await makeTask();
+    for (let round = 0; round < 12; round += 1) {
+      const path = `documents/race-${round}.md`;
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () => store.openForTask(workspaceId, taskId, path)),
+      );
+      expect(new Set(results.map((d) => d.id)).size, `round ${round} forked`).toBe(1);
+
+      const rows = await t.handle.db
+        .selectFrom('draft_files')
+        .select('id')
+        .where('task_id', '=', taskId)
+        .where('path', '=', path)
+        .execute();
+      expect(rows, `round ${round} wrote extra rows`).toHaveLength(1);
+    }
+  }, 60_000);
+
+  it('opens the next epoch after the previous one was closed', async () => {
+    /*
+     * Section 7.6: "Further editing creates a new task/draft epoch."
+     *
+     * Regression. Creation used to default to epoch 1, which works exactly
+     * once: after Apply closes an epoch, inserting epoch 1 again collides with
+     * the closed row, and the active-document lookup cannot see that row to
+     * recover. Reopening any document after Apply failed outright.
+     */
+    const taskId = await makeTask();
+    const first = await store.openForTask(workspaceId, taskId, 'documents/cycle.md');
+    expect(first.epoch).toBe(1);
+
+    await store.closeEpoch(workspaceId, taskId);
+    const second = await store.openForTask(workspaceId, taskId, 'documents/cycle.md');
+    expect(second.epoch).toBe(2);
+    expect(second.id).not.toBe(first.id);
+
+    // And it keeps working across further cycles.
+    await store.closeEpoch(workspaceId, taskId);
+    const third = await store.openForTask(workspaceId, taskId, 'documents/cycle.md');
+    expect(third.epoch).toBe(3);
+  });
+
+  it('converges on one epoch when reopened concurrently after a close', async () => {
+    // The two failure modes combined: several callers racing to compute the
+    // same next epoch against a closed predecessor.
+    const taskId = await makeTask();
+    await store.openForTask(workspaceId, taskId, 'documents/recycle.md');
+    await store.closeEpoch(workspaceId, taskId);
+
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>
-        store.openForTask(workspaceId, taskId, 'documents/race.md'),
+        store.openForTask(workspaceId, taskId, 'documents/recycle.md'),
       ),
     );
     expect(new Set(results.map((d) => d.id)).size).toBe(1);
+    expect(results[0]!.epoch).toBe(2);
   });
 
   it('keeps separate documents for separate paths', async () => {
