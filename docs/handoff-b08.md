@@ -46,12 +46,17 @@ That needs C07 and D07 to exist. Until then:
 
 ### Useful work that is not blocked
 
-**Run the Supabase setup** (`docs/supabase-setup.md`) if the project exists.
-`SupabaseBlobStore` and `SupabaseBroadcaster` are both written and **never
-tested against a live project**. `npm run supabase:smoke --workspace @app/server`
-settles it in one command. This is the single highest-value unblocked task: two
-untested integrations discovered broken during a deploy is the classic way a
-hackathon demo dies.
+**Supabase is set up and verified** as of 2026-09-12, so this is no longer the
+open task it was. All six migrations are applied to the hosted project and
+`npm run supabase:smoke --workspace @app/server` passes all four checks.
+
+It was worth doing early: storage *was* broken. `SupabaseBlobStore.get` could
+not recognise a missing object, because Supabase Storage answers 400 rather than
+404 — precisely the "discovered broken during a deploy" outcome the task existed
+to pre-empt. Details in the CHANGELOG and `pitfalls.md`.
+
+Re-run the smoke command after anyone rotates a key or renames the bucket. It is
+the quickest way to tell a configuration problem from a code one.
 
 **Watch the build on `main`.** It broke once already — see below.
 
@@ -142,11 +147,16 @@ npm run build && npm test
 ```
 
 Then, for anything concurrent or security-relevant, the mutation check above.
-Counts as of this handoff: **496 backend + 23 frontend**.
+Counts as of this handoff: **502 backend + 23 frontend**.
 
 ## Open questions
 
-**Supabase is unverified.** Highest-value unblocked task. See above.
+**Nobody has watched a browser receive a refresh hint.** The smoke test proves
+the server's broadcast is *accepted* (202), and the `realtime` block is now
+advertised to clients. The subscriber half is Role A's, and no one has yet
+confirmed a hint arriving in a browser and triggering a refetch. Worth ten
+minutes with two tabs open before the demo — the fallback is polling, so a
+failure here is quiet rather than visible.
 
 **Materials are text-only** (§3.4: reject binary). No PDFs or images. Deliberate
 and flagged to the product owner; a demo where someone drags in a PDF will show

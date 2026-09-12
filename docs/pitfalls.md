@@ -42,6 +42,49 @@ evidence behind them.
 Short on purpose. Add an entry when something costs you more than a few minutes
 and would cost the next person the same.
 
+---
+
+## Supabase Storage reports a missing object as 400, not 404
+
+**B04/B06 verification, first live Supabase project.** `npm run supabase:smoke`
+failed at the read-after-delete step with `storage read failed with 400`, two
+lines after reporting a successful upload and an identical read back. Nothing
+was wrong with the project, the bucket, or the key. Storage worked; the store
+could not recognise an object that was absent.
+
+Supabase Storage answers a GET for an object that is not there with **HTTP 400**,
+and puts the status it means inside the body:
+
+```json
+{"statusCode":"404","error":"not_found","message":"Object not found","code":"NoSuchKey"}
+```
+
+`get` mapped only a real `404` to `null` and threw on everything else, so the
+branch that makes `BlobStore.get` return `Uint8Array | null` had never once run
+against the implementation that ships. `delete` had the same hole.
+
+**Why it stayed invisible:** `LocalDiskBlobStore` implements the contract
+correctly and is what every test injects, so the materials suite passed against
+the wrong implementation. The Supabase path had no test at all, and the one
+place its `null` is load-bearing — `readSelected` turning a missing object into
+`MATERIAL_NOT_FOUND` rather than serving an empty file to a model — would have
+become a 500 the first time an object actually went missing.
+
+**The trap in the fix:** a missing *bucket* is also 400 and also claims
+`"statusCode":"404"`; a rejected key is 400 claiming `"403"`. Mapping 400 to
+`null` makes the smoke test pass and silently converts a mistyped
+`SUPABASE_STORAGE_BUCKET` into "every material is missing" — a configuration
+error no caller can tell apart from an empty store. The discriminator has to be
+the body's `code` (`NoSuchKey` / `NoSuchBucket` / `AccessDenied`), not the status
+it claims.
+
+**Instead:** where a hosted API's status line disagrees with its body, believe
+the body, and match the specific condition rather than the status class. And
+when an interface returns `T | null`, check that *every* implementation can
+actually produce the `null` — not just the one the tests use.
+
+---
+
 ## A fast response reopened a creation form before navigation finished
 
 **A02, workspace creation.** Clearing the submitting flag in `finally` let a
