@@ -2,6 +2,50 @@
 
 Newest first. One entry per landed ticket.
 
+## Docs — design document amended to match what was built
+**Landed:** 2026-09-12 · Role A
+**Affects:** everyone. Documentation only; no code.
+**Action required:** None. Read the §4.3 note before touching board card copy.
+
+The design document is the specification and wins where anything disagrees with
+it, so these are amendments rather than notes filed elsewhere:
+
+- **§4.1 — the editor route.** The table said
+  `/w/:w/tasks/:t/edit/:fileId`; A03 shipped `/w/:w/tasks/:t/drafts` with an
+  in-page file selector. §4.4 already requires a selector as a control, so a
+  per-file route duplicates it and forces a navigation that remounts the Yjs
+  binding. The table now matches the implementation.
+- **§4.1 — History's data source** is named: `apply_operations` joined to its
+  review and task. Empty until D07 writes to it, which makes an empty History a
+  correct answer rather than a missing feature.
+- **§4.3 — board cards may no longer claim agent activity.** The old wording
+  asked for a "current assignment summary" that `TaskSummary` does not carry;
+  the first implementation satisfied it with per-status copy, so every working
+  task claimed a "Writer" was "preparing a first draft" whether or not such an
+  agent existed. That is the fake progress §4.7 forbids.
+- **§2.1 — approved files are not selectable** in the input picker, because
+  nothing can enumerate them: the Git service has `readText(path)` and no tree
+  operation.
+- **§4.5 — agent progress has no data source.** `AgentProgress` is fully
+  specified in contracts and served by no route; events carry only `{agentId}`.
+  Separate from orchestration being absent.
+- **§4.6 — review has no read path.** `reviewId` is not on the task detail
+  shape and the only way to obtain one is `POST /tasks/:t/review`, a mutation.
+  There is no apply route at all.
+
+Also corrected: an earlier note in [the Role A interface](interfaces/role-a.md)
+called History possibly unbuildable. That was wrong — `apply_operations` and its
+store already exist, and what is missing is a listing method, a route, and a
+contract, all in Role B files. It is a small ticket, not a blocked one.
+
+[`handoff-b08.md`](handoff-b08.md)'s status table is updated: **D07 is unblocked
+now**, and **C05 is not implemented** despite `6950fc3 "Add C05"` — that commit
+adds one npm script pointing at a vitest config that does not exist, with no
+scheduler behind it. C06 depends on C05, so anyone planning around it should
+confirm first.
+
+---
+
 ## A04 — Task posting, discussion, and materials (plus the unblocked half of A07)
 **Landed:** 2026-09-12 · Role A
 **Affects:** everyone. One additive Role B route; no migration, no dependency.

@@ -174,15 +174,28 @@ rediscovered:
 | A route serving `AgentProgress` | A05's Agents tab (§4.5) | B or C |
 | A `reviewId` on task detail, or a read path to the current review | A06 — `POST /tasks/:t/review` is a mutation, and nothing else exposes the ID | B |
 | An approved-file **listing** (Git has `readText(path)` only — no tree op) | A07's Files view and the approved-file input picker (§2.1, §4.1) | D, then B |
+| A workspace-wide `apply_operations` listing + route | History (§4.1). Table and store already exist; empty until D07 | B |
 
 `agentProgressSchema`, `applyReviewRequestSchema`, and
 `applyReviewResponseSchema` are all already in `@app/contracts` with no route
 behind them. The shapes are agreed; the endpoints are not built.
 
-There is also no **history** data of any kind — §4.1 specifies the screen, but
-applied changes exist only as per-task `task.applied` events with no
-workspace-wide query. The route renders an explicit "not available yet" rather
-than an empty list, which would claim nothing had been applied.
+**History** is a smaller gap than it first looks. The data model is already
+there: `apply_operations` (migration 0002) carries workspace, review, candidate
+SHA, status and settle time, and `src/runs/review-store.ts` already writes,
+settles and reads it. Joining it to its review and task gives §4.1's "applied
+changes and associated tasks" directly.
+
+What is missing is a workspace-wide listing method, a route, and a contract
+shape — all Role B, all in files Role B already owns. Nothing writes
+`apply_operations` until owner apply (D07) exists, so the screen will correctly
+show an empty list for now; that is a reason to build it cheaply, not a reason it
+cannot be built. The `task.applied` event type is likewise declared in contracts
+with no writer anywhere.
+
+The route currently renders "not available yet" rather than an empty list,
+because an empty list today would be indistinguishable from "nothing has been
+applied" — which happens to be true but not for the reason a reader would infer.
 
 ---
 

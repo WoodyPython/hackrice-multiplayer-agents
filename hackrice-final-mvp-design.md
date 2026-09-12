@@ -108,6 +108,15 @@ The form contains:
 - Selected approved files or shared drafts.
 - Optional intended output paths.
 
+**Approved files are not selectable yet.** Nothing in the system can enumerate
+them: the Git service exposes `readText(path)` for one known path and has no
+tree or list operation, so there is no way to populate that part of the picker.
+The form offers reference materials and shared drafts, and says plainly that
+approved files are unavailable rather than showing an empty category, which
+would read as "this workspace has approved nothing". A path can still be typed
+as an intended output. Closing this needs a listing operation in the Git service
+and a route in front of it.
+
 The primary form action is Post task. It creates a posted task and opens its discussion. It makes no Gemini request and creates no agent execution.
 
 People can add comments, attach materials, adjust requirements, and edit drafts before deciding to start. Requirement updates use optimistic version checks so two form saves cannot silently overwrite each other.
@@ -277,11 +286,23 @@ Excel editing, office-file conversion, external repository import, and generated
 | /w/:workspaceId | Task board | Posted work, active work, attention, review, completed |
 | /w/:workspaceId/tasks/:taskId | Task detail | Requirements, discussion, materials, drafts, agent progress, review |
 | /w/:workspaceId/files | Files | Approved files, reference materials, active shared drafts |
-| /w/:workspaceId/tasks/:taskId/edit/:fileId | Collaborative editor | Shared text, cursors, preview, saved state |
+| /w/:workspaceId/tasks/:taskId/drafts | Collaborative editor | File selector, shared text, cursors, preview, saved state |
 | /w/:workspaceId/history | History | Applied changes and associated tasks |
 | /w/:workspaceId/settings | Workspace settings | Guidance and owner-only configuration |
 
 The creator sees Copy workspace link. Opening that link requires no extra entry screen.
+
+**The editor is one route per task, not one per file.** An earlier revision of
+this table put the file ID in the path. Section 4.4 already requires a file
+selector as a control, so a per-file route duplicates it — two ways to change
+document, one of which forces a navigation and remounts the Yjs binding. A03
+shipped the selector; this table now matches it.
+
+**History reads `apply_operations`,** joined to its review and task. That table
+carries the workspace, the candidate SHA, the status and the settle time, which
+is what "applied changes and associated tasks" needs. It stays empty until the
+owner-apply path (D07) writes to it, and an empty History is therefore a correct
+answer rather than a missing feature.
 
 ### 4.2 Navigation and layout
 
@@ -307,7 +328,17 @@ Columns:
 
 Use state-derived placement. Dragging a card cannot mark work approved.
 
-Cards show title, anonymous creator label, current assignment summary, material count, and whether input or owner review is needed.
+Cards show title, anonymous creator label, state, material count, and whether
+input or owner review is needed.
+
+**A card must not describe agent activity.** An earlier revision asked for a
+"current assignment summary" here, which `TaskSummary` does not carry and cannot
+cheaply carry — assignment state lives on agent instances, per run. The first
+implementation satisfied the wording with per-status copy, so every working task
+claimed a "Writer" was "preparing a first draft" whether or not any such agent
+existed. That is the fake progress section 4.7 forbids. Card copy is derived
+from task state only; real assignment detail belongs to the Agents tab, which
+reads actual records.
 
 ### 4.4 Collaborative editor
 
@@ -335,6 +366,15 @@ Show token usage per task per agent as read-only information if useful. Do not e
 
 Time left may be displayed for a running agent; its deadline is always fixed by the backend.
 
+**This screen has no data source yet.** `AgentProgress` is defined in
+`@app/contracts` with every field above, and no route serves it: task events
+carry only `{ agentId }`, which is enough to know something happened and not
+enough to render a row. Until an endpoint exists, the Agents tab says so rather
+than showing an empty list — "no agents have run" is a claim the frontend cannot
+support. Note this is separate from orchestration itself being absent: with the
+null orchestration hook in place, Start records an attempt and creates no
+assignments at all.
+
 ### 4.6 Review
 
 Review displays:
@@ -350,6 +390,14 @@ Review displays:
 Default to readable content. Put Git commit IDs and operation metadata in Details.
 
 All contributors can discuss changes. Only the owner key enables application. The server performs the same check; hiding a button is insufficient.
+
+**Two gaps stand between this section and a screen.** There is no read path to a
+task's current review: `reviewId` is not on the task detail shape, and the only
+way to obtain one is `POST /tasks/:t/review`, which prepares a candidate and is
+therefore a mutation — not something a page may call on load. And there is no
+apply route at all; `applyReviewRequestSchema` and `applyReviewResponseSchema`
+exist in `@app/contracts` with nothing behind them. Both are needed before the
+Changes tab can be more than an explanation of why it is empty.
 
 ### 4.7 Minimal error states
 

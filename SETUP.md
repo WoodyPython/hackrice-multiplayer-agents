@@ -121,6 +121,11 @@ Ticket definitions are in
 
 B01 is done, which unblocks the first ticket for all three of you.
 
+*The table below is the original starting point, written when B01 landed. It is
+kept as onboarding context and is no longer a status report — for where things
+actually stand, read [`docs/CHANGELOG.md`](docs/CHANGELOG.md) newest-first and
+the status table in [`docs/handoff-b08.md`](docs/handoff-b08.md).*
+
 | You | Start with | What B01 gives you |
 |---|---|---|
 | **Role A** — Frontend | **A01** Workspace/task UI shell | A01 says "using contract-shaped fixtures" — that's `TaskSummary`, `TaskDetail`, all 10 `TASK_STATUSES` for board columns, and 26 error codes so error states are real states, not generic banners |
