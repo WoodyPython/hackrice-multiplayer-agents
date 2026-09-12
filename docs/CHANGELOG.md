@@ -64,8 +64,9 @@ C to decide.
   no run. Changes reset on reload; API integration remains in later A tickets.
 - No account pages, participant directory, model settings, or owner credentials.
   Backend, contracts, and migrations are unchanged.
-- Verified: five migrations applied; `npm test` passed 220 backend and eight
-  frontend tests; `npm run build` and `npm run typecheck` passed. Browser visual
+- Verified after merging C02/B07: six migrations applied; `npm test` passed 289
+  backend and eight frontend tests; `npm run build` passed. The A01 workspace
+  typecheck also passed. Browser visual
   QA could not run because browser automation was unavailable in this session.
 
 See [`apps/web/README.md`](../apps/web/README.md) for routes and preview controls.
