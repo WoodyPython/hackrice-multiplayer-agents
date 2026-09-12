@@ -2,13 +2,12 @@
 
 **Reflects:** B07, C02 · **Owner:** Role B (data), Role C (execution)
 
-> **Unresolved: two ledgers now exist.** C02 shipped `PgAgentLedger` under
-> `src/agents` while B07 was in flight, and B07 shipped `PgBudgetLedger` under
-> `src/runs`. Both reserve and reconcile against `task_agent_budgets`. They do
-> not corrupt each other — the atomicity is in the SQL, not in either class —
-> but two writers to one ledger is a bug waiting to happen, and the duplication
-> should collapse to one before C04 builds on either. Roles B and C to decide
-> which survives.
+> **Resolved: `PgAgentLedger` is the ledger.** B07 briefly shipped a second one,
+> `PgBudgetLedger` under `src/runs`; it has been deleted. Yours won on three
+> counts: §15.1 assigns `src/agents` to Role C, your `reserve` derives the
+> output allowance from the remaining budget as §9.3 step 3 actually requires
+> (mine took a caller-supplied number), and you own the deadline sweep. There is
+> now one writer to `task_agent_budgets` and one path that creates an instance.
 
 ## C02 execution and accounting
 
@@ -119,58 +118,36 @@ provider-reported totals, either of which can legitimately overshoot a
 reservation. Enforcement belongs before the call, not in a constraint that would
 make honest reconciliation fail.
 
-The ledger is `PgBudgetLedger`, and the sequence per model request is:
-
-1. `ensure(workspaceId, taskId, agentKey)` once per logical agent.
-   Create-if-absent, never reset.
-2. `reserve({agentInstanceId, requestKey, tokens, modelId})` before the call.
-   Returns `remainingTokens` — derive your output and thinking allowance from
-   it. Raises `AGENT_TOKEN_EXHAUSTED` when too little is left; that is a stop,
-   not a retry.
-3. `reconcile({agentInstanceId, requestKey, usage})` after it returns.
-4. `abandon({agentInstanceId, requestKey})` when the call failed without usable
-   usage.
-
-Three things that are easy to get wrong:
-
-- **`reserve` is idempotent on `requestKey`.** A replay returns
-  `reserved: false` and does not double-hold. Use a stable key per logical
-  request.
-- **`abandon` charges the reservation, it does not refund it.** Design §9.3 is
-  explicit. Refunding would let an agent that keeps failing burn unbounded
-  provider capacity while its recorded usage stayed at zero.
-- **Never sum a reported total with its components.** `billableTokens` handles
-  this; if you compute usage yourself, a reported `totalTokens` wins outright
-  and components are summed only in its absence. Summing both roughly doubles
-  every charge.
-
 Usage can legitimately exceed a reservation — late usage after a deadline abort,
 or a provider total above the estimate — and the budget row deliberately has no
 constraint that would make that fail.
 
-## Instances and the deadline
+## What the data layer provides alongside your ledger
 
-`PgRunStore` materialises a validated plan and manages instance lifecycle.
+`PgRunStore` in `src/runs` holds the run, not the agent. No overlap with
+`PgAgentLedger`.
 
-- `createInstancesFromPlan` writes instances and dependency edges in one
-  transaction, and re-checks acyclicity. You validate first (C03), because you
-  can ask the model for a correction; this second check exists because a stored
-  cycle produces a scheduler that waits forever on prerequisites that can never
-  complete, which is far harder to diagnose than a rejected plan.
-- `start(agentInstanceId, AGENT_TIMEOUT_MS)` **derives** the deadline. You
-  cannot supply one, and a second call returns the existing deadline rather than
-  restarting the clock — §9.2: replanning and retries do not reset it.
-- `assertWritable(agentInstanceId)` before any file write or checkpoint. Checks
-  terminal status, boot identity, and the clock, all three.
-- `readyInstances(runId)` returns assignments whose prerequisites have all
-  completed. That is your parallel dispatch set.
+- `linkDependencies(runId, plan)` — writes the dependency edges once your
+  `createInstance` calls have made the instances. Re-checks acyclicity: you
+  validate first in C03 where you can ask the model for a correction, and this
+  second check exists because a stored cycle produces a scheduler that waits
+  forever on prerequisites that can never complete. Idempotent.
+- `readyInstances(runId)` — assignments whose prerequisites have all completed.
+  Your parallel dispatch set (§8.7).
+- `recordCapture(runId, {inputSnapshotSha, contextManifest})` — after C06's
+  capture. Refuses a run from a previous boot.
+- `settle(runId, status, reason)` — terminal run status, clears the task's
+  active-run pointer, resolves open questions. Idempotent.
+- `markInterruptedFromPreviousBoots()` — Role D calls this at startup.
 
-**The database refuses late writes from terminal instances.** A trigger rejects
-a transition out of a terminal status, and any change to `result_sha`,
-`base_sha`, `write_paths`, or `deadline_at`. Recording late usage is still
-permitted, per §9.2. You will see a `check_violation` naming
+**The database also refuses late writes from terminal instances.** Migration
+`0006` adds a trigger rejecting a transition out of a terminal status and any
+change to `result_sha`, `base_sha`, `write_paths`, or `deadline_at`. Recording
+late usage stays permitted, per §9.2. You will see a `check_violation` naming
 `agent_instances_terminal_no_write` or `agent_instances_terminal_no_transition`
-— treat both as "this agent is done", not as a bug to work around.
+— treat both as "this agent is done", not as something to work around. It backs
+up your own `assertActive` rather than replacing it: the trigger catches a write
+that reached the database through some path that forgot to ask.
 
 ---
 
