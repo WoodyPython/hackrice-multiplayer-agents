@@ -1,12 +1,33 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** D08, B07, C02, C05, C06 · **Owner:** Role B (data), Role C (execution guard)
+**Reflects:** D08, B07, C02, C05, C06, C07, plus the A06/A07 requests below · **Owner:** Role B (data), Role C (execution guard)
 
 ## D08 runtime recovery
 
 Startup now calls `markInterruptedFromPreviousBoots()` before building the application and reconciles pending applies before attaching transport, opening orchestration, or listening. Existing saved snapshots and Git checkpoints restore on demand. No old execution is resumed; the existing explicit retry route creates a new attempt after interruption clears the active-run pointer.
 
 `LocalReviewService.reconcilePreviousApplies()` shares D07's finalization transaction: main at the candidate completes metadata and closes epochs, main at the expected SHA retains pending owner/freshness checks, and any other SHA records ambiguity and blocks document writes. Storage failures abort startup. See [D08 recovery details](git.md#startup-recovery-d08). C08 retains ownership of saved-output selection and broader retry behavior.
+
+## C07 additions to `reviews/routes.ts`
+
+`registerReviewRoutes(app, reviews, c07)` now takes a required third argument:
+`{ evidence: ReviewEvidenceComposer, assessments: ReviewAssessmentService }`,
+both constructed in `recovery/runtime.ts` alongside the rest of Role C's stack
+and sharing its one `ModelAdapter`. Two additive routes follow D06's existing
+shape — read the review through `reviews.read()` first, then hand its result
+to the injected capability rather than touching Git:
+
+- `GET .../reviews/:reviewId/evidence` → `ReviewEvidence`
+- `POST .../reviews/:reviewId/assess` → `ReviewAssessment`, no body
+
+Both read-only from D06's side: neither mutates a review row or its candidate.
+`ReviewAssessmentError` is translated to a proper `ApiError`
+(`REVIEW_NOT_FOUND`, `AGENT_TIMED_OUT`, `AGENT_TOKEN_EXHAUSTED`, or
+`INVALID_STATE`) at the route, the one place a C07 error crosses HTTP
+synchronously — everywhere else in this design, an agent outcome reaches the
+browser through a durable event instead. See
+[C07's notes](../../apps/server/src/orchestration/REVIEW.md) for why this
+capability is not built on the run/agent-instance lifecycle at all.
 
 ## C06 changes inside the runtime
 
@@ -170,6 +191,35 @@ typing.
 by a dead process. Reconcile each against main per §10.5: the candidate already
 on main means it succeeded, main still at the expected value means it never ran,
 anything else is ambiguous and stops.
+
+## What Role A needs from you (A06, A07)
+
+Two things, in priority order.
+
+**D07's apply path, which three screens wait on.** It is unblocked now — D06 has
+landed and B02 was always there — and it is the single highest-leverage ticket
+left: it unblocks A06's Changes tab, it is half of what B08 needs (C07 is the
+other half, also unblocked, and the two are independent), and it is what first
+writes `apply_operations`, which is the entire content of the History screen.
+`applyReviewRequestSchema` and `applyReviewResponseSchema` are already in
+`@app/contracts` with nothing behind them.
+
+Also needed for A06: some way for the browser to **discover a task's review
+without mutating anything**. Today the only path to a review ID is
+`POST /tasks/:t/review`, which prepares a candidate — a page cannot call that on
+load. A `reviewId` on `TaskDetail` would do; that part is Role B's.
+
+**A listing operation for approved files.** `GitService.readText(path)` reads one
+file at a known path, and there is no tree or list operation anywhere, so nothing
+in the system can answer "what is on main". That blocks the Files screen's
+approved section (§4.1) and the approved-file category in the task input picker
+(§2.1) — both currently say the data is unavailable rather than showing an empty
+list, because "no approved files" is a claim we cannot support.
+
+A path list at a commit is enough; content comes from `readText` per file as
+it is opened.
+
+---
 
 ## Startup reconciliation
 

@@ -177,3 +177,19 @@ export type CandidateResolution = z.infer<typeof candidateResolutionSchema>;
 export type ResolveCandidateRequest = z.infer<typeof resolveCandidateRequestSchema>;
 export type ReviewCandidateData = z.infer<typeof reviewCandidateDataSchema>;
 export type ReviewDetail = z.infer<typeof reviewDetailSchema>;
+
+/**
+ * C07: one fresh reviewer-preset pass against the exact candidate a review
+ * holds right now — section 10.4's "explicit assignment with its own recorded
+ * snapshot", distinct from any reviewer assignment a run's own plan carried
+ * (which only ever examined G, not the combined candidate M).
+ */
+export const reviewAssessmentSchema = z.object({
+  agentKey: z.string(),
+  summary: z.string(),
+  limitations: z.string().nullable(),
+  /** The candidate SHA this pass actually read. Always the exact one requested. */
+  examinedSha: shaSchema,
+  generatedCodeWasNotExecuted: z.literal(true),
+});
+export type ReviewAssessment = z.infer<typeof reviewAssessmentSchema>;

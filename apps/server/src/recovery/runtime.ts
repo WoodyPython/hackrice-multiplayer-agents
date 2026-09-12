@@ -15,7 +15,8 @@ import { PgMaterialService } from '../materials/service.js';
 import { PgAgentLedger } from '../agents/ledger.js';
 import { createGeminiAdapter } from '../models/gemini.js';
 import { ModelAdapterError, type ModelAdapter } from '../models/types.js';
-import { OrchestratorPlanner, ParallelAssignmentScheduler, StartOrchestrator } from '../orchestration/index.js';
+import { OrchestratorPlanner, ParallelAssignmentScheduler, StartOrchestrator,
+  ReviewAssessor, ReviewEvidenceComposer } from '../orchestration/index.js';
 import { WorkerExecutor } from '../workers/executor.js';
 import { LocalReviewService } from '../reviews/service.js';
 import { registerReviewRoutes } from '../reviews/routes.js';
@@ -92,8 +93,9 @@ export async function startRuntime(options: RuntimeOptions) {
     collaboration = new LiveDocumentCoordinator(liveDeps, {
       drafts, git, checkpoints: new PgCheckpointStore(db.db),
     });
+    const adapter = configuredAdapter(config);
     orchestration = buildOrchestration({
-      config, db: db.db, git, drafts, collaboration,
+      config, db: db.db, git, drafts, collaboration, adapter,
       onBackgroundError: (error) => app?.log.error({ err: error }, 'orchestration failed outside a request'),
     });
     app = await (options.applicationFactory ?? buildApp)({ db: db.db, config, lifecycle, orchestration });
@@ -118,7 +120,11 @@ export async function startRuntime(options: RuntimeOptions) {
     };
     const reviews = new LocalReviewService({ db: db.db, git, collaboration, bootId: config.bootId });
     collaboration.onAcceptedChange = (taskId, revisionMark) => reviews.invalidate({ taskId, reason: revisionMark });
-    await registerReviewRoutes(app, reviews);
+    // C07: a fresh assessment reads the review's own current candidate rather
+    // than any run, so it needs only the review reader, not the Git service.
+    const reviewAssessments = new ReviewAssessor({ db: db.db, adapter, reviews });
+    const reviewEvidence = new ReviewEvidenceComposer({ db: db.db });
+    await registerReviewRoutes(app, reviews, { evidence: reviewEvidence, assessments: reviewAssessments });
     const applies = await reviews.reconcilePreviousApplies();
     const recovery = { interrupted, applies };
     app.log.info({ recovery }, 'startup recovery complete');
@@ -133,7 +139,7 @@ export async function startRuntime(options: RuntimeOptions) {
     }
     orchestration.open();
     await app.listen(options.listen ?? { host: '0.0.0.0', port: config.PORT });
-    return { app, git, lifecycle, collaboration, orchestration, reviews, recovery, close };
+    return { app, git, lifecycle, collaboration, orchestration, reviews, reviewAssessments, reviewEvidence, recovery, close };
   } catch (error) {
     await close().catch(() => undefined);
     throw error instanceof GitRuntimeError ? error : new GitRuntimeError('STARTUP_FAILED');
@@ -154,12 +160,12 @@ function buildOrchestration(deps: {
   git: LocalGitService;
   drafts: PgDraftStore;
   collaboration: LiveDocumentCoordinator;
+  adapter: ModelAdapter;
   onBackgroundError: (error: unknown) => void;
 }): StartOrchestrator {
-  const { config, db, git, onBackgroundError } = deps;
+  const { config, db, git, adapter, onBackgroundError } = deps;
   const bootId = config.bootId;
   const ledger = new PgAgentLedger({ db, bootId });
-  const adapter = configuredAdapter(config);
   const materials = new PgMaterialService({ db, blobs: defaultBlobStore(config) });
   const workers = new WorkerExecutor({ db, ledger, adapter, git, materials, onBackgroundError });
   return new StartOrchestrator({

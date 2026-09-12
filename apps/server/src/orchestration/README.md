@@ -1,9 +1,11 @@
 # C03: orchestrator plans and graph validation
 
 C05 now consumes these saved plans through `ParallelAssignmentScheduler`.
-See [scheduler integration and D05/C06 handoff](SCHEDULER.md), and
+See [scheduler integration and D05/C06 handoff](SCHEDULER.md),
 [C06 Start orchestration](START.md) for the hook that captures a run's context
-and drives planning, dispatch and run finalization.
+and drives planning, dispatch and run finalization, and
+[C07 reviewer, evidence and handoff](REVIEW.md) for the fresh-assessment
+capability injected into D06's review routes.
 
 `OrchestratorPlanner` implements the shared `OrchestratorPlanningService` seam.
 It consumes an existing planning instance and immutable captured context, obtains

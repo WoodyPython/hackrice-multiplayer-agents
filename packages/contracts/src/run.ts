@@ -92,6 +92,69 @@ export const agentProgressSchema = agentInstanceSchema
   });
 export type AgentProgress = z.infer<typeof agentProgressSchema>;
 
+/**
+ * One assignment as the browser sees it (section 4.5), without token figures.
+ *
+ * A sibling of `agentProgressSchema` rather than a change to it. The token
+ * fields there are required, and the ledger has no read method yet, so serving
+ * that shape would mean inventing `tokensConsumed: 0` — a number that looks
+ * like a measurement and is not one. Section 4.5 marks the token display
+ * optional ("if useful"), so it is simply absent until Role C can supply it,
+ * at which point the fields are added here additively.
+ *
+ * `instruction` is omitted for the same reason it is omitted there: a worker
+ * instruction runs to 20,000 characters and is not a UI string.
+ */
+export const assignmentProgressSchema = agentInstanceSchema
+  .omit({ instruction: true })
+  .extend({ instructionSummary: z.string() });
+export type AssignmentProgress = z.infer<typeof assignmentProgressSchema>;
+
+/**
+ * Every attempt on a task, newest first, each with its assignments.
+ *
+ * Grouped by run rather than flattened because assignments are only meaningful
+ * inside their attempt: `assignmentKey` is unique within a run, dependencies
+ * point at instances of the same run, and retrying produces a fresh set. A flat
+ * list would put two attempts' versions of the same assignment side by side
+ * with nothing distinguishing them.
+ *
+ * Previous attempts are retained deliberately. Section 4.7 requires an
+ * incomplete task to show "incomplete status and preserved output/checkpoint",
+ * which means the failed attempt's work has to stay inspectable after a retry
+ * has moved on.
+ */
+export const taskAttemptSchema = z.object({
+  runId: runIdSchema,
+  attempt: z.number().int().positive(),
+  status: runStatusSchema,
+  taskVersion: z.number().int().positive(),
+  createdAt: timestampSchema,
+  endedAt: timestampSchema.nullable(),
+  assignments: z.array(assignmentProgressSchema),
+});
+export type TaskAttempt = z.infer<typeof taskAttemptSchema>;
+
+export const listTaskAgentsResponseSchema = z.object({
+  attempts: z.array(taskAttemptSchema),
+});
+export type ListTaskAgentsResponse = z.infer<typeof listTaskAgentsResponseSchema>;
+
+/**
+ * How much of an instruction reaches the browser.
+ *
+ * Kept next to the schema so the server and any test agree on one number
+ * rather than each picking their own.
+ */
+export const INSTRUCTION_SUMMARY_MAX = 280;
+
+export function summarizeInstruction(instruction: string): string {
+  const flat = instruction.replace(/\s+/g, ' ').trim();
+  return flat.length <= INSTRUCTION_SUMMARY_MAX
+    ? flat
+    : `${flat.slice(0, INSTRUCTION_SUMMARY_MAX - 1).trimEnd()}…`;
+}
+
 // --- the plan (section 8.3) ------------------------------------------------
 
 /**

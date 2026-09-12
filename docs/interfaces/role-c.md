@@ -1,6 +1,6 @@
 # For Role C — orchestration against the data layer
 
-**Reflects:** B07, C02, C03, C04, C05, C06 · **Owner:** Role B (data), Role C (execution)
+**Reflects:** B07, C02, C03, C04, C05, C06, C07, plus the A05 request below · **Owner:** Role B (data), Role C (execution)
 
 > **Resolved: `PgAgentLedger` is the ledger.** B07 briefly shipped a second one,
 > `PgBudgetLedger` under `src/runs`; it has been deleted. Yours won on three
@@ -180,6 +180,31 @@ that reached the database through some path that forgot to ask.
 
 ---
 
+## What Role A needs from you (A05)
+
+One thing, and it is optional by the design's own wording.
+
+§4.5 lets the Agents tab show "token usage per task per agent as read-only
+information **if useful**". Everything else that section requires is on
+`AgentInstance` and reachable through Role B's
+`PgRunStore.listInstances(runId)`, so the agents route does not need you to
+build it.
+
+If token display is wanted, `PgAgentLedger` needs a **read** method —
+`recordUsage` returns a `TaskAgentBudget` but nothing reads budgets back for a
+task. A `listBudgets(taskId)` returning `{ agentKey, tokenBudget,
+consumedTokens }` would be enough; the route composes it with the instances.
+
+Two constraints from §4.5 that constrain the shape, not just the UI: the browser
+never sees model IDs, provider settings, budget settings, or timeout controls,
+and instructions reach it as a **summary** — `agentProgressSchema` omits
+`instruction` and carries `instructionSummary` instead. A 20k-character worker
+instruction is not a UI string.
+
+Not urgent. The rest of A05 does not wait on it.
+
+---
+
 ## Plan validation
 
 `OrchestratorPlanner` implements the new `OrchestratorPlanningService` seam in
@@ -206,6 +231,33 @@ before any worker scope opens. No second budget ledger is used by C03.
 Fatal planning failures emit the additive `agent.failed` event. C03 stores the
 agent failure and marks the task incomplete; C06 must terminalize the run and
 clear `active_run_id`. Local `cancel()` must accompany durable task cancellation.
+
+---
+
+## Review assessment (C07) — the D06 <-> C07 seam
+
+**Do not build this on `PgAgentLedger`.** Every existing accounting path
+(`reserve`, `recordUsage`, `AgentExecution`) is gated on the task's *active*
+run, and a review is assessed precisely when that run is no longer active — or
+never existed, for a manual-edit task. `ReviewAssessor` in `src/orchestration`
+is a deliberately separate, self-contained path: it reserves and settles
+against the same `task_agent_budgets` table under a dedicated agent key
+(`review:<reviewId>`), but touches no `agent_instances` or `runs` row. See
+[C07's notes](../../apps/server/src/orchestration/REVIEW.md).
+
+D06's review routes inject `ReviewAssessmentService`
+(`packages/contracts/src/services.ts`) and consume the additive
+`reviewEvidenceSchema`/`reviewAssessmentSchema` shapes. `NullReviewAssessmentService`
+is the stand-in for isolated tests. Its result is idempotent per
+`(reviewId, the review's current candidateSha)` — a durable `review.assessed`
+event, keyed accordingly, is the whole mechanism; a repeat request for the
+same candidate is read back rather than re-run.
+
+`ReviewEvidenceComposer` composes `ReviewEvidence` from durable data alone: no
+new table, nothing mutated. In-run `agent.completed` summaries are labeled
+against the run's own `result_head_sha`, never the review's candidate, and are
+flagged stale the moment the review's source tuple diverges from what that run
+actually captured.
 
 ---
 

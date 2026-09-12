@@ -133,6 +133,27 @@ detail beyond the table: the codes are stable, the set is not closed.
 
 ---
 
+## Review evidence and a fresh assessment (C07)
+
+Two additions to D06's existing review routes, for A06:
+
+- `GET /reviews/:r/evidence` → `ReviewEvidence`: real `changedFiles`,
+  `agentSummaries` (each labeled generated, carrying `examinedSha` and a
+  `staleAgainstCandidate` flag — render that distinctly, e.g. "may be out of
+  date" rather than silently dropping it), `validationsPerformed` (real
+  server checks, `passed`/`detail`), and `generatedCodeWasNotExecuted: true`.
+- `POST /reviews/:r/assess` → `ReviewAssessment`, no body. Triggers one fresh
+  reviewer pass against the candidate held right now. Idempotent per exact
+  candidate: calling it again before the candidate changes returns the same
+  finding rather than running a second one, so a retry button is always safe.
+  Errors map to `REVIEW_NOT_FOUND`, `AGENT_TIMED_OUT`, `AGENT_TOKEN_EXHAUSTED`,
+  or `INVALID_STATE` — the usual table above applies.
+
+Neither route mutates the review or its candidate; both are safe to call from
+a read-only review screen.
+
+---
+
 ## Staying current: events and refresh hints
 
 Two pieces, and the split matters. **Durable events are authoritative; realtime
@@ -171,6 +192,37 @@ never as a permission. A forged hint should at worst cause a wasted refetch.
 Missed and duplicate hints are both normal. If your refetch is idempotent, you
 have handled every case the transport can produce.
 
+## Agents
+
+`GET /tasks/:t/agents` returns `{ attempts: TaskAttempt[] }`, newest attempt
+first. Each attempt carries its `runId`, `attempt` number, run `status`, the
+`taskVersion` it ran against, and its `assignments[]`.
+
+Every attempt is returned, not just the latest. §4.7 requires an incomplete task
+to show preserved output, so a retry must leave the failed attempt inspectable.
+
+An assignment is `AssignmentProgress`: preset, status, `instructionSummary`,
+`writePaths`, `dependsOn` (agent instance IDs within the same run), `baseSha`,
+`resultSha`, `startedAt`, `deadlineAt`, `endedAt`.
+
+- **`dependsOn` is a DAG, not an order.** Assignments whose prerequisites are
+  all satisfied in the same wave can run simultaneously — that is what §4.5's
+  "parallel workers are visibly distinct" is about, and a flat list hides it.
+- **No token figures yet.** Absent rather than zero, because a zero reads as a
+  measurement. The exhaustion state comes from an agent's `status`
+  (`token_exhausted`), not from a count, so nothing is blocked. Requested from
+  Role C in [their interface](role-c.md).
+- **No model ID, provider setting, budget setting, or timeout control**, ever —
+  §4.5. The response is schema-validated outbound, so that is enforced by shape
+  rather than by discipline.
+- **`deadlineAt` is display only.** It is fixed by the backend and never
+  extended by waiting, retrying or replanning. Past it, the honest statement is
+  that the deadline passed — whether the agent stopped is what `status` says.
+
+An empty `attempts` array means nothing has been started, not that agents failed.
+
+---
+
 ## Drafts
 
 `GET /workspaces/:w/drafts` lists every **active** document in the workspace —
@@ -192,19 +244,30 @@ people click the same file, not a collision to report.
 
 ## Still missing, and what it blocks
 
-Three things the frontend needs do not exist. Recorded here so they are not
-rediscovered:
+*Re-checked against `main` after C05 and C06 landed.*
 
 | Needed | For | Owner |
 |---|---|---|
-| A route serving `AgentProgress` | A05's Agents tab (§4.5) | B or C |
-| A `reviewId` on task detail, or a read path to the current review | A06 — `POST /tasks/:t/review` is a mutation, and nothing else exposes the ID | B |
+| A `reviewId` on task detail, or a read path to the current review | A06 — `POST /tasks/:t/review` is a mutation, and nothing else exposes the ID. C07 added `GET /reviews/:id/evidence` and `POST /reviews/:id/assess`, but both need an ID you cannot obtain without mutating | B |
 | An approved-file **listing** (Git has `readText(path)` only — no tree op) | A07's Files view and the approved-file input picker (§2.1, §4.1) | D, then B |
 | A workspace-wide `apply_operations` listing + route | History (§4.1). Table and store already exist; empty until D07 | B |
 
 `agentProgressSchema`, `applyReviewRequestSchema`, and
 `applyReviewResponseSchema` are all already in `@app/contracts` with no route
 behind them. The shapes are agreed; the endpoints are not built.
+
+**The agents route now exists** — `GET /tasks/:t/agents`, see below. What
+follows is why it took the shape it did.
+
+**It was smaller than it looked.** Before C05/C06 there were no
+assignments to serve; now every Start writes them. Everything §4.5 *requires* —
+preset, status, instruction, write paths, dependencies, `startedAt`,
+`deadlineAt` — is on `AgentInstance`, and `PgRunStore.listInstances(runId)`
+already returns it from a Role B file. Only `tokensConsumed` / `tokenBudget`
+need Role C's ledger, which has no read method, and §4.5 marks that display
+optional. Address it **by task, not by run**: `TaskDetail.activeRunId` is null
+once a run ends, and a finished attempt's assignments are exactly what someone
+inspecting an `incomplete` task wants.
 
 **History** is a smaller gap than it first looks. The data model is already
 there: `apply_operations` (migration 0002) carries workspace, review, candidate
@@ -222,6 +285,39 @@ with no writer anywhere.
 The route currently renders "not available yet" rather than an empty list,
 because an empty list today would be indistinguishable from "nothing has been
 applied" — which happens to be true but not for the reason a reader would infer.
+
+---
+
+## Starting A05: what is and is not blocked
+
+A05 splits cleanly in two, and only one half waits on anything.
+
+**Buildable now.** Start is no longer inert (see *What a started run does now*
+above): tasks move through real states and reach a terminal one on every path.
+That makes all of these real, against endpoints that exist:
+
+- Start / Stop / Retry and the answer flow — already shipped in A04, now against
+  runs that actually execute.
+- §4.7's error states, driven by the start-phase reason codes: `agent.waiting`
+  with `payload.phase === 'start'`. `snapshot_conflict` and
+  `integration_conflict` carry `payload.paths[]`; `context_captured` carries
+  `payload.omitted[]`, which is worth surfacing — it is the only signal that a
+  selected input silently did not reach the model.
+- Deadline and waiting states, from task status plus `agent.waiting` /
+  `agent.timed_out` / `agent.token_exhausted` events.
+- Per-agent *lifecycle* awareness from `agent.started` / `agent.completed` /
+  `agent.failed`, which carry `{ agentId }` and a `code` or `result`.
+
+**Blocked on one route.** §4.5's assignment rows — the preset, instruction
+summary, dependency graph, per-assignment state, output files, and the
+"parallel workers are visibly distinct" requirement. Events name an `agentId`
+and nothing else about it, so there is no way to label a row. See the note
+above: this is a small Role B read route over an existing method.
+
+Practical consequence for planning: build the run-lifecycle half of A05 first.
+It needs nothing new, and it is what a demo actually shows — a task that starts,
+works, asks a question, and finishes. The assignment graph is the part that
+needs someone to add the endpoint.
 
 ---
 

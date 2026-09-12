@@ -5,8 +5,10 @@ import {
   cancelTaskRequestSchema,
   clientRequestIdSchema,
   listDiscussionQuerySchema,
+  listTaskAgentsResponseSchema,
   listTasksQuerySchema,
   postDiscussionRequestSchema,
+  summarizeInstruction,
   postTaskRequestSchema,
   startTaskRequestSchema,
   updateTaskRequestSchema,
@@ -14,6 +16,7 @@ import {
 } from '@app/contracts';
 import { parseOrThrow } from '../http/errors.js';
 import type { PgDiscussionService } from '../discussion/service.js';
+import type { PgRunStore } from '../runs/run-store.js';
 import type { PgTaskService } from './service.js';
 
 /**
@@ -30,6 +33,7 @@ const taskParams = z.object({ workspaceId: uuidSchema, taskId: uuidSchema });
 export interface TaskRouteDeps {
   tasks: PgTaskService;
   discussion: PgDiscussionService;
+  runs: PgRunStore;
 }
 
 export async function registerTaskRoutes(
@@ -55,6 +59,49 @@ export async function registerTaskRoutes(
   app.get('/api/workspaces/:workspaceId/tasks/:taskId', async (request, reply) => {
     const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
     return reply.send(await deps.tasks.readTask(workspaceId, taskId));
+  });
+
+  /**
+   * Assignments for every attempt on this task, newest first (section 4.5).
+   *
+   * Read-only, and deliberately narrower than the agent rows behind it. The
+   * instruction is summarised rather than sent whole, and no model ID, provider
+   * setting, budget setting or timeout control appears anywhere in the
+   * response: section 4.5 keeps all of that off the browser, and the way to
+   * keep it off is to never put it in the shape.
+   *
+   * Token figures are absent rather than zero. The ledger has no read method
+   * yet, and `tokensConsumed: 0` would read as a measurement instead of a
+   * missing one. Section 4.5 marks that display optional, so it waits.
+   *
+   * Reading the task first is what makes a task in another workspace a 404
+   * rather than an empty list.
+   *
+   * The response is parsed on the way OUT, which is load-bearing rather than
+   * decorative: Zod strips unknown keys, so the schema is a whitelist and a
+   * field added to the row later cannot reach the browser by accident. Do not
+   * replace this with a cast.
+   */
+  app.get('/api/workspaces/:workspaceId/tasks/:taskId/agents', async (request, reply) => {
+    const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
+    await deps.tasks.readTask(workspaceId, taskId);
+    const attempts = await deps.runs.listAttemptsForTask(workspaceId, taskId);
+    return reply.send(
+      listTaskAgentsResponseSchema.parse({
+        attempts: attempts.map(({ run, assignments }) => ({
+          runId: run.id,
+          attempt: run.attempt,
+          status: run.status,
+          taskVersion: run.task_version,
+          createdAt: run.created_at.toISOString(),
+          endedAt: run.ended_at ? run.ended_at.toISOString() : null,
+          assignments: assignments.map(({ instruction, ...rest }) => ({
+            ...rest,
+            instructionSummary: summarizeInstruction(instruction),
+          })),
+        })),
+      }),
+    );
   });
 
   app.patch('/api/workspaces/:workspaceId/tasks/:taskId', async (request, reply) => {

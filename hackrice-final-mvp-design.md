@@ -368,14 +368,33 @@ Show token usage per task per agent as read-only information if useful. Do not e
 
 Time left may be displayed for a running agent; its deadline is always fixed by the backend.
 
-**This screen has no data source yet.** `AgentProgress` is defined in
-`@app/contracts` with every field above, and no route serves it: task events
-carry only `{ agentId }`, which is enough to know something happened and not
-enough to render a row. Until an endpoint exists, the Agents tab says so rather
-than showing an empty list — "no agents have run" is a claim the frontend cannot
-support. Note this is separate from orchestration itself being absent: with the
-null orchestration hook in place, Start records an attempt and creates no
-assignments at all.
+**`GET /tasks/:t/agents` serves this, grouped by attempt.** Every attempt on the
+task is returned newest first with its own assignments, rather than only the
+latest: this section's sibling 4.7 requires an incomplete task to show preserved
+output, so a retry must not make the failed attempt's work unreachable. It is
+addressed by task rather than by run because `TaskDetail.activeRunId` is null
+once a run ends, and a finished attempt is exactly what someone inspecting an
+incomplete task wants.
+
+Two things the response deliberately omits:
+
+- **The instruction in full.** A worker instruction runs to tens of thousands of
+  characters; the browser receives a summary. Sending it whole would also put
+  the model's complete brief in front of anyone holding the link.
+- **Token figures, for now.** They live in `task_agent_budgets` behind Role C's
+  ledger, which has no read method. They are absent rather than zero — a zero
+  reads as a measurement rather than a missing one. This section already marks
+  that display optional ("if useful"), and the token-exhaustion state in 4.7
+  comes from agent *status*, not from a count, so nothing depends on it.
+
+The response is validated against its schema on the way out, which makes the
+schema a whitelist: a column added to `agent_instances` later cannot reach the
+browser by accident.
+
+**Assignments are laid out in dependency waves.** "Parallel workers are visibly
+distinct" is a property of the graph, not of a list — assignments whose
+prerequisites are all satisfied in the same wave genuinely can run at once, and
+rendering them as a flat list shows the same data while hiding that fact.
 
 ### 4.6 Review
 
@@ -985,6 +1004,8 @@ The review includes:
 
 Each AI finding identifies the snapshot it examined. If the combined candidate includes newer human edits or approved-workspace changes, label the earlier finding accordingly; do not imply the AI reviewed the new content. The owner reviews the exact combined candidate. A fresh AI assessment can be requested as an explicit assignment with its own recorded snapshot.
 
+C07 implements the fresh assessment as its own execution path, not another worker inside a run: by the time anyone requests one, the run that produced the candidate is typically already terminal, and the task's active-run lifecycle is exactly the thing a late worker result must be checked against. Reusing that lifecycle for a request that arrives after it closed would mean weakening the guard rather than satisfying it, so the assessment reserves and settles against the same per-task-and-agent budget table under its own stable key, and records its finding as a durable event keyed to the exact candidate it examined — idempotent, so a repeat request for the same candidate reads back the recorded finding rather than spending budget twice.
+
 Server-generated work logs use unique task/run paths. Agents cannot forge approval metadata or write a test-pass indicator by saying “tests passed.”
 
 Task discussion and live keystrokes are not committed one event at a time. Git stores meaningful file checkpoints and published results.
@@ -1427,7 +1448,7 @@ These live in docs/ at the repository root.
 
 Every row is a single-owner work package. “Expected behavior” defines what that component must do and can be checked in isolation or against the listed prerequisites. It is not a separate release checklist.
 
-Implementation status and verification are recorded in `docs/CHANGELOG.md`. C06 now connects Start end to end: it captures the run's context, combines the start snapshot, plans, dispatches through C05, and terminalizes the run. C07's review handoff remains a separate work package.
+Implementation status and verification are recorded in `docs/CHANGELOG.md`. C06 now connects Start end to end: it captures the run's context, combines the start snapshot, plans, dispatches through C05, and terminalizes the run. C07 adds a fresh reviewer assessment against a review's exact candidate and composes its evidence from durable data; the request-revision handoff and the run's ready/incomplete derivation were already covered by B03's existing Start transition and C06 respectively, so C07 added nothing further for either. C08's manual retries and failure cases remain a separate work package.
 
 ### 16.1 Role B — Supabase and application data
 

@@ -24,6 +24,7 @@ export const TASK_EVENT_TYPES = [
   'draft.checkpointed',
   'review.ready',
   'review.stale',
+  'review.assessed',
   'task.applied',
 ] as const;
 
@@ -63,6 +64,10 @@ export const eventKeys = {
     `review:${reviewId}:ready:${candidateSha}`,
   reviewStale: (reviewId: string, revisionMark: string) =>
     `review:${reviewId}:stale:${revisionMark}`,
+  /** C07: keyed by the exact candidate examined, so a repeat request for the
+   * same candidate is a durable no-op rather than a second charged assessment. */
+  reviewAssessed: (reviewId: string, candidateSha: string) =>
+    `review:${reviewId}:assessed:${candidateSha}`,
   taskApplied: (applyOperationId: string) => `apply:${applyOperationId}`,
 } as const;
 

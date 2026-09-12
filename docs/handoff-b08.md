@@ -20,30 +20,35 @@ done and B08 is the only Role B ticket left.
 
 ## Where things stand
 
-*Updated 2026-09-12 after A04 and D06 landed.*
+*Updated 2026-09-12, after C05 and C06 landed for real.*
 
 | Role | Done | Remaining |
 |---|---|---|
 | A | A01–A04, plus the unblocked half of A07 | A05, A06, rest of A07, A08 |
 | **B** | **B01–B07** | **B08 only** |
-| C | C01–C04 | **C05**–C08 |
+| C | C01–C07 | C08 |
 | D | D01–D06 | D07, D08 |
 
-**C05 is not implemented, despite a commit saying it is.** `6950fc3 "Add C05"`
-changes one line: an npm script `test:scheduler` pointing at
-`vitest.scheduler.config.ts`, which does not exist. There is no scheduler in
-`src/agents`, and `npm run test:scheduler --workspace @app/server` fails on the
-missing config. There is no CHANGELOG entry either. Anyone planning around C05
-being done — C06 depends on it — should confirm before building.
+*(An earlier revision of this table said C05 was a phantom. It was, briefly:
+`6950fc3 "Add C05"` added only an npm script pointing at a vitest config that
+did not exist. `98c6f14` and `b88eac7` landed the real scheduler and the Start
+orchestrator. The note is kept because the lesson is not: a commit message is
+not evidence that a ticket landed, and the two-minute check is whether the
+files it claims exist do.)*
 
-**B08 is still blocked,** on B04/B06/B07 (done) plus **C07 and D07**:
+**B08 now waits on one ticket: D07.** C07 landed in `197644e`, so the only
+remaining dependency is owner apply — which has been unblocked since D06 landed
+and is startable today. It is the single highest-leverage ticket left on the
+board: it unblocks B08, A06's Changes tab, and the History screen, which cannot
+show anything until `apply_operations` has rows.
 
-- **D07 is unblocked now.** It needs D06 (landed) and B02 (done), so it can be
-  started today.
-- **C07 needs C06, which needs C05** — which is the phantom above. Three
-  tickets, not one.
+**Start is no longer inert.** C06 wires a real orchestration hook in
+`recovery/runtime.ts`, so a Start plans, dispatches, and terminalizes. Note
+`buildApp` still defaults to `NullOrchestrationHook` — that is deliberate, and
+it is why the test app does not spawn agents. If you are wondering why a task
+moves in `npm run dev` but not under `buildTestApp`, that is the reason.
 
-You cannot start B08 as written. What you *can* do is below.
+Until C07 and D07 land, what you *can* do is below.
 
 ## B08 itself
 

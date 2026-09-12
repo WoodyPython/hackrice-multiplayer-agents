@@ -14,6 +14,147 @@ Newest first. One entry per landed ticket.
 
 **Verified:** Workspace build and whitespace checks passed. All 23 backend test files were covered across batches, including 64 focused apply/runtime/run checks and isolated reruns of seven timing-affected cases; all cases passed. All 38 frontend tests passed. Long combined runs were stopped after losing progress, then completed in smaller batches.
 
+## A05 — Execution and agent progress
+**Landed:** 2026-09-12 · Role A
+**Affects:** everyone. One additive Role B route; no migration, no dependency.
+**Action required:** Pull and `npm run build` (the contracts package gained
+schemas). Role C: one optional request in [your interface](interfaces/role-c.md).
+
+- **New route, `GET /tasks/:t/agents`** (Role B, `src/tasks/routes.ts` over
+  `PgRunStore.listAttemptsForTask`). Returns every attempt newest-first with its
+  assignments. Every attempt, not just the latest: §4.7 requires an incomplete
+  task to show preserved output, so a retry must leave the failed attempt
+  inspectable. Task-scoped, not run-scoped, because `activeRunId` is null once a
+  run ends.
+- **Agents tab** renders assignments in **dependency waves**. §4.5's "parallel
+  workers are visibly distinct" is a property of the graph; a flat list shows
+  the same data and hides the fact. Assignments sharing a wave genuinely can run
+  at once.
+- **Run outcomes are explained**, using C06's start-phase reason codes
+  (`agent.waiting` with `payload.phase === 'start'`). Each known code maps to a
+  sentence this repo owns; an unknown one still renders an explanation, because
+  the interface notes say the codes are stable but the set is not closed.
+  `payload.omitted[]` is surfaced prominently — it lists selected inputs that
+  could not be captured, and without it a contributor believes the agents read a
+  document they never saw.
+- **Polling adapts**: 2s while an attempt is live, 5s otherwise. §5 makes
+  polling authoritative and realtime a latency optimisation, so this is a
+  comfort setting. 5s was too coarse for a run — planning → working →
+  needs_input can happen inside one tick and the screen looks stuck.
+- **Deadline display** is derived from `deadlineAt` for running agents only, and
+  past zero says the deadline passed rather than that the agent stopped. Those
+  are different, and only `status` knows the second.
+
+**Deliberately not built:**
+
+- **Token figures are absent, not zero.** The ledger has no read method; a zero
+  would read as a measurement rather than a missing one. §4.5 marks the display
+  optional and §4.7's exhaustion state comes from agent `status`, so nothing is
+  blocked. Requested from Role C.
+- The response is **schema-validated outbound**, which makes the schema a
+  whitelist: a column added to `agent_instances` later cannot reach the browser
+  by accident. Do not replace that parse with a cast.
+- `agentProgressSchema` is untouched; `assignmentProgressSchema` is a sibling.
+  The contracts package is additive-only, and the token fields on the original
+  are required.
+
+Verified: `npm run build`, the full web suite (**45 tests**, up from 38), and the
+backend suites this touches — `runs`, `tasks`, `drafts`, `events` (**106**, with
+`runs` up from 27 to 33). The full backend suite was **not** run: nothing here
+reaches the Git or orchestration suites, and `git-integration.test.ts` alone now
+costs 17 minutes (see the previous entry — it also has a failing test that needs
+Role C or D).
+
+Four properties were mutation-checked by breaking them until the test failed:
+the dependency-wave layout, the omitted-inputs panel, instruction summarisation,
+and workspace scoping on the new route.
+
+---
+
+## Docs — A05 re-scoped against C05/C06, and the agents gap narrowed
+**Landed:** 2026-09-12 · Role A
+**Affects:** whoever starts A05, and whoever adds the agents route
+**Action required:** None. Read *Starting A05* in
+[the Role A interface](interfaces/role-a.md#starting-a05-what-is-and-is-not-blocked)
+before picking up A05.
+
+C05 and C06 landed for real (`98c6f14`, `b88eac7`), so the frontend's picture of
+execution changed and the documents said otherwise. Re-checked against `main`:
+
+- **Start is no longer inert.** `recovery/runtime.ts` assembles the real
+  `StartOrchestrator`; `buildApp` still defaults to `NullOrchestrationHook`,
+  which is why tasks move under `npm run dev` and not under `buildTestApp`.
+- **A05 splits in two, and only one half is blocked.** The run-lifecycle half —
+  start/stop/retry, answering, §4.7's error states — is buildable today against
+  endpoints that exist, using C06's start-phase reason codes (`agent.waiting`
+  with `payload.phase === 'start'`). Build that first: it is what a demo shows.
+- **§4.5's assignment rows are still blocked on one route**, but a much smaller
+  one than before. Everything that section *requires* is on `AgentInstance`, and
+  `PgRunStore.listInstances(runId)` already returns it from a Role B file. Only
+  token usage needs Role C's ledger, and §4.5 marks that optional. Address the
+  route by **task**, not by run: `activeRunId` is null once a run ends, and a
+  finished attempt's assignments are what someone inspecting an `incomplete`
+  task wants to see.
+- Design §4.5 amended to say this rather than the flat "no data source yet" it
+  carried while orchestration did not exist.
+- `context_captured` carries `payload.omitted[]` — selections that could not be
+  captured. Worth surfacing in A05: it is the only signal that a selected input
+  silently did not reach the model.
+
+Also corrected: [`handoff-b08.md`](handoff-b08.md) said C05 was a phantom. It
+was, for about an hour — `6950fc3` added only an npm script pointing at a
+missing vitest config. The real scheduler landed in `98c6f14`. The note is kept,
+because the lesson holds: a commit message is not evidence a ticket landed.
+
+**B08 now waits on exactly two tickets, C07 and D07, and they are independent.**
+Both are unblocked today, so they can run in parallel.
+
+Verified on merged `main`: `npm run build` passes. The full suite was **not**
+re-run to completion for this docs-only change — but a partial run surfaced
+something the team should own:
+
+**`git-integration.test.ts` is now pathological, and one test in it fails.**
+`D05 worker integration > preserves refs and guard errors when cancellation
+rejects prepared fast-forward, merge, or no-op results` ran for **487 seconds**
+and failed; the file as a whole took **17 minutes**. That is most of why a full
+run now costs a quarter of an hour. It is Role D's test and C05 modified it
+(`98c6f14` touched this file), so it needs one of them rather than a guess from
+here. Not a new flake class — `pitfalls.md` already records that an intermittent
+failure with no assertion message is a timeout until proven otherwise — but the
+scale is new and worth treating as a defect rather than a slow test.
+
+---
+
+## C07 — Reviewer, evidence, and review handoff
+**Implemented:** 2026-09-12 · working tree · Role C
+**Affects:** Roles A, C, and D
+**Action required:** `registerReviewRoutes` now takes a required third argument; rebuild and see the interface note below if anything calls it directly. Two additive routes: `GET .../reviews/:reviewId/evidence` and `POST .../reviews/:reviewId/assess`. Read [C07 integration notes](../apps/server/src/orchestration/REVIEW.md). No migration or dependency is added.
+
+- `ReviewAssessor` runs one fresh reviewer-preset pass against a review's own
+  current candidate (design section 10.4), deliberately decoupled from
+  `PgAgentLedger`/`agent_instances`: those are gated on the task's active run,
+  which a review no longer has by the time anyone asks to assess it. It
+  reserves and settles against the same `task_agent_budgets` table under a
+  dedicated `review:<reviewId>` key, records its result as a durable
+  `review.assessed` event, and is idempotent per exact candidate SHA — a
+  repeat request against the same candidate is read back, never re-run.
+- `ReviewEvidenceComposer` composes `ReviewEvidence` from durable data alone —
+  no new table. In-run `agent.completed` summaries are labeled against the run's
+  own examined SHA and flagged stale the moment the review's source tuple
+  diverges from what that run actually captured; fresh assessments are folded
+  in and re-flagged stale once a later resolution produces a new candidate.
+  `validationsPerformed` are checks the server actually ran, not a model's claim.
+- Two of design section 16.3's four C07 bullets were already delivered by
+  earlier tickets and needed no new code: "ready/incomplete results" by C06's
+  `StartOrchestrator.finish()`, and the "request-revision handoff" mechanism by
+  B03's existing `planning`-from-`ready_for_review`/`conflict` transition plus
+  ordinary discussion posting, which C06's capture already reads into the next
+  attempt. See the interface note for why no new route was added for either.
+- Verified: full build; `npm run test:review` passes all 14 checks against
+  real PostgreSQL, including budget exhaustion, a retried provider error
+  charging both attempts, in-process coalescing, staleness in both directions,
+  and the two new HTTP routes.
+
 ## C06 — Explicit Start and captured context
 **Implemented:** 2026-09-12 · working tree · Role C
 **Affects:** Roles A, B, C, and D
