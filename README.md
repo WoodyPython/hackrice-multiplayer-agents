@@ -9,7 +9,8 @@ agents. The workspace creator reviews the exact combined result and applies it.
 Full specification: [hackrice-final-mvp-design.md](hackrice-final-mvp-design.md).
 
 Role C integration: [model adapter](apps/server/src/models/README.md) and
-[C02 budgets/deadlines](apps/server/src/agents/README.md).
+[C02 budgets/deadlines](apps/server/src/agents/README.md), plus
+[C03 planning](apps/server/src/orchestration/README.md).
 
 ## Getting started
 

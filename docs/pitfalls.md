@@ -19,6 +19,17 @@ only after failure so an explicit retry remains available. The test exercises a
 fast response and double-click, rather than only a deferred request.
 
 ---
+## A parser cap was still a step-count cap
+
+**C03, plan schema.** The shared schema described its 64-assignment ceiling as
+a parser safeguard, but it still rejected otherwise valid plans by step count.
+The assignment and dependency ceilings are removed; tests accept 101-node
+plans and a join with 100 prerequisites. C02's token budget and fixed deadline
+bound generation and repairs instead.
+
+The permissive schema also defaulted missing dependency arrays, which could
+silently drop a model's misspelled `depends_on`. Provider plans now use a strict
+schema with required camelCase arrays before any graph checks or persistence.
 
 ## An expiry that rolled back, and opposite lock orders
 

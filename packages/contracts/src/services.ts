@@ -5,6 +5,7 @@ import type {
   ModelUsage,
   Run,
   TaskAgentBudget,
+  PlanningContext,
 } from './run.js';
 import type { AgentQuestion, DiscussionEntry } from './discussion.js';
 import type { DraftCapture, DraftFile, DocumentRevisions, TextChange } from './draft.js';
@@ -207,6 +208,12 @@ export interface GitService {
 }
 
 // --- Role C ----------------------------------------------------------------
+
+/** C03 consumes the frozen context that C06 captures after Start. */
+export interface OrchestratorPlanningService {
+  plan(input: { runId: string; agentInstanceId: string; context: PlanningContext }): Promise<AgentPlan>;
+  cancel(agentInstanceId: string): void;
+}
 
 export interface AgentService {
   plan(input: { runId: string; manifest: ContextManifest }): Promise<AgentPlan>;

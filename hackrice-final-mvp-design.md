@@ -626,29 +626,29 @@ Example structure:
     {
       "id": "facts",
       "preset": "analyst",
-      "depends_on": [],
-      "write_paths": [],
+      "dependsOn": [],
+      "writePaths": [],
       "instruction": "Extract confirmed facts and unresolved questions."
     },
     {
       "id": "faq",
       "preset": "writer",
-      "depends_on": ["facts"],
-      "write_paths": ["documents/faq.md"],
+      "dependsOn": ["facts"],
+      "writePaths": ["documents/faq.md"],
       "instruction": "Draft the FAQ using confirmed facts."
     },
     {
       "id": "announcement",
       "preset": "writer",
-      "depends_on": ["facts"],
-      "write_paths": ["documents/announcement.md"],
+      "dependsOn": ["facts"],
+      "writePaths": ["documents/announcement.md"],
       "instruction": "Draft the announcement using confirmed facts."
     },
     {
       "id": "review",
       "preset": "reviewer",
-      "depends_on": ["faq", "announcement"],
-      "write_paths": [],
+      "dependsOn": ["faq", "announcement"],
+      "writePaths": [],
       "instruction": "Check both documents for consistency and task coverage."
     }
   ]
@@ -663,10 +663,12 @@ Validate:
 - Existing dependency IDs.
 - Acyclic dependency graph.
 - Valid output paths.
-- Read-only reviewer permissions.
+- Read-only analyst and reviewer permissions.
 - An ordering between workers whose declared write scopes overlap.
 
 If two workers need the same file, serialize them through a dependency or ask for a corrected plan. Read overlap is allowed. Independent write scopes can run concurrently.
+
+Model plans use the contract's camelCase fields and require explicit dependency and write-path arrays; unknown or misspelled fields are rejected. Paths name exact canonical files under documents/ or code/, not directories or globs. Ambiguous case aliases and file/directory collisions are rejected even for ordered assignments. Syntax checks do not replace the filesystem and live-execution checks in section 13.1. The planning completion event stores the validated plan and captured input identity atomically with the planning instance's completed status; worker instantiation remains a coordinator operation.
 
 An agent can produce more text within its scope, but cannot silently broaden that scope. Return a structured scope error to the orchestrator/run rather than treating a proposed path as permission.
 
