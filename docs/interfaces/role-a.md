@@ -1,6 +1,7 @@
 # For Role A — calling the API
 
-**Reflects:** B07, plus the Supabase verification of 2026-09-12 · **Owner:** Role B
+**Reflects:** B07, the Supabase verification of 2026-09-12, and the A04 draft
+listing · **Owner:** Role B
 
 What the frontend needs from the data layer. Shapes and enums live in
 `@app/contracts` — import them rather than transcribing anything here.
@@ -143,6 +144,47 @@ never as a permission. A forged hint should at worst cause a wasted refetch.
 
 Missed and duplicate hints are both normal. If your refetch is idempotent, you
 have handled every case the transport can produce.
+
+## Drafts
+
+`GET /workspaces/:w/drafts` lists every **active** document in the workspace —
+path, epoch, owning task, persisted revision. Added for the Files view, which
+has to answer "what is being edited anywhere" and therefore cannot use the
+per-task listing: that one needs the task ID it is trying to discover.
+
+`GET /tasks/:t/drafts` is still the editor's file selector.
+
+Both exclude closed epochs. Offering a closed document produces
+`DOCUMENT_EPOCH_CLOSED` the moment someone opens it, so it is filtered at the
+source rather than handled at the click.
+
+`POST /drafts/open` is "Edit together" (§2.5) and is find-or-create: **200 means
+you joined an existing editing session**, which is the normal outcome when two
+people click the same file, not a collision to report.
+
+---
+
+## Still missing, and what it blocks
+
+Three things the frontend needs do not exist. Recorded here so they are not
+rediscovered:
+
+| Needed | For | Owner |
+|---|---|---|
+| A route serving `AgentProgress` | A05's Agents tab (§4.5) | B or C |
+| A `reviewId` on task detail, or a read path to the current review | A06 — `POST /tasks/:t/review` is a mutation, and nothing else exposes the ID | B |
+| An approved-file **listing** (Git has `readText(path)` only — no tree op) | A07's Files view and the approved-file input picker (§2.1, §4.1) | D, then B |
+
+`agentProgressSchema`, `applyReviewRequestSchema`, and
+`applyReviewResponseSchema` are all already in `@app/contracts` with no route
+behind them. The shapes are agreed; the endpoints are not built.
+
+There is also no **history** data of any kind — §4.1 specifies the screen, but
+applied changes exist only as per-task `task.applied` events with no
+workspace-wide query. The route renders an explicit "not available yet" rather
+than an empty list, which would claim nothing had been applied.
+
+---
 
 ## Tasks
 

@@ -1,39 +1,41 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import {
-  STARTABLE_TASK_STATUSES,
-  type TaskDetail as Task,
-} from "@app/contracts";
+import { type TaskDetail as Task } from "@app/contracts";
 import { statusPresentation } from "../board";
-import { inputOptions } from "../fixtures";
-import { EmptyState } from "../components/EmptyState";
+import { inputLabel, type TaskInputOption } from "../task-inputs";
 
-const tabs = ["Discussion", "Drafts", "Agents", "Changes"] as const;
-const emptyCopy = {
-  Discussion: [
-    "Start with a conversation",
-    "Discuss the requirements and selected inputs before starting the task. Discussion will connect in a later ticket.",
-  ],
-  Drafts: [
-    "A place for work in progress",
-    "Shared drafts will appear here when editing is connected.",
-  ],
-  Agents: [
-    "Assignments will appear here",
-    "Agent progress is not connected in this preview. Posting a task does not start any agents.",
-  ],
-  Changes: [
-    "Nothing to review here yet",
-    "Combined changes and owner review will appear here when review is connected.",
-  ],
-} as const;
+export const tabs = ["Discussion", "Drafts", "Agents", "Changes"] as const;
+export type TaskTab = (typeof tabs)[number];
 
-export function TaskDetail({ task, base }: { task: Task; base: string }) {
-  const [tab, setTab] = useState<(typeof tabs)[number]>("Discussion");
-  const canStart =
-    task.kind === "agent_task" &&
-    task.activeRunId === null &&
-    (STARTABLE_TASK_STATUSES as readonly string[]).includes(task.status);
+/**
+ * Task detail layout (design §4.2).
+ *
+ * Presentational on purpose: it owns the header, the requirements panel, and
+ * the tab strip, and the caller supplies both the primary action and each tab's
+ * body. That is what lets the live page and the fixture demo render the same
+ * screen without the demo's shapes leaking into the live one — the previous
+ * version imported `inputOptions` from `fixtures.ts`, so the live task detail
+ * would have labelled real inputs against three invented IDs.
+ *
+ * Discussion is the default tab, per §4.2: "Before start, Discussion is the
+ * default tab."
+ */
+export function TaskDetail({
+  task,
+  base,
+  options,
+  action,
+  renderTab,
+  onEditRequirements,
+}: {
+  task: Task;
+  base: string;
+  options: TaskInputOption[];
+  action?: ReactNode;
+  renderTab: (tab: TaskTab) => ReactNode;
+  onEditRequirements?: () => void;
+}) {
+  const [tab, setTab] = useState<TaskTab>("Discussion");
   return (
     <>
       <Link className="back-link" to={base}>
@@ -47,23 +49,22 @@ export function TaskDetail({ task, base }: { task: Task; base: string }) {
           <h1>{task.title}</h1>
           <p>
             Posted by {task.creatorGuestLabel} · Version {task.version}
+            {task.kind === "manual_edit" && " · Manual edit"}
           </p>
         </div>
-        {canStart && (
-          <div className="start-action">
-            <button className="primary" disabled aria-describedby="start-help">
-              Start task
-            </button>
-            <small id="start-help">
-              Execution is not connected in this preview.
-            </small>
-          </div>
-        )}
+        {action}
       </header>
       <div className="detail-grid">
         <section className="panel requirements">
-          <span className="eyebrow">The brief</span>
-          <h2>Requirements</h2>
+          <div className="section-heading">
+            <span className="eyebrow">The brief</span>
+            <h2>Requirements</h2>
+          </div>
+          {onEditRequirements && (
+            <button type="button" onClick={onEditRequirements}>
+              Edit requirements
+            </button>
+          )}
           <h3>Desired outcome</h3>
           <p>{task.outcome || "No outcome added yet."}</p>
           <h3>Acceptance criteria</h3>
@@ -83,20 +84,7 @@ export function TaskDetail({ task, base }: { task: Task; base: string }) {
           {task.inputs.length ? (
             <ul className="file-list">
               {task.inputs.map((input) => (
-                <li key={input.id}>
-                  ▤{" "}
-                  {inputOptions.find(
-                    (option) =>
-                      ("materialId" in option.value &&
-                        option.value.materialId === input.materialId) ||
-                      ("draftFileId" in option.value &&
-                        option.value.draftFileId === input.draftFileId) ||
-                      ("approvedPath" in option.value &&
-                        option.value.approvedPath === input.approvedPath),
-                  )?.label ??
-                    input.approvedPath ??
-                    "Selected input"}
-                </li>
+                <li key={input.id}>▤ {inputLabel(input, options)}</li>
               ))}
             </ul>
           ) : (
@@ -152,9 +140,7 @@ export function TaskDetail({ task, base }: { task: Task; base: string }) {
             aria-labelledby={`tab-${tab}`}
             tabIndex={0}
           >
-            <EmptyState title={emptyCopy[tab][0]}>
-              {emptyCopy[tab][1]}
-            </EmptyState>
+            {renderTab(tab)}
           </div>
         </section>
       </div>

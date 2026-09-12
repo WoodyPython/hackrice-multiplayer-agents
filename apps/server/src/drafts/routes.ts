@@ -36,6 +36,20 @@ export async function registerDraftRoutes(
     return reply.status(result.created ? 201 : 200).send(result);
   });
 
+  /**
+   * Active documents across the workspace, for the Files view (section 4.1).
+   *
+   * Read-only and unauthenticated like every other workspace read: section 11.4
+   * makes the workspace ID in the path the access check, and a draft's bytes
+   * are not returned here — only its path, epoch, and owning task.
+   */
+  app.get('/api/workspaces/:workspaceId/drafts', async (request, reply) => {
+    const { workspaceId } = parseOrThrow(workspaceParams, request.params);
+    return reply.send({
+      drafts: await deps.drafts.listActiveForWorkspace(workspaceId),
+    });
+  });
+
   /** Active documents in a task, for the editor's file selector (section 4.4). */
   app.get('/api/workspaces/:workspaceId/tasks/:taskId/drafts', async (request, reply) => {
     const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
