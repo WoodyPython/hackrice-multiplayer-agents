@@ -12,6 +12,8 @@ import {
   listDiscussionResponseSchema,
   applyReviewResponseSchema,
   listTaskAgentsResponseSchema,
+  listHistoryResponseSchema,
+  listSavedOutputsResponseSchema,
   listTaskReviewsResponseSchema,
   materialSchema,
   reviewDetailSchema,
@@ -32,6 +34,8 @@ import {
   type DiscussionEntry,
   type DraftCapture,
   type DraftFile,
+  type HistoryEntry,
+  type SavedOutputOption,
   type ListDiscussionResponse,
   type Material,
   type ApplyReviewResponse,
@@ -258,10 +262,47 @@ export class WorkspaceApi {
     );
   }
 
+  /**
+   * Work a previous attempt completed before it failed (§4.7, C08).
+   *
+   * The point of listing these is that a retry does not have to redo work that
+   * already succeeded — §2.4's `incomplete` state exists so saved work stays
+   * inspectable and reusable rather than being thrown away with the attempt.
+   */
+  async listSavedOutputs(
+    workspaceId: string,
+    taskId: string,
+    signal?: AbortSignal,
+  ): Promise<SavedOutputOption[]> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(taskId);
+    return listSavedOutputsResponseSchema.parse(
+      await this.request(
+        `/${workspaceId}/tasks/${taskId}/saved-outputs`,
+        "GET",
+        undefined,
+        workspaceId,
+        signal,
+      ),
+    ).outputs;
+  }
+
+  /**
+   * Retry as an explicit new attempt (§2.4, C08).
+   *
+   * `savedOutputs` carries selection *identities*, never the commit SHA the
+   * listing returned — the server resolves the SHA under the task lock, so a
+   * client cannot name a commit of its own choosing. A replay preserves the
+   * original selection.
+   */
   async retryTask(
     workspaceId: string,
     taskId: string,
-    input: { expectedVersion: number; clientRequestId: string },
+    input: {
+      expectedVersion?: number;
+      clientRequestId: string;
+      savedOutputs?: Array<{ agentInstanceId: string; path: string }>;
+    },
   ): Promise<StartTaskResponse> {
     uuidSchema.parse(workspaceId);
     uuidSchema.parse(taskId);
@@ -269,7 +310,7 @@ export class WorkspaceApi {
       await this.request(
         `/${workspaceId}/tasks/${taskId}/retry`,
         "POST",
-        input,
+        { ...input, savedOutputs: input.savedOutputs ?? [] },
         workspaceId,
       ),
     );
@@ -357,6 +398,30 @@ export class WorkspaceApi {
         workspaceId,
       ),
     );
+  }
+
+  /**
+   * Applied changes across the workspace, newest first (§4.1).
+   *
+   * Built on apply operations, so it includes outcomes that were not applied:
+   * a `failed` or `ambiguous` operation is part of what happened here, and
+   * hiding it would make a stuck apply invisible in the screen meant to explain
+   * the workspace's past.
+   */
+  async listHistory(
+    workspaceId: string,
+    signal?: AbortSignal,
+  ): Promise<HistoryEntry[]> {
+    uuidSchema.parse(workspaceId);
+    return listHistoryResponseSchema.parse(
+      await this.request(
+        `/${workspaceId}/history`,
+        "GET",
+        undefined,
+        workspaceId,
+        signal,
+      ),
+    ).entries;
   }
 
   // --- reviews -------------------------------------------------------------

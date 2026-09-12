@@ -1,4 +1,4 @@
-import { ApiError, type Review, type ReviewSource } from '@app/contracts';
+import { ApiError, type HistoryEntry, type Review, type ReviewSource } from '@app/contracts';
 import { type Db } from '../db/client.js';
 import type { ApplyOperationRow, ReviewRow } from '../db/types.js';
 import { toIso, toIsoOrNull } from '../http/serialize.js';
@@ -262,6 +262,51 @@ export class PgReviewStore {
    * already on main means it succeeded, main still at the expected value means
    * it never ran, anything else is ambiguous and stops.
    */
+  /**
+   * Applied changes across the workspace, newest first (section 4.1, History).
+   *
+   * Built on apply operations rather than on reviews: section 10.5 writes this
+   * row before the ref moves and settles it afterwards, so it is the record
+   * that survives a process dying mid-apply. A review alone cannot say whether
+   * the commit actually reached main.
+   *
+   * Non-applied outcomes are included. A `failed` or `ambiguous` operation is
+   * part of what happened here, and omitting it would make a stuck apply
+   * invisible in the one screen meant to explain the workspace's past.
+   */
+  async listHistoryForWorkspace(workspaceId: string): Promise<HistoryEntry[]> {
+    const rows = await this.deps.db
+      .selectFrom('apply_operations')
+      .innerJoin('reviews', 'reviews.id', 'apply_operations.review_id')
+      .innerJoin('tasks', 'tasks.id', 'reviews.task_id')
+      .select([
+        'apply_operations.id as id',
+        'apply_operations.review_id as review_id',
+        'apply_operations.candidate_sha as candidate_sha',
+        'apply_operations.status as status',
+        'apply_operations.created_at as created_at',
+        'apply_operations.settled_at as settled_at',
+        'tasks.id as task_id',
+        'tasks.title as title',
+        'tasks.kind as kind',
+      ])
+      .where('apply_operations.workspace_id', '=', workspaceId)
+      .orderBy('apply_operations.created_at', 'desc')
+      .execute();
+
+    return rows.map((row) => ({
+      applyOperationId: row.id,
+      reviewId: row.review_id,
+      taskId: row.task_id,
+      taskTitle: row.title,
+      taskKind: row.kind,
+      candidateSha: row.candidate_sha,
+      status: row.status,
+      requestedAt: row.created_at.toISOString(),
+      settledAt: row.settled_at ? row.settled_at.toISOString() : null,
+    }));
+  }
+
   async pendingFromPreviousBoots(currentBootId: string): Promise<ApplyOperationRow[]> {
     return this.deps.db
       .selectFrom('apply_operations')

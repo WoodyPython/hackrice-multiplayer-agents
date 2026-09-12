@@ -291,7 +291,6 @@ people click the same file, not a collision to report.
 | Needed | For | Owner |
 |---|---|---|
 | An approved-file **listing** (Git has `readText(path)` only — no tree op) | A07's Files view and the approved-file input picker (§2.1, §4.1) | D, then B |
-| A workspace-wide `apply_operations` listing + route | History (§4.1). Table and store already exist; empty until D07 | B |
 
 `agentProgressSchema`, `applyReviewRequestSchema`, and
 `applyReviewResponseSchema` are all already in `@app/contracts` with no route
@@ -310,7 +309,10 @@ optional. Address it **by task, not by run**: `TaskDetail.activeRunId` is null
 once a run ends, and a finished attempt's assignments are exactly what someone
 inspecting an `incomplete` task wants.
 
-**History** is a smaller gap than it first looks. The data model is already
+**History is built** — `GET /workspaces/:w/history`, see below. What follows is
+the reasoning, kept because it explains the shape.
+
+It was a smaller gap than it looked. The data model is already
 there: `apply_operations` (migration 0002) carries workspace, review, candidate
 SHA, status and settle time, and `src/runs/review-store.ts` already writes,
 settles and reads it. Joining it to its review and task gives §4.1's "applied
@@ -323,9 +325,19 @@ show an empty list for now; that is a reason to build it cheaply, not a reason i
 cannot be built. The `task.applied` event type is likewise declared in contracts
 with no writer anywhere.
 
-The route currently renders "not available yet" rather than an empty list,
-because an empty list today would be indistinguishable from "nothing has been
-applied" — which happens to be true but not for the reason a reader would infer.
+`GET /workspaces/:w/history` returns `{ entries: HistoryEntry[] }`, newest
+first: the apply operation, its review, the task it came from, the commit, the
+status, and when it settled.
+
+**Non-applied outcomes are included.** A `failed`, `ambiguous`, or still
+`pending` operation is part of what happened in the workspace, and §10.5 keeps
+those states distinguishable precisely because they need different responses.
+Listing only successes would make a stuck apply invisible in the one screen
+meant to explain the past.
+
+No changed-file list: naming paths means reading each candidate out of Git, one
+read per row. The task and the commit are enough to find the detail, and the
+review still holds it.
 
 ---
 

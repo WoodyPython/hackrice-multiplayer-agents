@@ -8,6 +8,7 @@ import {
   type Material,
   type TaskAttempt,
   type TaskDetail as Task,
+  type SavedOutputOption,
   type TaskEvent,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
@@ -18,6 +19,7 @@ import { Assignments } from "../components/Assignments";
 import { Changes } from "../components/Changes";
 import { Discussion, useDiscussion } from "../components/Discussion";
 import { RunOutcome } from "../components/RunOutcome";
+import { SavedWork } from "../components/SavedWork";
 import { EmptyState } from "../components/EmptyState";
 import { RequirementForm, type TaskFields } from "../components/RequirementForm";
 import { TaskDetail, tabs, type TaskTab } from "./TaskDetail";
@@ -78,6 +80,8 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
   const [nonce, setNonce] = useState(0);
   const [attempts, setAttempts] = useState<TaskAttempt[]>([]);
   const [events, setEvents] = useState<TaskEvent[]>([]);
+  const [savedOutputs, setSavedOutputs] = useState<SavedOutputOption[]>([]);
+  const [keep, setKeep] = useState<string[]>([]);
   const startId = useRef(crypto.randomUUID());
   const retryId = useRef(crypto.randomUUID());
   const eventCache = useRef<TaskEvent[]>([]);
@@ -102,12 +106,13 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
     let stopped = false;
     const pull = async () => {
       try {
-        const [detail, mats, drafted, runs, log] = await Promise.all([
+        const [detail, mats, drafted, runs, log, saved] = await Promise.all([
           api.readTask(workspaceId, taskId, controller.signal),
           api.listMaterials(workspaceId, controller.signal),
           api.listWorkspaceDrafts(workspaceId, controller.signal),
           api.listTaskAgents(workspaceId, taskId, controller.signal),
           readEventPages(api, workspaceId, taskId, eventCache.current, controller.signal),
+          api.listSavedOutputs(workspaceId, taskId, controller.signal),
         ]);
         if (controller.signal.aborted || stopped) return;
         setTask(detail);
@@ -116,6 +121,15 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
         setAttempts(runs);
         eventCache.current = log;
         setEvents(log);
+        setSavedOutputs(saved);
+        // Default to keeping everything that survived: §2.4's `incomplete`
+        // state exists so saved work is reusable, and making someone re-tick
+        // it every time invites discarding work by accident.
+        setKeep((current) =>
+          current.length === 0
+            ? saved.map((output) => `${output.agentInstanceId}:${output.path}`)
+            : current,
+        );
         live.current = detail.activeRunId !== null;
         setStatus("ready");
         setPollError(null);
@@ -255,6 +269,16 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
               await api.retryTask(workspaceId, task.id, {
                 expectedVersion: task.version,
                 clientRequestId: retryId.current,
+                savedOutputs: savedOutputs
+                  .filter((output) =>
+                    keep.includes(`${output.agentInstanceId}:${output.path}`),
+                  )
+                  // Identities only. The server resolves the commit under the
+                  // task lock; a client-supplied SHA is never accepted.
+                  .map((output) => ({
+                    agentInstanceId: output.agentInstanceId,
+                    path: output.path,
+                  })),
               });
               retryId.current = crypto.randomUUID();
             })
@@ -384,7 +408,29 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
       task={task}
       base={base}
       options={options}
-      banner={<>{pollError && <p role="alert">{pollError}</p>}<RunOutcome events={events} status={task.status} runId={task.activeRunId ?? [...attempts].sort((a, b) => b.attempt - a.attempt)[0]?.runId} /></>}
+      banner={
+        <>
+          {pollError && <p role="alert">{pollError}</p>}
+          <RunOutcome
+            events={events}
+            status={task.status}
+            runId={task.activeRunId ?? [...attempts].sort((a, b) => b.attempt - a.attempt)[0]?.runId}
+          />
+          {retryable && savedOutputs.length > 0 && (
+            <SavedWork
+              outputs={savedOutputs}
+              keep={keep}
+              onToggle={(key) =>
+                setKeep((current) =>
+                  current.includes(key)
+                    ? current.filter((value) => value !== key)
+                    : [...current, key],
+                )
+              }
+            />
+          )}
+        </>
+      }
       action={action}
       renderTab={renderTab}
       initialTab={

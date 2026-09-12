@@ -185,6 +185,21 @@ that reached the database through some path that forgot to ask.
 
 ---
 
+## The scheduler suite fails only in a full run
+
+`scheduler.test.ts > integrates real parallel C04 checkpoints through D05
+before a dependent reads both outputs` exhausts its own 120-second budget during
+a 23-file run, and passes 19 of 19 on its own under
+`vitest.scheduler.config.ts`.
+
+So neither the test nor the code under it is broken — the machine is, by the
+time twenty-odd suites of real Git and subprocess work have run back to back.
+Raising the timeout would hide it. Recorded in [pitfalls](../pitfalls.md);
+flagged here because it is your suite and the cost is worth owning before
+someone reads a red full run as a regression in C05.
+
+---
+
 ## What Role A needs from you (A05)
 
 One thing, and it is optional by the design's own wording.

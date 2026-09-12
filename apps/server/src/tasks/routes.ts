@@ -6,6 +6,7 @@ import {
   retryTaskRequestSchema,
   listDiscussionQuerySchema,
   listTaskAgentsResponseSchema,
+  listHistoryResponseSchema,
   listTaskReviewsResponseSchema,
   listTasksQuerySchema,
   postDiscussionRequestSchema,
@@ -52,6 +53,27 @@ export async function registerTaskRoutes(
     const body = parseOrThrow(postTaskRequestSchema, request.body ?? {});
     const task = await deps.tasks.post(workspaceId, body);
     return reply.status(201).send(task);
+  });
+
+  /**
+   * Applied changes and the tasks they came from (section 4.1, History).
+   *
+   * Workspace-level rather than task-level, and registered here because this is
+   * where the review store is already injected — History is "applied changes
+   * and associated tasks", so every row it returns names a task.
+   *
+   * Built on apply operations, not reviews: section 10.5 writes that row before
+   * the ref moves, so it is the only record that survives a process dying
+   * mid-apply. Non-applied outcomes are included deliberately; a stuck apply
+   * must not be invisible in the screen meant to say what happened.
+   */
+  app.get('/api/workspaces/:workspaceId/history', async (request, reply) => {
+    const { workspaceId } = parseOrThrow(workspaceParams, request.params);
+    return reply.send(
+      listHistoryResponseSchema.parse({
+        entries: await deps.reviews.listHistoryForWorkspace(workspaceId),
+      }),
+    );
   });
 
   app.get('/api/workspaces/:workspaceId/tasks', async (request, reply) => {

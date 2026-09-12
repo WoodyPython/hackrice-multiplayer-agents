@@ -59,6 +59,40 @@ export const listTaskReviewsResponseSchema = z.object({
 export type ListTaskReviewsResponse = z.infer<typeof listTaskReviewsResponseSchema>;
 
 /**
+ * One applied change and the task it came from (section 4.1, History).
+ *
+ * An apply operation is the right row to build this on rather than the review:
+ * section 10.5 writes it before the ref moves and settles it afterwards, so it
+ * is the only record that survives a process dying mid-apply. That is also why
+ * non-applied outcomes appear here — a `failed` or `ambiguous` operation is
+ * part of the history of the workspace, and hiding it would make a stuck apply
+ * invisible in the one screen meant to say what happened.
+ *
+ * No file list: naming the changed paths means reading the candidate out of
+ * Git, one read per row. The task and the commit are enough to find the detail,
+ * and the review itself still has it.
+ */
+export const historyEntrySchema = z.object({
+  applyOperationId: z.string().uuid(),
+  reviewId: reviewIdSchema,
+  taskId: taskIdSchema,
+  taskTitle: z.string(),
+  taskKind: z.enum(['agent_task', 'manual_edit']),
+  /** The commit approved and put on main. */
+  candidateSha: shaSchema,
+  status: applyStatusSchema,
+  requestedAt: timestampSchema,
+  /** Null while an operation is still pending, including across a restart. */
+  settledAt: timestampSchema.nullable(),
+});
+export type HistoryEntry = z.infer<typeof historyEntrySchema>;
+
+export const listHistoryResponseSchema = z.object({
+  entries: z.array(historyEntrySchema),
+});
+export type ListHistoryResponse = z.infer<typeof listHistoryResponseSchema>;
+
+/**
  * Which review a screen should show, given the list above.
  *
  * One definition rather than a rule each caller re-derives. `superseded` and

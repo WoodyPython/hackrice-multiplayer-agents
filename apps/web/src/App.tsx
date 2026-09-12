@@ -25,6 +25,7 @@ import { TaskBoardPage } from "./pages/TaskBoardPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
 import { NewTask } from "./pages/NewTask";
 import { Files } from "./pages/Files";
+import { History } from "./pages/History";
 
 function ShareWorkspace({ id }: { id: string }) {
   const [copied, setCopied] = useState(false);
@@ -234,33 +235,7 @@ function LiveWorkspace({ id }: { id: string }) {
               }
             />
             <Route path="files" element={<Files workspaceId={id} />} />
-            <Route
-              path="history"
-              element={
-                <>
-                  <h1>History</h1>
-                  {/*
-                    §4.1 specifies this screen, but no part of the system can
-                    answer it: applied changes are recorded as per-task
-                    `task.applied` events and there is no workspace-wide query,
-                    route, or contract for them. An empty list would claim
-                    nothing has been applied, which we cannot know.
-                  */}
-                  <EmptyState
-                    title="Not available yet"
-                    action={
-                      <Link className="button" to={base}>
-                        Back to the board
-                      </Link>
-                    }
-                  >
-                    A workspace-wide record of applied changes needs an endpoint
-                    that does not exist yet. Each task keeps its own record in
-                    the meantime.
-                  </EmptyState>
-                </>
-              }
-            />
+            <Route path="history" element={<History workspaceId={id} />} />
             <Route
               path="*"
               element={

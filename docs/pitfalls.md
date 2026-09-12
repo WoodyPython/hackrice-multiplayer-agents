@@ -119,6 +119,38 @@ and would cost the next person the same.
 
 ---
 
+## A suite that only fails when it is run with the others
+
+**Audit before A08.** `scheduler.test.ts > integrates real parallel C04
+checkpoints through D05 before a dependent reads both outputs` failed after
+exhausting its own 120-second budget during a 23-file run. Run on its own under
+`vitest.scheduler.config.ts` it passes, 19 of 19.
+
+So the test is not broken and neither is the code under it. What fails is the
+machine, by the time twenty-odd suites of real Git and subprocess work have run
+back to back in one process.
+
+`git-integration.test.ts` is the same shape and worse: **over nine minutes in
+isolation**, around seventeen inside a full run, with one cancellation test
+burning 487 seconds before failing. `vitest.config.ts` still carries the comment
+"The whole run is a few seconds."
+
+**Why this is worth an entry rather than a shrug:** it changes what a red run
+means. A failure here is not evidence of a regression, and chasing it as one
+costs an afternoon — which is exactly the trap the older entry about the
+intermittent Git timeout describes, now arrived at from the other direction. It
+also quietly punishes the verification standard: a full suite that costs a
+quarter of an hour is a suite people stop running before pushing.
+
+**What would actually fix it** is someone owning the Git suites' cost — they do
+real filesystem and process work per test and appear not to share fixtures. A
+bigger timeout hides it, which is the one thing worth not doing.
+
+**Until then:** run the suites your change can reach, and treat a lone timeout in
+a Git-heavy suite as unproven until it reproduces in isolation.
+
+---
+
 ## An append cursor cannot see a field that changed in place
 
 **A04, task discussion.** Discussion is paginated by `seq`, and the interface

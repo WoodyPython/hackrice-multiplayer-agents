@@ -664,6 +664,74 @@ describe('finding the reviews on a task', () => {
   });
 });
 
+describe('workspace history', () => {
+  /**
+   * Section 4.1. Built on apply operations rather than reviews because section
+   * 10.5 writes that row before the ref moves: it is the only record that
+   * survives a process dying mid-apply, and the only one that can distinguish
+   * "never ran" from "outcome unknown".
+   */
+  async function applied(title: string, status?: 'applied' | 'failed' | 'ambiguous') {
+    const taskId = await makeTask(title);
+    const review = await reviews.create({
+      workspaceId, taskId, runId: null,
+      source: {
+        taskVersion: 1, guidanceVersion: 1, mainSha: fakeSha('main'),
+        humanSha: fakeSha('human'), resultSha: null, documentRevisions: {}, contextHash: 'ctx',
+      },
+    });
+    await reviews.markReady(review.id, fakeSha('cand'));
+    await reviews.begin({
+      workspaceId, reviewId: review.id, candidateSha: fakeSha('cand'),
+      expectedMainSha: fakeSha('main'), bootId: BOOT_ID,
+    });
+    if (status) await reviews.settle(review.id, status);
+    return { taskId, review };
+  }
+
+  it('names the task each applied change came from', async () => {
+    const { taskId } = await applied('Write the guide', 'applied');
+
+    const res = await t.app.inject({
+      method: 'GET',
+      url: `/api/workspaces/${workspaceId}/history`,
+    });
+    expect(res.statusCode).toBe(200);
+    const entry = res.json().entries.find((e: { taskId: string }) => e.taskId === taskId);
+    expect(entry.taskTitle).toBe('Write the guide');
+    expect(entry.status).toBe('applied');
+    expect(entry.settledAt).not.toBeNull();
+  });
+
+  it('includes an apply that did not succeed, and one still pending', async () => {
+    await applied('Ambiguous one', 'ambiguous');
+    await applied('Still pending');
+
+    const entries = (await t.app.inject({
+      method: 'GET', url: `/api/workspaces/${workspaceId}/history`,
+    })).json().entries;
+    const byTitle = (title: string) =>
+      entries.find((e: { taskTitle: string }) => e.taskTitle === title);
+
+    // Hiding these would make a stuck apply invisible in the one screen meant
+    // to say what happened to this workspace.
+    expect(byTitle('Ambiguous one').status).toBe('ambiguous');
+    expect(byTitle('Still pending').status).toBe('pending');
+    expect(byTitle('Still pending').settledAt).toBeNull();
+  });
+
+  it('does not leak another workspace history', async () => {
+    await applied('Private change', 'applied');
+    const other = (await createWorkspaceViaApi(t.app, { name: 'Elsewhere history' })).workspaceId;
+
+    const res = await t.app.inject({
+      method: 'GET', url: `/api/workspaces/${other}/history`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().entries).toEqual([]);
+  });
+});
+
 describe('apply operations', () => {
   async function readyReview(taskId: string) {
     const review = await reviews.create({

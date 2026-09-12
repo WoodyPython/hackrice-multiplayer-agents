@@ -192,6 +192,24 @@ by a dead process. Reconcile each against main per §10.5: the candidate already
 on main means it succeeded, main still at the expected value means it never ran,
 anything else is ambiguous and stops.
 
+## The Git suites now dominate a full run
+
+`git-integration.test.ts` takes **over nine minutes in isolation** and around
+seventeen inside a full run, and its
+`preserves refs and guard errors when cancellation rejects prepared
+fast-forward, merge, or no-op results` burned 487 seconds before failing.
+`vitest.config.ts` still says "The whole run is a few seconds."
+
+The practical cost is not the wait: it is that a full suite priced at a quarter
+of an hour is one people stop running before pushing, which is the habit that
+broke `main` once already. These suites do real filesystem and process work per
+test and appear not to share fixtures.
+
+Recorded in [pitfalls](../pitfalls.md). Raising timeouts is the one fix worth
+avoiding — it converts a visible cost into an invisible one.
+
+---
+
 ## What Role A needs from you (A06, A07)
 
 Two things, in priority order.

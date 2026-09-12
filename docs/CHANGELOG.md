@@ -2,6 +2,57 @@
 
 Newest first. One entry per landed ticket.
 
+## Residue — History built, retry carries saved work, suite health diagnosed
+**Landed:** 2026-09-12 · Role A
+**Affects:** everyone. One additive Role B route; no migration, no dependency.
+**Action required:** Roles C and D: read the suite note in your interface file.
+
+An audit pass before A08/B08 rather than new feature work. Three things closed,
+one diagnosed and handed over.
+
+**History is built** (§4.1). `GET /workspaces/:w/history` over a new
+`PgReviewStore.listHistoryForWorkspace`. It was blocked on D07 having something
+to record; D07 landed, so `apply_operations` has rows and the screen is real.
+Built on apply operations rather than reviews because §10.5 writes that row
+*before* the ref moves — it is the only record that survives a process dying
+mid-apply. **Non-applied outcomes are listed**: a `failed`, `ambiguous` or
+still-`pending` operation is part of what happened, and hiding it would make a
+stuck apply invisible in the one screen meant to explain the past.
+
+**Retry now carries saved work forward** (§2.4, §4.7, C08). The retry button
+ignored C08's `savedOutputs`, so every retry silently redid work a previous
+attempt had already finished — which is the thing the `incomplete` state exists
+to prevent. The task screen now lists what survived, keeps it all by default
+(unchecking should be deliberate; re-checking should not be a chore), and sends
+**selection identities, never the resolved commit SHA** — C08 resolves that
+under the task lock and must not accept a client's.
+
+**The design document was corrected** where it had drifted: §2.1 claimed nothing
+in the system could enumerate approved files, but `ManagedWorktrees.tree(sha)`
+does exactly that for review building. The ask to Role D shrank from "add a tree
+operation" to "wrap the one you have".
+
+**Suite health, diagnosed and not fixed** — it is not Role A's to fix, and the
+diagnosis matters more than the symptom:
+
+- `scheduler.test.ts > integrates real parallel C04 checkpoints through D05…`
+  fails in a 23-file run after exhausting its own 120-second budget, and
+  **passes 19 of 19 in isolation**. The test is fine; the machine is not, after
+  twenty-odd suites of real Git and subprocess work run back to back.
+- `git-integration.test.ts` takes **over nine minutes in isolation**, around
+  seventeen in a full run, with one cancellation test burning 487 seconds before
+  failing. `vitest.config.ts` still says "The whole run is a few seconds."
+
+The consequence worth acting on: a red full run is no longer evidence of a
+regression, and a suite priced at a quarter of an hour is one people stop
+running before pushing — the habit that broke `main` once already. Recorded in
+[pitfalls](pitfalls.md) and flagged in the Role C and Role D interfaces.
+
+Verified: `npm run build`, the web suite (**62**, up from 56), and `runs` and
+`tasks` (**41** and the rest) — the suites these changes can reach. Mutation-
+checked: hiding non-applied history rows, and sending a resolved commit SHA with
+a retry selection.
+
 ## Cross-subsystem reliability and test cost
 
 **Implemented:** 2026-09-12 · working tree

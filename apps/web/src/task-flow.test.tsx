@@ -161,6 +161,10 @@ function server(overrides: Record<string, (call: Call) => Response> = {}) {
         return json({ reviews: [] });
       case `GET /tasks/${taskId}/drafts`:
         return json({ drafts: [draft] });
+      case `GET /tasks/${taskId}/saved-outputs`:
+        return json({ outputs: [] });
+      case "GET /history":
+        return json({ entries: [] });
       case `GET /tasks/${taskId}/events`:
         return json({ events: [], latestId: null });
       default:
@@ -958,5 +962,109 @@ describe("task refresh regressions", () => {
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
     await screen.findByRole("button", { name: "Stop this attempt" });
     expect(screen.queryByRole("button", { name: "Retry from saved work" })).toBeNull();
+
+});
+});
+
+const historyEntry = (over: Record<string, unknown> = {}) => ({
+  applyOperationId: crypto.randomUUID(),
+  reviewId,
+  taskId,
+  taskTitle: "Write a contributor guide",
+  taskKind: "agent_task",
+  candidateSha,
+  status: "applied",
+  requestedAt: at,
+  settledAt: at,
+  ...over,
+});
+
+describe("history", () => {
+  it("lists applied changes with the task each came from", async () => {
+    const { transport } = server({ "GET /history": () => json({ entries: [historyEntry()] }) });
+    open(`/w/${workspaceId}/history`, transport);
+
+    const link = await screen.findByRole("link", { name: "Write a contributor guide" });
+    // §4.1: "Applied changes and associated tasks" -- the task is half of it.
+    expect(link.getAttribute("href")).toBe(`/w/${workspaceId}/tasks/${taskId}?tab=Changes`);
+    expect(screen.getByText("Applied")).toBeTruthy();
+  });
+
+  it("shows an apply that did not succeed rather than hiding it", async () => {
+    const { transport } = server({
+      "GET /history": () => json({ entries: [historyEntry({ status: "ambiguous", settledAt: null })] }),
+    });
+    open(`/w/${workspaceId}/history`, transport);
+
+    // §10.5 keeps these states distinguishable on purpose. A stuck apply must
+    // not be invisible in the one screen meant to say what happened.
+    expect(await screen.findByText("Needs checking")).toBeTruthy();
+    expect(screen.getByText(/could not be determined/)).toBeTruthy();
+  });
+
+  it("says nothing has been applied rather than showing a bare empty list", async () => {
+    const { transport } = server();
+    open(`/w/${workspaceId}/history`, transport);
+    expect(await screen.findByText("Nothing has been applied yet")).toBeTruthy();
+  });
+});
+
+describe("retrying with saved work", () => {
+  const savedOutput = {
+    agentInstanceId: "90000000-0000-4000-8000-000000000aa1",
+    path: "documents/faq.md",
+    runId,
+    commitSha: "f".repeat(40),
+  };
+
+  async function openIncomplete(outputs = [savedOutput]) {
+    const user = userEvent.setup();
+    const { transport, calls } = server({
+      [`GET /tasks/${taskId}`]: () => json({ ...task, status: "incomplete" }),
+      [`GET /tasks/${taskId}/saved-outputs`]: () => json({ outputs }),
+      [`POST /tasks/${taskId}/retry`]: () =>
+        json({ runId, attempt: 2, taskStatus: "planning", idempotentReplay: false }, 202),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    await screen.findByRole("region", { name: "Saved work" });
+    return { user, calls };
+  }
+
+  it("keeps finished work by default and sends identities, not commit SHAs", async () => {
+    const { user, calls } = await openIncomplete();
+    expect(
+      (screen.getByRole("checkbox", { name: /documents\/faq\.md/ }) as HTMLInputElement).checked,
+    ).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Retry from saved work" }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/retry"))).toBe(true));
+
+    const body = calls.find((c) => c.url.endsWith("/retry"))!.body as Record<string, unknown>;
+    // C08 resolves the commit under the task lock; a client-supplied SHA is
+    // never accepted, so it must not be sent.
+    expect(body.savedOutputs).toEqual([
+      { agentInstanceId: savedOutput.agentInstanceId, path: savedOutput.path },
+    ]);
+    expect(JSON.stringify(body)).not.toContain(savedOutput.commitSha);
+  });
+
+  it("lets the selection be cleared, and says what that means", async () => {
+    const { user, calls } = await openIncomplete();
+    await user.click(screen.getByRole("checkbox", { name: /documents\/faq\.md/ }));
+    expect(screen.getByText(/will redo all of this/)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Retry from saved work" }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/retry"))).toBe(true));
+    const body = calls.find((c) => c.url.endsWith("/retry"))!.body as Record<string, unknown>;
+    expect(body.savedOutputs).toEqual([]);
+  });
+
+  it("shows no saved-work panel when the last attempt finished nothing", async () => {
+    const { transport } = server({
+      [`GET /tasks/${taskId}`]: () => json({ ...task, status: "incomplete" }),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    await screen.findByRole("button", { name: "Retry from saved work" });
+    expect(screen.queryByRole("region", { name: "Saved work" })).toBeNull();
   });
 });
