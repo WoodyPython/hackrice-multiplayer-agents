@@ -2,6 +2,25 @@
 
 Newest first. One entry per landed ticket.
 
+## C04 — Worker tools and checkpoints
+**Status:** Implemented locally 2026-09-12; commit pending · Role C
+**Affects:** Roles B, C, and D
+**Action required:** C05 must persist bases/create mutating worktrees before dispatch; C06 supplies captured context and owns cancellation/finalization. Use the shared `WorkerExecutor` and guarded Git capability. Read [C04 integration notes](../apps/server/src/workers/README.md). No migration or dependency is added.
+
+- Added scoped captured-file/material reads, issued source references, atomic
+  Git text batches, task-local question waits, and verified completion artifacts.
+- Worker model calls, repairs, provider backoff and human waits use C02's sole
+  token ledger and fixed deadline. No count quota or model shell access.
+- Added the narrow D02 publication guard so queued candidates recheck execution
+  state under the Git lock, immediately before updating the worker ref.
+- Checkpoint receipts and completion/failure events retain saved work. C05/C06
+  scheduling, integration and HTTP orchestration remain separate tickets.
+- Validation: build passed; full suite passed with 431 backend and eight
+  frontend tests. After the final timer-cancellation adjustment, the server
+  build and all 35 C04 tests passed again.
+
+---
+
 ## C03 — Orchestrator plan and graph validation
 **Landed:** 2026-09-12 · `16d09d2` · Role C
 **Affects:** Roles B, C, and D

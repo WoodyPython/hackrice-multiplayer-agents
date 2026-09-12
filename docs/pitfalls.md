@@ -16,6 +16,17 @@ evidence behind them.
 Short on purpose. Add an entry when something costs you more than a few minutes
 and would cost the next person the same.
 
+## A pre-tool check did not guard queued Git publication
+
+**C04.** D02 prepared and published a checkpoint under its workspace lock, but
+an execution check made before calling it could expire while the operation was
+queued or preparing its candidate. Checking the returned promise cannot undo
+an already published ref. The additive guarded checkpoint capability now checks
+the worker inside the Git lock at publication; tests invalidate timeout, run,
+boot and local cancellation state after candidate preparation and verify that
+the previous branch remains intact. Database receipts can still fail after Git
+publication, so recovery uses saved Git history instead of replaying the batch.
+
 ## A parser cap was still a step-count cap
 
 **C03, plan schema.** The shared schema described its 64-assignment ceiling as

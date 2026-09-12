@@ -712,6 +712,15 @@ If integration conflicts, mark the assignment blocked and surface the affected f
 
 No shell, arbitrary SQL, general network tool, unrestricted filesystem, or Git command tool is exposed.
 
+C04 binds tool authority to the stored worker and captured manifest. Source
+references are issued by successful versioned reads or question answers;
+completion resolves those references and verifies artifacts against persisted
+checkpoint receipts and the worker commit. A finish call must be alone in a
+complete response. Checkpoint candidates pass a current-execution guard under
+the workspace Git lock immediately before ref publication. Git remains the
+recovery authority if database receipt or disk projection fails after publication;
+the worker stops rather than automatically replaying the proposal.
+
 Gemini function calls return structured requests for application code to handle. The backend validates them before execution. [Gemini function calling](https://ai.google.dev/gemini-api/docs/function-calling)
 
 ### 8.7 Parallelism and provider throttling
@@ -1277,7 +1286,7 @@ This allocation has no time estimates. Dependencies identify the order in which 
 | apps/server/src/drafts | B |
 | apps/server/src/runs | B |
 | apps/server/src/http and config | B |
-| apps/server/src/models, orchestration, agents | C |
+| apps/server/src/models, orchestration, agents, workers | C |
 | apps/server/src/agents (instance lifecycle, budgets, deadlines) | C |
 | apps/server/src/git, collaboration, reviews, recovery | D |
 | apps/server/src/index.ts | D |

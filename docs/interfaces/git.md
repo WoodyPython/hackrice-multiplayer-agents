@@ -1,6 +1,6 @@
 # Git files and checkpoints
 
-**Reflects:** D03 · **Owner:** Role D
+**Reflects:** D03, C04 guard integration · **Owner:** Role D
 
 ## Shared documents (D03)
 
@@ -119,6 +119,20 @@ calling. C02/C04 must check current boot, cancellation, supersession, terminal
 state and the fixed deadline, bind the worker instance, and supply authoritative
 scopes. IDs, scopes, refs, filesystem paths and the runner are not model inputs.
 The Git layer has no database or model dependency and cannot check agent state.
+
+C04 now uses the additive `GuardedWorkerGitService` capability implemented by
+`LocalGitService.applyGuardedWorkerChanges(input, guard)`. The same D02 batch
+rules apply. After preparing the candidate, under the workspace operation lock,
+Git calls `guard(checkpoint, publish)` immediately before ref publication. The
+guard must invoke `publish` once only after accepting the worker's current
+execution state. A rejection preserves the old ref; no-op batches also invoke
+the guard. C04 owns the short task/run/agent DB lock inside that callback. Do not
+hold an outer DB transaction while calling this Git method. Original unguarded
+methods remain available for trusted non-worker callers and existing tests.
+
+Guard errors retain their original type. Failures after publication can leave a
+saved Git checkpoint even when its DB receipt or disk projection failed; stop
+the worker and inspect the branch for recovery instead of replaying the batch.
 
 | Method | Input and result |
 |---|---|

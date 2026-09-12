@@ -10,7 +10,8 @@ Full specification: [hackrice-final-mvp-design.md](hackrice-final-mvp-design.md)
 
 Role C integration: [model adapter](apps/server/src/models/README.md) and
 [C02 budgets/deadlines](apps/server/src/agents/README.md), plus
-[C03 planning](apps/server/src/orchestration/README.md).
+[C03 planning](apps/server/src/orchestration/README.md) and
+[C04 worker tools](apps/server/src/workers/README.md).
 
 ## Getting started
 
@@ -44,7 +45,7 @@ against a data root. Production must mount persistent storage there; see the
 | `apps/server/src/{http,config.ts}` | B | Non-listening application factory and configuration |
 | `apps/server/src/index.ts` | D | Process startup, shared HTTP server, and shutdown |
 | `apps/server/src/{workspaces,tasks,discussion,materials,events}` | B | Application data APIs |
-| `apps/server/src/{models,orchestration,agents}` | C | Gemini adapter, budgets, planning, dispatch |
+| `apps/server/src/{models,orchestration,agents,workers}` | C | Gemini adapter, budgets, planning, worker tools and dispatch |
 | `apps/server/src/{git,collaboration,reviews,recovery}` | D | Git service, Yjs rooms, review and apply |
 | `apps/web` | A | React frontend |
 

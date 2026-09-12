@@ -5,7 +5,7 @@ import {
   createDraftRequestSchema, createResultRequestSchema, createWorkerRequestSchema,
   gitBranchResultSchema, gitCheckpointRequestSchema, gitCheckpointResultSchema,
   gitReadTextRequestSchema, gitReadTextResultSchema, gitWorktreeResultSchema,
-  shaSchema, type GitService,
+  shaSchema, type GitService, type WorkerCommitGuard,
 } from '@app/contracts';
 import { GitRuntimeError, runGit, type GitRunner } from './command.js';
 import { canonicalWorkspaceId, WorkspaceOperationLock } from './lock.js';
@@ -131,7 +131,19 @@ export class LocalGitService implements Pick<GitService,
     ));
   }
 
-  async applyWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0]) {
+  async applyGuardedWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0], guard: WorkerCommitGuard) {
+    // Preserve trusted guard failures through files()'s filesystem redaction.
+    let rejected = false;
+    let rejection: unknown;
+    try {
+      return await this.applyWorkerChanges(input, async (checkpoint, publish) => {
+        try { await guard(checkpoint, publish); }
+        catch (error) { rejected = true; rejection = error; throw error; }
+      });
+    } catch (error) { throw rejected ? rejection : error; }
+  }
+
+  async applyWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0], guard?: WorkerCommitGuard) {
     const value = parse(applyWorkerChangesRequestSchema, input);
     const allowed = pathSet(value.allowedWritePaths);
     portablePaths(allowed);
@@ -146,7 +158,7 @@ export class LocalGitService implements Pick<GitService,
     });
     uniquePaths(changes.map(({ path }) => path));
     return this.files(value.workspaceId, async (files) => applyWorkerChangesResultSchema.parse(
-      await files.apply(value.agentInstanceId.toLowerCase(), changes),
+      await files.apply(value.agentInstanceId.toLowerCase(), changes, guard),
     ));
   }
 
