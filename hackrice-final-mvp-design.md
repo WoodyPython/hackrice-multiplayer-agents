@@ -116,21 +116,32 @@ Start task is a separate action on the posted task.
 
 The server:
 1. Checks the submitted task version and confirms there is no active attempt.
-2. Captures the requirements, criteria, selected materials, and discussion cutoff.
-3. Flushes acknowledged live edits and creates a Git checkpoint of the human draft.
-4. Records approved main and the draft checkpoint as immutable inputs.
-5. Creates an orchestrator instance.
-6. Obtains and validates an assignment graph.
-7. Starts eligible worker agents.
-8. Returns a run ID immediately; browser connections are not required to remain open.
+2. Creates the run record, fixing the attempt number, task version, guidance version, and discussion cutoff.
+3. Returns a run ID immediately; browser connections are not required to remain open.
+4. Captures the requirements, criteria, and selected materials into a context manifest.
+5. Flushes acknowledged live edits and creates a Git checkpoint of the human draft.
+6. Records approved main and the draft checkpoint as immutable inputs on the run.
+7. Creates an orchestrator instance.
+8. Obtains and validates an assignment graph.
+9. Starts eligible worker agents.
 
-Double-clicks or concurrent Start requests produce one active attempt. A unique active-run constraint and idempotency key enforce this.
+Steps 1 and 2 are one database transaction; the run row itself is the duplicate-start guard, so it is written before the Git checkpoint rather than after. Do not hold that transaction open across capture, planning, or any model call.
+
+Steps 4 onward run after the response. If capture fails or the start snapshot conflicts, the run ends in a terminal state and the task reports it. A failed capture never leaves the task without a run record explaining why.
+
+Double-clicks or concurrent Start requests produce one active attempt. Two independent mechanisms enforce this: a per-task idempotency key returns the original run for a replayed request, and a unique active-run constraint rejects a genuinely concurrent second request.
 
 ### 2.3 Discussion after start
 
 Task discussion remains available throughout execution.
 
-A new comment does not silently change an in-flight model request. Display “Added after this run started” when relevant. A contributor can:
+The discussion cutoff is fixed when the run is created. Entries posted after that point never enter any agent context for that run, including assignments that have not started yet. This is deliberate: a run's inputs are frozen at Start, so no assignment reads a different discussion than the one its plan was built from, and no late comment can silently redirect work already dispatched.
+
+Each discussion entry carries a gap-free per-task sequence number, and the run stores the cutoff sequence. Entries at or below the cutoff are in context; entries above it are not, and the interface labels them “Added after this run started.” To act on a later comment, stop the run and start a revised attempt.
+
+Answers to agent questions are the single exception, and they are not an exception to the rule above: an answer is a reply to a question the run itself asked, routed to the waiting agent through its question record rather than through the discussion context.
+
+A new comment therefore does not silently change an in-flight model request. A contributor can:
 - Answer a pending agent question.
 - Stop the run and start a revised attempt.
 - Request a revision after the result is ready.
@@ -163,6 +174,19 @@ The Files view offers Edit together. This creates or opens a manual-edit task fo
 A manual-edit task does not need agent execution. Contributors can edit it and request review; the owner applies it through the same Git review path. Start agents remains available as a separate action if assistance is wanted.
 
 Use one active manual-edit task per workspace/file, enforced by a database uniqueness rule. Explicitly created tasks can still have separate drafts of that file.
+
+### 2.6 Agent questions
+
+An agent question is a first-class record, not a formatted comment. An agent that needs clarification calls ask_question; the server persists a question record bound to that agent instance and renders it as a task discussion entry so contributors see it in the conversation they are already reading.
+
+A question record holds its agent instance, its run, the discussion entry that displays it, the answering discussion entry once one exists, its status, and its expiry. Status is one of open, answered, expired, or canceled.
+
+- An agent has at most one open question at a time, because it has at most one in-flight model request.
+- A question expires at its agent instance deadline. Waiting for a human consumes that agent clock; asking does not extend it.
+- Answering records an ordinary discussion entry, links it to the question, and marks the question answered.
+- Canceling a run, or the expiry of an agent deadline, resolves its open questions without an answer.
+
+A task reports needs_input while its active run has at least one open question, and leaves that state when no open question remains. The task state is derived from question records rather than set independently, so a task cannot sit in needs_input with nothing to answer.
 
 ## 3. File and material model
 
@@ -197,7 +221,7 @@ Before Start, show the materials and drafts the task will use. Direct task attac
 The context manifest records:
 - Task version and requirements.
 - Workspace guidance version.
-- Discussion entries through a specific cutoff.
+- Discussion entries up to the run cutoff sequence, fixed at Start.
 - Material IDs and content hashes.
 - Approved file paths and commit.
 - Human draft checkpoint and file hashes.
@@ -644,7 +668,7 @@ If integration conflicts, mark the assignment blocked and surface the affected f
 | read_file | Read a validated task/worker path |
 | read_material | Read a selected immutable reference |
 | propose_changes | Submit validated text replacements/deletions with expected file hashes |
-| ask_question | Persist a task-local question and wait within the agent's existing deadline |
+| ask_question | Persist a task-local question record, surface it in task discussion, and wait within the agent's existing deadline |
 | finish_assignment | Return summary, references, limitations, and output artifacts |
 
 No shell, arbitrary SQL, general network tool, unrestricted filesystem, or Git command tool is exposed.
@@ -861,14 +885,15 @@ Use PostgreSQL migrations and typed queries. Supabase hosts the data; all applic
 | Table | Main fields | Purpose |
 |---|---|---|
 | workspaces | id, name, purpose, owner_key_hash, guidance, guidance_version, status | Anonymous workspace and creator control |
-| tasks | id, workspace_id, kind, manual_source_path nullable, creator_guest_label, title, outcome, criteria, version, status, active_run_id | Posted work and current lifecycle |
+| tasks | id, workspace_id, kind, manual_source_path nullable, creator_guest_label, title, outcome, criteria, version, status, active_run_id, discussion_seq | Posted work and current lifecycle; discussion_seq allocates discussion order |
 | task_input_links | task_id, material_id or draft_file_id or approved_path, source_version | Explicit selected inputs |
-| discussion_entries | id, task_id, guest_label, actor_type, body, client_request_id, created_at | Discussion inside a task only |
+| discussion_entries | id, task_id, seq, guest_label, actor_type, body, client_request_id, created_at | Discussion inside a task only; seq is the gap-free per-task order used by run cutoffs |
+| agent_questions | id, task_id, run_id, agent_instance_id, question_entry_id, answer_entry_id, status, asked_at, expires_at, resolved_at | Agent questions as first-class records bound to their displayed discussion entries |
 | materials | id, workspace_id, filename, object_key, sha256, byte_size, guest_label, deleted_at | Immutable reference metadata |
 | material_links | material_id, workspace_id, task_id nullable, discussion_entry_id nullable | Reuse references without copying |
 | draft_files | id, task_id, path, epoch, base_blob_sha, yjs_state, state_vector, persisted_revision, status | Live document persistence |
 | draft_checkpoints | id, task_id, commit_sha, document_revisions, created_at | Binding from persisted collaborative state to Git |
-| runs | id, task_id, attempt, task_version, input_snapshot_sha, context_manifest, result_head_sha, boot_id, status | Explicit execution attempt |
+| runs | id, task_id, attempt, task_version, guidance_version, client_request_id, discussion_cutoff_seq, input_snapshot_sha, context_manifest, result_head_sha, boot_id, status | Explicit execution attempt; cutoff and versions are fixed at creation |
 | task_agent_budgets | task_id, agent_key, token_budget, consumed_tokens, reserved_tokens | One cumulative budget per task-and-agent pair; unique (task_id, agent_key), retained across attempts |
 | agent_instances | id, run_id, task_id, agent_key, assignment_key, preset, model_id, status, base_sha, result_sha, started_at, deadline_at | Per-attempt agent work and deadline; references its task_agent_budgets row |
 | agent_dependencies | agent_id, prerequisite_agent_id | Validated execution graph |
@@ -890,9 +915,11 @@ Reserve and reconcile model-call usage atomically against task_agent_budgets, re
 - Unique dependency pair; no self-dependency.
 - Unique task/path for active draft files.
 - Partial unique workspace/manual_source_path for manual-edit tasks that have not reached a terminal state.
-- Unique client request ID within the relevant task operation scope.
+- Unique client request ID within the relevant task operation scope, covering both discussion entries and run creation.
 - Unique review ID in apply_operations.
-- Scoped foreign keys or explicit checks preventing a material from workspace A being attached to workspace B.
+- Gap-free discussion sequence per task, allocated under the task row lock so sequence order matches commit order and a run cutoff is exact.
+- At most one open question per agent instance. An answered question must reference its answering entry; an unanswered one must not.
+- Scoped foreign keys or explicit checks preventing a material from workspace A being attached to workspace B. Prefer composite foreign keys carrying workspace_id so the database rejects cross-workspace attachment without application code.
 - Agent state transition checks: a terminal/expired instance cannot write.
 - Review status cannot become applied from stale/conflict/building.
 
@@ -924,6 +951,7 @@ Persist task events before broadcasting their IDs. Example event types:
 - task.requirements_changed
 - agent.started
 - agent.waiting
+- agent.question_answered
 - agent.completed
 - agent.timed_out
 - agent.token_exhausted
@@ -946,12 +974,14 @@ Task discussion entries persist independently of event delivery. A browser recon
 | GET /api/workspaces/:w | Read this linked workspace |
 | PATCH /api/workspaces/:w | Update name/guidance; owner key required |
 | POST /api/workspaces/:w/tasks | Post task only |
+| GET /api/workspaces/:w/tasks | List this workspace tasks for the board |
+| GET /api/workspaces/:w/tasks/:t | Read one task with its requirements, state, and selected inputs |
 | PATCH /api/workspaces/:w/tasks/:t | Update posted requirements using expected version |
 | POST /api/workspaces/:w/tasks/:t/start | Explicitly capture input and start agents |
 | POST /api/workspaces/:w/tasks/:t/cancel | Stop current execution |
 | POST /api/workspaces/:w/tasks/:t/retry | Explicit new attempt from saved context/checkpoints |
 | GET/POST /api/workspaces/:w/tasks/:t/discussion | Read/add task-local entries |
-| POST /api/workspaces/:w/tasks/:t/answer | Submit answer to a pending agent question |
+| POST /api/workspaces/:w/tasks/:t/answer | Answer an open agent question; records the answering discussion entry and resolves the question |
 | POST /api/workspaces/:w/materials | Upload workspace reference |
 | POST /api/workspaces/:w/tasks/:t/material-links | Attach existing reference to task or its discussion |
 | GET /api/workspaces/:w/materials/:m | Read/download linked material |
@@ -1181,7 +1211,7 @@ Every row is a single-owner work package. “Expected behavior” defines what t
 |---|---|---|---|
 | B01 | Shared schema and contracts | None | SQL tables, runtime schemas, error/status enums, and service interfaces. Posting, starting, live checkpointing, and review have distinct contracts |
 | B02 | Anonymous workspace creation | B01 | Create/resolve workspace API, generated contribution link, owner-key hashing, owner-only guidance updates. No account, membership, or invitation workflow |
-| B03 | Posted tasks and task discussion | B02 | Post/revise/start request storage, discussion entries/attachments, idempotency, expected-version checks. Posting invokes no model; duplicate Start cannot create two active attempts |
+| B03 | Posted tasks and task discussion | B02 | Post/revise/start request storage, task reads, discussion entries/attachments, agent-question records, idempotency, expected-version checks. Owns the Start transaction (version check, run creation, active-run guard) and hands the created run to orchestration through an injected hook. Posting invokes no model; duplicate Start cannot create two active attempts |
 | B04 | Workspace/task materials | B03 | Shared upload/read/link implementation backed by Supabase Storage. Immutable IDs/hashes; workspace and task entry points reuse bytes |
 | B05 | Collaborative snapshot persistence | B01, B03 | Store/load Yjs binary state, state vectors, document epochs, and guarded revisions. Older saves cannot overwrite newer snapshots |
 | B06 | Task events and realtime refresh | B03 | Durable task events and Supabase Broadcast hints. Browser refetch remains authoritative; repeated hints do not duplicate entries |
@@ -1210,7 +1240,7 @@ Every row is a single-owner work package. “Expected behavior” defines what t
 | C03 | Orchestrator plan and graph validation | C01, B03 | Structured assignments, dependencies, preset/write-scope validation, cycle checks, overlapping-write ordering. No fixed step-count limit |
 | C04 | Worker tools and checkpoints | C02, C03, D02, B04 | Scoped reads, source references, text proposals, questions, completion. Workers cannot invoke shell/Git directly or edit live Yjs content |
 | C05 | Parallel assignment scheduler | C04, D05 | Dispatch ready independent workers, wait on prerequisites, integrate results, expose provider backoff. No global two-task product cap |
-| C06 | Explicit Start and captured context | C05, D04, B03 | Capture current requirements/materials/discussion/draft; create run and planning instance; handle conflicting start snapshots. Posting alone remains inert |
+| C06 | Explicit Start and captured context | C05, D04, B03 | Implement the orchestration hook B03 invokes with a created run: capture requirements, materials, discussion to the cutoff, and draft into the run context manifest, create the planning instance, and handle conflicting start snapshots by ending the run in a terminal state. Does not create the run row or own the duplicate-start guard. Posting alone remains inert |
 | C07 | Reviewer, evidence, and review handoff | C06, D06 | Reviewer assignment against combined outputs, factual event log, work-log generation, ready/incomplete results, request-revision handoff. Generated claims remain distinguishable |
 | C08 | Manual retries and agent failure cases | C07, D08 | Retry as explicit new attempt; saved inputs retained; failure/timeout/unknown usage/cancellation exercised with a test adapter and representative real calls |
 
