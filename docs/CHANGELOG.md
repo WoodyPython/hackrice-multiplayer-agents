@@ -3,7 +3,7 @@
 Newest first. One entry per landed ticket.
 
 ## C03 — Orchestrator plan and graph validation
-**Status:** Implemented locally 2026-09-12; commit pending · Role C
+**Landed:** 2026-09-12 · `16d09d2` · Role C
 **Affects:** Roles B, C, and D
 **Action required:** C06 must supply captured `PlanningContext` and a planning instance; C05/C06 instantiate workers from the saved validated plan. Read [C03 integration notes](../apps/server/src/orchestration/README.md). No migration or new dependency is required.
 
