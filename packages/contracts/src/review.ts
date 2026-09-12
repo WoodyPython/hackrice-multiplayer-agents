@@ -135,3 +135,45 @@ export const reviewEvidenceSchema = z.object({
   generatedCodeWasNotExecuted: z.literal(true),
 });
 export type ReviewEvidence = z.infer<typeof reviewEvidenceSchema>;
+
+// D06: existing shared shapes remain available; these describe the complete wire surface.
+export const prepareReviewRequestSchema = z.object({}).strict();
+export const reviewMergeStageSchema = z.enum(['human_agent', 'task_main']);
+export const reviewCandidateSideSchema = z.union([conflictSideSchema, z.literal('combined_task')]);
+export const candidateConflictSchema = z.object({
+  path: repoPathSchema,
+  stage: reviewMergeStageSchema,
+  sides: z.array(z.object({ side: reviewCandidateSideSchema, text: z.string().nullable(), sha: shaSchema.nullable() })),
+});
+export const candidateResolutionSchema = z.object({
+  path: repoPathSchema,
+  choice: z.union([reviewCandidateSideSchema, z.literal('manual')]),
+  text: z.string().optional(),
+}).strict().refine((r) => r.choice === 'manual' ? r.text !== undefined : r.text === undefined,
+  { message: 'Only manual resolution accepts text, and requires it.' });
+export const resolveCandidateRequestSchema = z.object({
+  expectedCandidateSha: shaSchema,
+  resolutions: z.array(candidateResolutionSchema).min(1),
+}).strict().refine((r) => new Set(r.resolutions.map((v) => v.path)).size === r.resolutions.length,
+  { message: 'Resolution paths must be unique.' });
+export const reviewChangedFileSchema = z.object({
+  path: repoPathSchema, changeKind: z.enum(['added', 'modified', 'deleted']), diff: z.string(),
+  beforeHash: shaSchema.nullable(), afterHash: shaSchema.nullable(),
+});
+export const reviewCandidateDataSchema = z.object({
+  candidateSha: shaSchema,
+  candidateComplete: z.boolean(),
+  conflicts: z.array(candidateConflictSchema),
+  changedFiles: z.array(reviewChangedFileSchema),
+  generatedCodeWasNotExecuted: z.literal(true),
+});
+export const reviewDetailSchema = reviewCandidateDataSchema.extend({ review: reviewSchema });
+export const reviewPreviewSchema = z.object({
+  candidateSha: shaSchema, candidateComplete: z.boolean(), path: repoPathSchema,
+  text: z.string().nullable(), hash: shaSchema.nullable(),
+});
+export type CandidateConflict = z.infer<typeof candidateConflictSchema>;
+export type CandidateResolution = z.infer<typeof candidateResolutionSchema>;
+export type ResolveCandidateRequest = z.infer<typeof resolveCandidateRequestSchema>;
+export type ReviewCandidateData = z.infer<typeof reviewCandidateDataSchema>;
+export type ReviewDetail = z.infer<typeof reviewDetailSchema>;

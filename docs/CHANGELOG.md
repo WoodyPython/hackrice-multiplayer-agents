@@ -2,6 +2,33 @@
 
 Newest first. One entry per landed ticket.
 
+## D06 - Combined review candidates
+**Implemented:** 2026-09-12 - local main worktree (commit pending) - Role D
+**Affects:** Roles A, C, and D
+**Action required:** Rebuild `@app/contracts` and read the
+[D06 review contract](interfaces/git.md#combined-review-candidates-d06).
+Resolution uses `resolveCandidateRequestSchema` with `expectedCandidateSha`;
+second-stage conflicts expose `combined_task` versus `approved_main`.
+No migration or new dependency is required.
+
+- Two-stage human/agent/approved combination in temporary review worktrees,
+  with private immutable candidates and exact persisted source/context records.
+- Contributor prepare/resolve routes and scoped review, diff, and text-preview
+  reads; real changed-file data and explicit conflict source labels.
+- Whole-file/manual/deletion resolutions, portable namespace conflicts, and
+  new commits per resolution round. Old candidates and source branches survive.
+- Atomic candidate/status/task/event finalization, existing D04 live capture,
+  runtime wiring, and focused Git, database, HTTP, and two-client tests.
+- Apply, continuous staleness invalidation, AI assessment/revision dispatch,
+  epoch closure, and workflow restart reconciliation remain later tickets.
+
+Verified: workspace build, `git diff --check`, and the full suite passed:
+538 backend tests and 27 frontend tests, including 23 D06 Git/API checks.
+The new live-capture check uses two real WebSocket clients; no frontend UI was
+added or manually exercised by this ticket.
+
+---
+
 ## A03 - Simultaneous editor binding
 **Landed:** 2026-09-12 - Role A
 **Affects:** Role A; A04/A07 can link to shared task drafts

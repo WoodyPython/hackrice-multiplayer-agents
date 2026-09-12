@@ -1,17 +1,23 @@
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import {
   ApiError, applyWorkerChangesRequestSchema, applyWorkerChangesResultSchema,
   createDraftRequestSchema, createResultRequestSchema, createWorkerRequestSchema,
   gitBranchResultSchema, gitCheckpointRequestSchema, gitCheckpointResultSchema,
   gitReadTextRequestSchema, gitReadTextResultSchema, gitWorktreeResultSchema,
   gitIntegrateRequestSchema, gitIntegrateResultSchema,
-  shaSchema, type GitService, type WorkerCommitGuard,
+  shaSchema, uuidSchema, reviewSourceSchema, resolveCandidateRequestSchema,
+  type GitService, type WorkerCommitGuard, type ResolveCandidateRequest,
 } from '@app/contracts';
 import { GitRuntimeError, runGit, type GitRunner } from './command.js';
 import { canonicalWorkspaceId, WorkspaceOperationLock } from './lock.js';
 import { filePath, invalidPath, pathSet, portablePaths, textBytes } from './files.js';
 import { ManagedWorktrees } from './worktrees.js';
+import { ReviewGit } from './review.js';
+
+const reviewIdentity = z.object({ workspaceId: uuidSchema, reviewId: uuidSchema, candidateSha: shaSchema });
 
 function parse<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown): T {
   const result = schema.safeParse(value);
@@ -48,9 +54,9 @@ async function directory(path: string): Promise<void> {
   if (info.isSymbolicLink() || !info.isDirectory()) throw new GitRuntimeError('INVALID_DIRECTORY');
 }
 
-/** Git files and D05 integration; review/apply belong to later tickets. */
+/** Git files, D05 integration and D06 private candidates. */
 export class LocalGitService implements Pick<GitService,
-  'initialize' | 'createDraft' | 'createWorker' | 'createResult' | 'checkpoint' | 'readText' | 'applyWorkerChanges' | 'integrate'> {
+  'initialize' | 'createDraft' | 'createWorker' | 'createResult' | 'checkpoint' | 'readText' | 'applyWorkerChanges' | 'integrate' | 'buildReview'> {
   private readonly root: string;
   private preparation?: Promise<void>;
 
@@ -209,6 +215,78 @@ export class LocalGitService implements Pick<GitService,
     return this.files(value.workspaceId, async (files) => gitIntegrateResultSchema.parse(
       await files.integrate(value.runId.toLowerCase(), value.agentInstanceId.toLowerCase()),
     ));
+  }
+
+  async buildReview(input: Parameters<GitService['buildReview']>[0] & { reviewId?: string; context?: Record<string, unknown> }) {
+    const value = parse(z.object({ workspaceId: uuidSchema, taskId: uuidSchema, source: reviewSourceSchema,
+      reviewId: uuidSchema, context: z.record(z.string(), z.unknown()) }),
+    { ...input, reviewId: input.reviewId ?? randomUUID(), context: input.context ?? {} });
+    return this.files(value.workspaceId, async (files, repo) => {
+      const reviews = new ReviewGit(repo.repositoryPath, files, this.git);
+      const artifact = await reviews.build(value.reviewId.toLowerCase(), value.source, value.context);
+      return { candidateSha: artifact.candidateSha, conflicts: artifact.conflicts.map((c) => c.path),
+        data: await reviews.detail(artifact) };
+    });
+  }
+
+  /** Authoritative source refs after capture; IDs and run metadata are supplied by the data service. */
+  async reviewSources(input: { workspaceId: string; taskId: string; humanSha: string;
+    run?: { id: string; resultSha: string; inputSnapshotSha: string } }) {
+    const value = parse(z.object({ workspaceId: uuidSchema, taskId: uuidSchema, humanSha: shaSchema,
+      run: z.object({ id: uuidSchema, resultSha: shaSchema, inputSnapshotSha: shaSchema }).optional() }), input);
+    return this.files(value.workspaceId, async (files, repo) => {
+      const sourceRef = async (name: string) => {
+        const found = await this.git(['--git-dir', repo.repositoryPath, 'show-ref', '--verify', '--hash', name], { allowedExitCodes: [1, 128] });
+        if (found.exitCode !== 0) throw new ApiError('INPUT_CONFLICT', 'A recorded review source is unavailable in Git.');
+        return files.commit(shaSchema.parse(found.stdout.trim()));
+      };
+      const humanBase = await sourceRef(`refs/app/bases/human/${value.taskId.toLowerCase()}`);
+      await files.commit(value.humanSha);
+      const lineage = await this.git(['--git-dir', repo.repositoryPath, 'merge-base', '--is-ancestor', humanBase, value.humanSha], { allowedExitCodes: [1] });
+      if (lineage.exitCode !== 0) throw new ApiError('INPUT_CONFLICT', 'Human checkpoint is outside this task lineage.');
+      if (value.run) {
+        const result = await sourceRef(`refs/heads/results/${value.run.id.toLowerCase()}`);
+        const base = await sourceRef(`refs/app/bases/results/${value.run.id.toLowerCase()}`);
+        if (result !== value.run.resultSha || base !== value.run.inputSnapshotSha) {
+          throw new ApiError('INPUT_CONFLICT', 'Recorded agent result does not match its Git sources.');
+        }
+        const ancestry = await this.git(['--git-dir', repo.repositoryPath, 'merge-base', '--is-ancestor', base, result], { allowedExitCodes: [1] });
+        if (ancestry.exitCode !== 0) throw new ApiError('INPUT_CONFLICT', 'Agent result is outside its captured lineage.');
+      }
+      return { mainSha: repo.mainSha, resultSha: value.run?.resultSha ?? null };
+    });
+  }
+
+  async readReview(input: { workspaceId: string; reviewId: string; candidateSha: string }) {
+    const value = parse(reviewIdentity, input);
+    return this.files(value.workspaceId, async (files, repo) => {
+      const reviews = new ReviewGit(repo.repositoryPath, files, this.git);
+      const artifact = await reviews.read(value.reviewId.toLowerCase(), value.candidateSha);
+      return { artifact, data: await reviews.detail(artifact) };
+    });
+  }
+
+  async resolveReview(input: { workspaceId: string; reviewId: string } & ResolveCandidateRequest) {
+    const identity = parse(reviewIdentity, { ...input, candidateSha: input.expectedCandidateSha });
+    const request = parse(resolveCandidateRequestSchema, {
+      expectedCandidateSha: input.expectedCandidateSha, resolutions: input.resolutions,
+    });
+    return this.files(identity.workspaceId, async (files, repo) => {
+      const reviews = new ReviewGit(repo.repositoryPath, files, this.git);
+      const artifact = await reviews.read(identity.reviewId.toLowerCase(), identity.candidateSha);
+      if (!artifact.conflicts.length) throw new ApiError('INVALID_STATE', 'This candidate has no conflicts to resolve.');
+      const next = await reviews.resolve(identity.reviewId.toLowerCase(), artifact, request.resolutions);
+      return reviews.detail(next);
+    });
+  }
+
+  async previewReview(input: { workspaceId: string; reviewId: string; candidateSha: string; path: string }) {
+    const value = parse(reviewIdentity.extend({ path: z.string() }), input);
+    const path = filePath(value.path);
+    return this.files(value.workspaceId, async (files, repo) => {
+      const reviews = new ReviewGit(repo.repositoryPath, files, this.git);
+      return reviews.preview(await reviews.read(value.reviewId.toLowerCase(), value.candidateSha), path);
+    });
   }
 
   /**

@@ -11,6 +11,8 @@ import { attachLiveDocuments } from '../collaboration/server.js';
 import { LiveDocumentCoordinator } from '../collaboration/coordinator.js';
 import { PgCheckpointStore } from '../collaboration/checkpoint-store.js';
 import { registerCheckpointRoutes } from '../collaboration/routes.js';
+import { LocalReviewService } from '../reviews/service.js';
+import { registerReviewRoutes } from '../reviews/routes.js';
 
 export interface LiveDocumentAttachment {
   close(): Promise<void>;
@@ -76,13 +78,15 @@ export async function startRuntime(options: RuntimeOptions) {
       drafts, git, checkpoints: new PgCheckpointStore(db.db),
     });
     await registerCheckpointRoutes(app, collaboration);
+    const reviews = new LocalReviewService({ db: db.db, git, collaboration });
+    await registerReviewRoutes(app, reviews);
     live = options.attachLiveDocuments
       ? await options.attachLiveDocuments(app.server)
       : attachLiveDocuments(app.server, liveDeps, collaboration);
     // D03 snapshot loads remain on demand. Later recovery tickets reconcile
     // previous boots and pending applies here, before accepting task actions.
     await app.listen(options.listen ?? { host: '0.0.0.0', port: config.PORT });
-    return { app, git, lifecycle, collaboration, close };
+    return { app, git, lifecycle, collaboration, reviews, close };
   } catch (error) {
     await close().catch(() => undefined);
     throw error instanceof GitRuntimeError ? error : new GitRuntimeError('STARTUP_FAILED');

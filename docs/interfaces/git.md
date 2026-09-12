@@ -1,6 +1,111 @@
 # Git files and checkpoints
 
-**Reflects:** D05 · **Owner:** Role D
+**Reflects:** D06 · **Owner:** Role D
+
+## Combined review candidates (D06)
+
+The runtime exposes `reviews: LocalReviewService`, wired to its existing Git
+singleton and live-document coordinator. Preparation and resolution are
+contributor actions. No migration or dependency is added.
+
+| Route | Contract |
+|---|---|
+| `POST /api/workspaces/:w/tasks/:t/review` | No body or strict `{}`; returns `ReviewDetail` |
+| `POST /api/workspaces/:w/reviews/:r/resolve` | `ResolveCandidateRequest`; returns `ReviewDetail` |
+| `GET /api/workspaces/:w/reviews/:r` | Refetch stored review and current candidate detail |
+| `GET /api/workspaces/:w/reviews/:r/diff` | `ReviewCandidateData`, diff against stored approved SHA |
+| `GET /api/workspaces/:w/reviews/:r/preview?path=documents/example.md` | `ReviewPreview`: candidate text/hash, or null for absence |
+
+Successful responses are HTTP 200. IDs and relationships are checked; callers
+cannot supply source refs, revisions, a run, or filesystem locations. Preview is
+JSON text for the existing safe Markdown renderer. Compare candidate SHAs across
+separate reads, since resolution may advance the review between requests.
+
+Before Request review, submit local edits and wait for their persisted
+acknowledgements, as in D04 below. Capture includes every accepted active document;
+typing resumes without a Yjs reset or epoch closure. Manual-edit tasks need no run
+and record `runId/resultSha: null`. Agent tasks use the latest completed run with
+a validated manifest, matching result branch/base, and completed instances. An
+active, missing, incomplete, or mismatched result is refused; an older successful
+attempt is not silently substituted. C05/C06 own constructing and settling runs.
+
+### Conflict resolution
+
+`ReviewDetail` contains `review`, `candidateSha`, `candidateComplete`, sorted
+`changedFiles` (kind, unified diff, before/after blob hashes), `conflicts`, and
+`generatedCodeWasNotExecuted: true`. No-change candidates have an empty diff.
+Each conflict names its path and stage, with exact text/blob hash for each side:
+
+- `human_agent`: `human_draft` and `agent_result`.
+- `task_main`: `combined_task` and `approved_main`.
+
+Both text and hash are null for absence. The two merges use their unique common
+Git ancestor; missing or ambiguous ancestry returns `INPUT_CONFLICT`. All trees
+undergo D02 path, namespace, UTF-8, and size validation.
+
+Send `expectedCandidateSha` and exactly one resolution per displayed conflict:
+
+```json
+{
+  "expectedCandidateSha": "<40-character candidate SHA>",
+  "resolutions": [
+    { "path": "documents/example.md", "choice": "manual", "text": "Resolved text" }
+  ]
+}
+```
+
+Alternatively choose an offered side without `text`. Choosing an absent side
+deletes the file; empty manual text creates an empty file. Duplicate/extra/missing
+paths, unavailable sides, unsafe content, and remaining namespace collisions are
+rejected. Resolve every path in a stage together. Resolving `human_agent` can
+reveal `task_main` conflicts: display those new sides and resolve again with the
+new candidate SHA. Existing generic resolution schemas remain exported; D06's
+strict wire schema is `resolveCandidateRequestSchema`.
+
+Conflict records have a provisional SHA and `candidateComplete: false`. Their
+preview preserves automatic merges when portable, otherwise the complete left
+tree; it is not a chosen resolution. Candidate SHA and status are written
+atomically, never temporarily `ready`. A clean candidate requires a stage-zero
+Git index with no unresolved entries; literal marker text is ordinary content.
+Ready transitions append `review.ready` in the same SQL transaction. Task status
+becomes `conflict` or `ready_for_review`, including the direct manual-edit path.
+
+Resolution creates a new commit and retains the previous candidate/source tuple.
+Immutable refs under `refs/app/reviews/<reviewId>/<candidateSha>/` retain commits,
+source ancestors, context, conflict sides, and resolution rounds. Temporary
+detached worktrees/indexes are removed afterward. Main, worker, result, and human
+branches are untouched. SQL uses the expected candidate/status; a failed
+finalization preserves the private artifact without announcing readiness.
+Failed initial builds remain `building`; request review again for a fresh build.
+
+### Context and later-ticket handoff
+
+`ReviewSource.contextHash` covers the complete review context, not D04's
+draft-only digest. The private metadata retains current task requirements/output
+paths, guidance/version, sorted selected inputs, the deduplicated union of
+selected and task/discussion-linked material IDs/hashes, the completed run's
+identity/manifest, and D04's capture. Object keys are recursively sorted; arrays
+preserve semantic order except explicitly sorted sets. SHA-256 hashes canonical
+UTF-8 JSON. Reads verify the digest and exact source tuple. Late discussion is
+not added to the frozen agent manifest.
+
+D07 still owns continuous invalidation, persisted/in-memory revision checks,
+source checks at Apply, ownership, publication, and epoch closure. `ready` alone
+is not permission to publish. C07 owns AI review and revision assignments and
+must bind findings to the examined candidate SHA. D08 owns workflow recovery.
+
+Git `buildReview`, `readReview`, `resolveReview`, and `previewReview` hold the
+existing workspace lock; callers resolve DB membership first. Review-service
+operations have a task queue acquired before capture/Git. Never re-enter review
+operations from a workspace lock or document gate. SQL transactions are short
+and never held over Git or live capture.
+
+The shared backend signatures remain supported: `prepare({workspaceId, taskId})`
+returns `Review`, as does `resolve({workspaceId, reviewId, expectedCandidateSha,
+resolutions})`. The runtime's positional overloads return `ReviewDetail` for its
+HTTP handlers. New callers must supply `expectedCandidateSha`; its optional
+declaration on the older shared interface preserves additive type compatibility,
+while D06 validates it at runtime.
 
 ## Worker-result integration (D05)
 
@@ -54,8 +159,8 @@ The runtime now returns `collaboration`, its singleton
 `LiveDocumentCoordinator`. The WebSocket server and checkpoint route use this
 same registry. C06 and D06 should inject its
 `capture({ workspaceId, taskId }): Promise<DraftCapture>` method; do not create
-a second coordinator for the same runtime. Start orchestration and review
-preparation remain those tickets' work.
+a second coordinator for the same runtime. Start orchestration remains C06;
+D06 now consumes this capture for review.
 
 Contributors can call
 `POST /api/workspaces/:workspaceId/tasks/:taskId/checkpoint` with no body or

@@ -7,7 +7,7 @@ import { blobHash, decodeText, directories, diskBytes, filePath, inspectFile, in
 type Kind = 'human' | 'agents' | 'results';
 interface Entry { mode: string; hash: string }
 interface Managed { branch: string; worktreePath: string; admin: string; head: string }
-type Tree = Map<string, Entry>;
+export type Tree = Map<string, Entry>;
 
 /** Only constructed inside LocalGitService.withRepository: this class never locks. */
 export class ManagedWorktrees {
@@ -33,7 +33,7 @@ export class ManagedWorktrees {
     return shaSchema.parse(result.stdout.trim());
   }
 
-  private async commit(sha: string): Promise<string> {
+  async commit(sha: string): Promise<string> {
     // A full object ID, never a revision expression supplied by a caller.
     const type = (await this.command(['cat-file', '-t', sha], { allowedExitCodes: [128] }));
     if (type.exitCode !== 0 || type.stdout.trim() !== 'commit') {
@@ -42,7 +42,7 @@ export class ManagedWorktrees {
     return sha;
   }
 
-  private async tree(sha: string): Promise<Tree> {
+  async tree(sha: string): Promise<Tree> {
     const result = await this.command(['ls-tree', '-r', '-z', '--full-tree', sha], { binary: true });
     let listing: string;
     try { listing = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(result.stdoutBytes!); }
@@ -60,7 +60,7 @@ export class ManagedWorktrees {
     return entries;
   }
 
-  private async blob(hash: string): Promise<Buffer> {
+  async blob(hash: string): Promise<Buffer> {
     const size = Number((await this.command(['cat-file', '-s', hash])).stdout.trim());
     if (!Number.isSafeInteger(size) || size < 0) throw new GitRuntimeError('INVALID_BLOB');
     if (size > MAX_TEXT_FILE_BYTES) throw new ApiError('VALIDATION_FAILED', 'File exceeds the 1 MiB limit.');

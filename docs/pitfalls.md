@@ -1,5 +1,23 @@
 # Pitfalls
 
+## A conflicted review cannot temporarily become ready
+
+**D06 integration with B07.** The database requires a candidate SHA for every
+review outside `building`, while B07's `markConflict()` only changes status.
+Calling it directly on a newly created row violates `reviews_candidate_ck`.
+Calling `markReady()` first would briefly expose unresolved content as ready.
+D06 instead saves the provisional candidate and `conflict` status in one guarded
+UPDATE. Clean candidate, task state, and `review.ready` event are also committed
+in one transaction; an event failure rolls all readiness changes back.
+
+## A deleted path can alias a retained path in candidate preview
+
+**D06.** Resolving a case or file/directory collision can remove one source path
+while retaining its counterpart. D02's worktree read deliberately rejects their
+combined namespace. Preview reads immutable Git objects directly instead: an
+absent source path returns null even when its counterpart remains in the tree.
+The complete candidate tree still passes portable path validation.
+
 ## A temporary merge index still asked for a worktree
 
 **D05.** Git 2.36 has no `merge-tree --write-tree`. The compatible merge path
