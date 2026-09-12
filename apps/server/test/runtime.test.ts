@@ -1,4 +1,8 @@
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { PgRunStore } from '../src/runs/run-store.js';
+import { LocalReviewService } from '../src/reviews/service.js';
+import { insertWorkspace, insertTask, insertRun, insertBudget, insertAgentInstance, insertDiscussionEntry } from './helpers.js';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -17,6 +21,51 @@ beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'd01-runtime-')); }
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 describe('D01 runtime integration', () => {
+  it.each(['planning', 'working', 'needs_input'] as const)('D08 interrupts %s before transport and permits explicit retry', async (status) => {
+    const db = connectTestDb();
+    const workspaceId = await insertWorkspace(db.db);
+    const taskId = await insertTask(db.db, workspaceId, { status });
+    const runId = await insertRun(db.db, workspaceId, taskId, { status });
+    await db.db.updateTable('tasks').set({ active_run_id: runId }).where('id', '=', taskId).execute();
+    await insertBudget(db.db, workspaceId, taskId, 'orchestrator');
+    const agentId = await insertAgentInstance(db.db, workspaceId, taskId, runId);
+    const entryId = await insertDiscussionEntry(db.db, workspaceId, taskId);
+    const question = await db.db.insertInto('agent_questions').values({ workspace_id: workspaceId, task_id: taskId,
+      run_id: runId, agent_instance_id: agentId, question_entry_id: entryId, expires_at: new Date(Date.now() + 60_000) }).returning('id').executeTakeFirstOrThrow();
+    const config = testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl(), bootId: randomUUID() });
+    let runtime: Awaited<ReturnType<typeof startRuntime>> | undefined;
+    try {
+      runtime = await startRuntime({ config, listen: { host: '127.0.0.1', port: 0 }, attachLiveDocuments: async (server) => {
+        expect(server.listening).toBe(false);
+        expect(await db.db.selectFrom('tasks').select(['status', 'active_run_id']).where('id', '=', taskId).executeTakeFirst())
+          .toEqual({ status: 'interrupted', active_run_id: null });
+        expect((await db.db.selectFrom('agent_instances').select('status').where('id', '=', agentId).executeTakeFirst())!.status).toBe('interrupted');
+        expect((await db.db.selectFrom('agent_questions').select('status').where('id', '=', question.id).executeTakeFirst())!.status).toBe('canceled');
+        return { close: async () => {} };
+      } });
+      const old = new PgRunStore({ db: db.db, bootId: BOOT_ID });
+      await expect(old.recordResultHead(runId, 'a'.repeat(40))).rejects.toMatchObject({ code: 'RUN_INTERRUPTED' });
+      const response = await runtime.app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/tasks/${taskId}/retry`, payload: { clientRequestId: randomUUID() } });
+      expect(response.statusCode).toBe(202);
+      expect(response.json().attempt).toBe(2);
+      await old.settle(runId, 'completed');
+      expect((await old.read(runId))!.status).toBe('interrupted');
+    } finally { await runtime?.close(); await db.close(); }
+  });
+
+  it('D08 closes resources without attaching transport when reconciliation fails', async () => {
+    const db = connectTestDb();
+    const closed = vi.spyOn(db, 'close');
+    const attach = vi.fn();
+    const recover = vi.spyOn(LocalReviewService.prototype, 'reconcilePreviousApplies').mockRejectedValue(new Error('injected'));
+    try {
+      await expect(startRuntime({ config: testConfig({ gitDataRoot: root }), createDatabase: () => db,
+        attachLiveDocuments: attach })).rejects.toMatchObject({ code: 'STARTUP_FAILED' });
+      expect(attach).not.toHaveBeenCalled();
+      expect(closed).toHaveBeenCalledTimes(1);
+    } finally { recover.mockRestore(); }
+  });
+
   it('attaches before listening, creates a repository via HTTP, and retains main on restart', async () => {
     const db = connectTestDb();
     const dbClose = vi.spyOn(db, 'close');

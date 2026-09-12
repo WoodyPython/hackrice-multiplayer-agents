@@ -1,6 +1,12 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** B07, C02, C05, C06 · **Owner:** Role B (data), Role C (execution guard)
+**Reflects:** D08, B07, C02, C05, C06 · **Owner:** Role B (data), Role C (execution guard)
+
+## D08 runtime recovery
+
+Startup now calls `markInterruptedFromPreviousBoots()` before building the application and reconciles pending applies before attaching transport, opening orchestration, or listening. Existing saved snapshots and Git checkpoints restore on demand. No old execution is resumed; the existing explicit retry route creates a new attempt after interruption clears the active-run pointer.
+
+`LocalReviewService.reconcilePreviousApplies()` shares D07's finalization transaction: main at the candidate completes metadata and closes epochs, main at the expected SHA retains pending owner/freshness checks, and any other SHA records ambiguity and blocks document writes. Storage failures abort startup. See [D08 recovery details](git.md#startup-recovery-d08). C08 retains ownership of saved-output selection and broader retry behavior.
 
 ## C06 changes inside the runtime
 

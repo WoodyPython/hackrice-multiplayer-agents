@@ -40,7 +40,7 @@ async function agent(base: string, text: string | null, name = path) {
   return { sha: integrated.resultSha, runId, agentInstanceId, workerSha: changed.commitSha };
 }
 
-describe('D06 Git review candidates', { timeout: 60_000 }, () => {
+describe('D06 Git review candidates', { timeout: 120_000 }, () => {
   it('D07 publishes once with expected-main comparison and preserves source branches', async () => {
     const human = await checkpoint(taskId, [{ path, text: 'reviewed' }, { path: 'code/new.ts', text: 'export {};' }]);
     const candidate = await build(source(human.commitSha));

@@ -50,6 +50,39 @@ async function connect() {
 }
 
 describe('D07 owner apply', { timeout: 60_000 }, () => {
+  it.each(['candidate', 'expected', 'ambiguous'] as const)('D08 reconciles %s main before attaching transport', async (outcome) => {
+    const peer = await connect();
+    const review = await prepare();
+    const store = new PgReviewStore({ db: db.db });
+    await store.begin({ workspaceId, reviewId: review.review.id, candidateSha: review.candidateSha,
+      expectedMainSha: review.review.source.mainSha, bootId: randomUUID() });
+    let main = review.review.source.mainSha;
+    if (outcome !== 'expected') {
+      main = outcome === 'candidate' ? review.candidateSha : (await runtime.git.checkpoint({ workspaceId,
+        taskId: randomUUID(), files: [{ path, text: 'unrelated' }] })).commitSha;
+      await runtime.git.applyExpected({ workspaceId, expectedMainSha: review.review.source.mainSha, candidateSha: main });
+    }
+    peer.provider.destroy();
+    await runtime.close();
+    runtime = await startRuntime({ config: testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl(), bootId: randomUUID() }),
+      listen: { host: '127.0.0.1', port: 0 }, attachLiveDocuments: async (server) => {
+        expect(server.listening).toBe(false);
+        expect((await store.readOperation(review.review.id))!.status).toBe(outcome === 'candidate' ? 'applied' : outcome === 'expected' ? 'pending' : 'ambiguous');
+        return { close: async () => {} };
+      } });
+    expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(main);
+    await expect(runtime.collaboration.acquire({ workspaceId, taskId, draftFileId: peer.draft.id, epoch: peer.draft.epoch }))
+      .rejects.toMatchObject({ code: outcome === 'candidate' ? 'DOCUMENT_EPOCH_CLOSED' : 'RUN_INTERRUPTED' });
+    if (outcome === 'candidate') {
+      expect((await apply(review)).json().alreadyApplied).toBe(true);
+      expect(await runtime.reviews.reconcilePreviousApplies()).toEqual({ applied: 0, pending: 0, ambiguous: 0 });
+      expect(await db.db.selectFrom('task_events').select('id').where('task_id', '=', taskId).where('type', '=', 'task.applied').execute()).toHaveLength(1);
+    } else if (outcome === 'expected') {
+      expect((await apply(review, 'wrong')).statusCode).toBe(403);
+      expect((await apply(review)).statusCode).toBe(200);
+    }
+  });
+
   it.each([1, 2, 3])('requires the real owner key and publishes the exact multi-file candidate once (round %i)', async () => {
     const review = await prepare();
     const absent = await runtime.app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/reviews/${review.review.id}/apply`, payload: { candidateSha: review.candidateSha } });

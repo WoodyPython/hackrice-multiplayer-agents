@@ -5,6 +5,7 @@ import {
   type ReviewService, type ReviewDetail,
 } from '@app/contracts';
 import type { Db } from '../db/client.js';
+import type { ApplyOperationRow } from '../db/types.js';
 import { appendEvent } from '../events/service.js';
 import { LocalGitService } from '../git/service.js';
 import { PgReviewStore } from '../runs/review-store.js';
@@ -29,6 +30,58 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
   private readonly operations = new TaskDocumentGate();
   constructor(private readonly deps: { db: Db; git: LocalGitService; collaboration: Pick<CollaborationService, 'capture'>; bootId?: string }) {
     this.store = new PgReviewStore({ db: deps.db });
+  }
+
+  /** Startup only: reconcile durable publication intent before accepting actions.
+   * Never publishes Git or grants authority to resume an old attempt.
+   */
+  async reconcilePreviousApplies() {
+    const collaboration = this.deps.collaboration;
+    if (!(collaboration instanceof LiveDocumentCoordinator) || !this.deps.bootId) throw new ApiError('INVALID_STATE');
+    const counts = { applied: 0, pending: 0, ambiguous: 0 };
+    for (const operation of await this.store.pendingFromPreviousBoots(this.deps.bootId)) {
+      const review = await this.scoped(operation.workspace_id, operation.review_id);
+      await this.operations.run(review.taskId, () => this.deps.git.withApply(operation.workspace_id, (git) =>
+        collaboration.withApply(review.taskId, async (live) => {
+          if (operation.candidate_sha !== review.candidateSha || operation.expected_main_sha !== review.source.mainSha) {
+            throw new ApiError('INPUT_CONFLICT');
+          }
+          const head = await git.main();
+          if (head === operation.candidate_sha) {
+            const artifact = await git.readReview(review.id, operation.candidate_sha);
+            if (canonical(artifact.source) !== canonical(review.source) || digest(artifact.context) !== review.source.contextHash || artifact.conflicts.length) {
+              throw new ApiError('INPUT_CONFLICT');
+            }
+            live.close();
+            await this.deps.db.transaction().execute(async (db) => {
+              await db.selectFrom('workspaces').select('id').where('id', '=', operation.workspace_id).forUpdate().executeTakeFirstOrThrow();
+              await db.selectFrom('tasks').select('id').where('id', '=', review.taskId).forUpdate().executeTakeFirstOrThrow();
+              const locked = await db.selectFrom('reviews').select('status').where('id', '=', review.id).forUpdate().executeTakeFirstOrThrow();
+              if (!['ready', 'applied'].includes(locked.status)) throw new ApiError('RUN_INTERRUPTED');
+              await this.finalizeApplied(db, review, operation);
+            });
+            counts.applied++;
+          } else if (head === operation.expected_main_sha) {
+            counts.pending++;
+          } else {
+            await this.store.settle(review.id, 'ambiguous', 'RUN_INTERRUPTED');
+            // The durable guard blocks this task without claiming it was applied.
+            counts.ambiguous++;
+          }
+        })));
+    }
+    return counts;
+  }
+
+  private async finalizeApplied(db: Db, review: Review, operation: ApplyOperationRow) {
+    const now = new Date();
+    await db.updateTable('apply_operations').set({ status: 'applied', settled_at: now, error_code: null }).where('id', '=', operation.id).execute();
+    await db.updateTable('reviews').set({ status: 'applied', updated_at: now }).where('id', '=', review.id).where('status', '=', 'ready').execute();
+    await db.updateTable('tasks').set({ status: 'completed', active_run_id: null, updated_at: now }).where('id', '=', review.taskId).execute();
+    await db.updateTable('draft_files').set({ status: 'closed', updated_at: now }).where('task_id', '=', review.taskId).where('status', '=', 'active').execute();
+    await appendEvent(db, { workspaceId: operation.workspace_id, taskId: review.taskId, runId: review.runId,
+      type: 'task.applied', eventKey: eventKeys.taskApplied(operation.id),
+      payload: { applyOperationId: operation.id, reviewId: review.id, appliedCommitSha: operation.candidate_sha } });
   }
 
   private async inputs(workspaceId: string, taskId: string, transaction?: Db) {
@@ -155,12 +208,7 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
           if (!result.applied) throw new ApiError('REVIEW_STALE');
           live.close();
         }
-        await db.updateTable('apply_operations').set({ status: 'applied', settled_at: new Date(), error_code: null }).where('id', '=', operation!.id).execute();
-        await db.updateTable('reviews').set({ status: 'applied', updated_at: new Date() }).where('id', '=', reviewId).where('status', '=', 'ready').execute();
-        await db.updateTable('tasks').set({ status: 'completed', updated_at: new Date() }).where('id', '=', review.taskId).execute();
-        await db.updateTable('draft_files').set({ status: 'closed', updated_at: new Date() }).where('task_id', '=', review.taskId).where('status', '=', 'active').execute();
-        await appendEvent(db, { workspaceId, taskId: review.taskId, runId: review.runId, type: 'task.applied', eventKey: eventKeys.taskApplied(operation!.id),
-          payload: { applyOperationId: operation!.id, reviewId, appliedCommitSha: candidateSha } });
+        await this.finalizeApplied(db, review, operation!);
       }); } catch (error) {
         // A failed SQL commit does not roll Git back. Leave its receipt pending and
         // keep rooms closed if publication happened; the next authorized Apply reconciles it.

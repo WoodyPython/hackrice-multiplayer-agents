@@ -121,7 +121,7 @@ const events = (runId: string) =>
 
 async function settled(runId: string) {
   await vi.waitFor(async () => expect((await run(runId)).ended_at).not.toBeNull(),
-    { timeout: 20_000, interval: 20 });
+    { timeout: 120_000, interval: 20 });
   return run(runId);
 }
 
@@ -172,7 +172,7 @@ async function commitOnMain(workspaceId: string, files: Array<{ path: string; te
 
 // ---------------------------------------------------------------------------
 
-describe('C06 explicit start', () => {
+describe('C06 explicit start', { timeout: 180_000 }, () => {
   it('captures selected inputs, plans, dispatches, and settles the run for review', async () => {
     const workspaceId = await insertWorkspace(db.db, 'C06 start');
     const approvedSha = await commitOnMain(workspaceId, [{ path: 'documents/policy.md', text: 'Approved policy' }]);

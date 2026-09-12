@@ -2,6 +2,18 @@
 
 Newest first. One entry per landed ticket.
 
+## D08 — Minimal restart/retry support
+**Implemented:** 2026-09-12 · local main worktree · Role D
+**Action required:** None. No migration or dependency. C08 continues to own saved-output selection and broader manual retry behavior.
+
+- Startup interrupts previous-boot execution before creating the application, reconciles pending applies before attaching live transport, then opens orchestration and listens.
+- An already-published candidate finalizes operation/review/task/epoch/event metadata atomically. An unchanged expected main retains pending owner/freshness checks; an unrelated main records ambiguity and blocks document writes.
+- Recovery errors prevent listening and close initialized resources. Snapshot and Git checkpoint restoration remains on demand; no workflow or model call is replayed.
+- Run settlement rejects an active run belonging to another boot or superseded task pointer. Completed artifacts, usage, and terminal attempts remain retained.
+- Real-Git integration waits were increased after Windows runs exceeded existing limits; behavioral assertions and production deadlines are unchanged.
+
+**Verified:** Workspace build and whitespace checks passed. All 23 backend test files were covered across batches, including 64 focused apply/runtime/run checks and isolated reruns of seven timing-affected cases; all cases passed. All 38 frontend tests passed. Long combined runs were stopped after losing progress, then completed in smaller batches.
+
 ## C06 — Explicit Start and captured context
 **Implemented:** 2026-09-12 · working tree · Role C
 **Affects:** Roles A, B, C, and D

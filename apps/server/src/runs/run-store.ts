@@ -122,6 +122,7 @@ export class PgRunStore {
         .forUpdate()
         .executeTakeFirstOrThrow();
       if (!isActiveRun(locked.status)) return;
+      if (locked.boot_id !== this.deps.bootId || task.active_run_id !== runId) throw this.staleRunError(runId);
 
       const now = new Date();
       await trx

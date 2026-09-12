@@ -20,6 +20,7 @@ import { WorkerExecutor } from '../workers/executor.js';
 import { LocalReviewService } from '../reviews/service.js';
 import { registerReviewRoutes } from '../reviews/routes.js';
 import { ApiError } from '@app/contracts';
+import { PgRunStore } from '../runs/run-store.js';
 
 export interface LiveDocumentAttachment {
   close(): Promise<void>;
@@ -79,6 +80,7 @@ export async function startRuntime(options: RuntimeOptions) {
     db = (options.createDatabase ?? createDb)(config.DATABASE_URL);
     // Do not report healthy until the configured database is reachable.
     await db.pool.query('select 1');
+    const interrupted = await new PgRunStore({ db: db.db, bootId: config.bootId }).markInterruptedFromPreviousBoots();
     const drafts = new PgDraftStore({ db: db.db });
     const liveDeps = { drafts, git,
       onError: (fields: { draftFileId: string; code: 'DRAFT_NOT_SAVED' }) =>
@@ -117,11 +119,13 @@ export async function startRuntime(options: RuntimeOptions) {
     const reviews = new LocalReviewService({ db: db.db, git, collaboration, bootId: config.bootId });
     collaboration.onAcceptedChange = (taskId, revisionMark) => reviews.invalidate({ taskId, reason: revisionMark });
     await registerReviewRoutes(app, reviews);
+    const applies = await reviews.reconcilePreviousApplies();
+    const recovery = { interrupted, applies };
+    app.log.info({ recovery }, 'startup recovery complete');
     live = options.attachLiveDocuments
       ? await options.attachLiveDocuments(app.server)
       : attachLiveDocuments(app.server, liveDeps, collaboration);
-    // D03 snapshot loads remain on demand. Later recovery tickets reconcile
-    // previous boots and pending applies here, before accepting task actions.
+    // Persisted documents and Git worktree projections restore on demand.
     if (!config.GEMINI_API_KEY?.trim()) {
       // Everything except agent execution still works; say so once, at boot,
       // rather than only per Start in a task event nobody is watching yet.
@@ -129,7 +133,7 @@ export async function startRuntime(options: RuntimeOptions) {
     }
     orchestration.open();
     await app.listen(options.listen ?? { host: '0.0.0.0', port: config.PORT });
-    return { app, git, lifecycle, collaboration, orchestration, reviews, close };
+    return { app, git, lifecycle, collaboration, orchestration, reviews, recovery, close };
   } catch (error) {
     await close().catch(() => undefined);
     throw error instanceof GitRuntimeError ? error : new GitRuntimeError('STARTUP_FAILED');

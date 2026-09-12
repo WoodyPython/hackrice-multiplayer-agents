@@ -1,6 +1,14 @@
 # Git files and checkpoints
 
-**Reflects:** D07, C05 guard integration, C06 start snapshot · **Owner:** Role D
+**Reflects:** D08, D07, C05 guard integration, C06 start snapshot · **Owner:** Role D
+
+## Startup recovery (D08)
+
+`startRuntime` interrupts previous-boot execution before building the application and calls `LocalReviewService.reconcilePreviousApplies()` before attaching live transport or opening orchestration. Its returned `recovery` contains interruption counts and apply counts (`applied`, `pending`, `ambiguous`). These are internal diagnostics; public API shapes are unchanged.
+
+Exact candidate equality with main finalizes publication metadata and closes epochs using the same transaction as owner Apply, without moving Git. Exact expected-main equality leaves the operation pending for explicit owner-authenticated Apply with normal freshness checks. Any other main records `ambiguous`/`RUN_INTERRUPTED` and leaves Git untouched. Pending/ambiguous tasks retain the document-write guard. Unrelated tasks remain available. Storage failures abort startup and clean up resources; retry startup after resolving the storage failure.
+
+Yjs snapshots restore saved text and revision on demand; Git checkpoints and worktree repair remain authoritative. Recovery does not replay execution, reset token budgets, or promise recovery of unacknowledged edits. C08 owns saved-output selection for explicit new attempts.
 
 ## Owner Apply and stale reviews (D07)
 
@@ -46,8 +54,8 @@ one still at A repeats all owner/freshness checks. A different head becomes
 ambiguous and returns `RUN_INTERRUPTED`. Failed/ambiguous records are not reused
 to publish new candidates. A database failure after Git leaves the operation
 pending and rooms closed. Pending/ambiguous tasks reject live joins, updates, and
-captures until reconciled. D08 owns startup reconciliation and broader task-action
-recovery; this ticket adds no workflow replay.
+captures until reconciled. D08 supplies startup reconciliation as described above;
+no workflow replay is performed.
 
 `LocalGitService.applyExpected` is backend-only and returns
 `{ applied, currentMainSha }`; it validates commits and compares the old main ref.

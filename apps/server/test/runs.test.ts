@@ -314,6 +314,15 @@ describe('run records', () => {
 });
 
 describe('startup reconciliation', () => {
+  it('refuses late finalization of a live run owned by another boot', async () => {
+    const taskId = await makeTask();
+    const runId = await makeRun(taskId);
+    const foreign = new PgRunStore({ db: t.handle.db, bootId: randomUUID() });
+    await expect(foreign.settle(runId, 'completed', undefined, 'ready_for_review')).rejects.toMatchObject({ code: 'RUN_INTERRUPTED' });
+    expect((await runs.read(runId))!.status).toBe('working');
+    expect((await t.handle.db.selectFrom('tasks').select('active_run_id').where('id', '=', taskId).executeTakeFirst())!.active_run_id).toBe(runId);
+  });
+
   it('marks work from a previous boot interrupted and frees the task', async () => {
     // Section 14.4 step 2.
     const taskId = await makeTask();

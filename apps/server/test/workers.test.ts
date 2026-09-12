@@ -128,7 +128,7 @@ describe('worker tools and immutable references', () => {
   });
 });
 
-describe('real Git checkpoints and execution guards', () => {
+describe('real Git checkpoints and execution guards', { timeout: 120_000 }, () => {
   it('atomically checkpoints replacements/creation/deletion, stores SHA and verifies completion artifacts', async () => {
     const f = await fixture('writer', true); const s = await session(f);
     const original = await s.invoke('read_file', { path, source: 'worker' });

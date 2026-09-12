@@ -1,5 +1,9 @@
 # Pitfalls
 
+## Real Git integration tests can exceed short waits on Windows
+
+During D08 verification, existing review, capture, worker, and Start cases exceeded their 20/30/60-second waits. The first-join capture test also used the one-second default synchronization wait while its resumed Git read was still running. Their test-only waits now allow slower Git operations; the first-join wait matches the existing ten-second connection helper. Production deadlines and test assertions are unchanged.
+
 ## Typing can invalidate a review before a candidate exists
 
 **D07.** B07's invalidation includes `building`, but the original

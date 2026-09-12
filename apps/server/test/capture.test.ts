@@ -132,7 +132,7 @@ function holdCheckpoint(fail = false) {
   return { entered, finish, spy };
 }
 
-describe('D04 capture', () => {
+describe('D04 capture', { timeout: 120_000 }, () => {
   it('flushes accepted edits and binds exact Git text, revisions, digest and durable event', async () => {
     const main = (await git.initialize(id.workspaceId)).mainSha;
     const a = await connect(), b = await connect();
@@ -313,7 +313,7 @@ describe('D04 capture', () => {
     const a = client(); await reading.promise;
     const result = await capture();
     resume.resolve();
-    await vi.waitFor(() => expect(a.provider.synced).toBe(true));
+    await vi.waitFor(() => expect(a.provider.synced).toBe(true), { timeout: 10_000 });
     expect(a.text.toString()).toBe('seed once');
     expect(await textAt(result.checkpointSha)).toBe('seed once');
   });
