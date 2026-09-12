@@ -47,8 +47,9 @@ export type DraftCapture = z.infer<typeof draftCaptureSchema>;
 
 /**
  * Design section 12.3, `TextChange`. A worker's proposed replacement.
+ * At the Git boundary expectedHash is a lowercase Git blob SHA-1 (40 hex).
  * `expectedHash` null means "this file must not already exist"; `newText` null
- * means deletion.
+ * means deletion and requires a non-null expected hash.
  */
 export const textChangeSchema = z.object({
   path: repoPathSchema,

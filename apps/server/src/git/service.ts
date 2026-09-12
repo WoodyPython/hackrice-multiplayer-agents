@@ -1,8 +1,27 @@
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { shaSchema, type GitService } from '@app/contracts';
+import {
+  ApiError, applyWorkerChangesRequestSchema, applyWorkerChangesResultSchema,
+  createDraftRequestSchema, createResultRequestSchema, createWorkerRequestSchema,
+  gitBranchResultSchema, gitCheckpointRequestSchema, gitCheckpointResultSchema,
+  gitReadTextRequestSchema, gitReadTextResultSchema, gitWorktreeResultSchema,
+  shaSchema, type GitService,
+} from '@app/contracts';
 import { GitRuntimeError, runGit, type GitRunner } from './command.js';
 import { canonicalWorkspaceId, WorkspaceOperationLock } from './lock.js';
+import { filePath, invalidPath, pathSet, portablePaths, textBytes } from './files.js';
+import { ManagedWorktrees } from './worktrees.js';
+
+function parse<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown): T {
+  const result = schema.safeParse(value);
+  if (!result.success) throw new ApiError('VALIDATION_FAILED', 'Invalid Git operation request.');
+  return result.data;
+}
+
+function uniquePaths(paths: string[]): void {
+  if (new Set(paths).size !== paths.length) throw new ApiError('VALIDATION_FAILED', 'A batch contains duplicate paths.');
+  portablePaths(paths);
+}
 
 export interface Repository {
   /** Backend-only; never serialize into an API response or model context. */
@@ -16,8 +35,9 @@ async function directory(path: string): Promise<void> {
   if (info.isSymbolicLink() || !info.isDirectory()) throw new GitRuntimeError('INVALID_DIRECTORY');
 }
 
-/** Partial GitService implementation; D02 and subsequent tickets add its other methods. */
-export class LocalGitService implements Pick<GitService, 'initialize'> {
+/** D01/D02 GitService subset; integration/review/apply belong to later tickets. */
+export class LocalGitService implements Pick<GitService,
+  'initialize' | 'createDraft' | 'createWorker' | 'createResult' | 'checkpoint' | 'readText' | 'applyWorkerChanges'> {
   private readonly root: string;
   private preparation?: Promise<void>;
 
@@ -59,6 +79,75 @@ export class LocalGitService implements Pick<GitService, 'initialize'> {
   async initialize(workspaceId: string): Promise<{ mainSha: string }> {
     const { mainSha } = await this.ensureRepository(workspaceId);
     return { mainSha };
+  }
+
+  private async files<T>(workspaceId: string, operation: (files: ManagedWorktrees, repo: Repository) => Promise<T>): Promise<T> {
+    return this.withRepository(workspaceId, async (repo) => {
+      try {
+        return await operation(new ManagedWorktrees(this.root, workspaceId.toLowerCase(), repo.repositoryPath, this.git), repo);
+      } catch (error) {
+        if (error instanceof ApiError || error instanceof GitRuntimeError) throw error;
+        throw new GitRuntimeError('FILE_OPERATION_FAILED');
+      }
+    });
+  }
+
+  async createDraft(input: Parameters<GitService['createDraft']>[0]) {
+    const value = parse(createDraftRequestSchema, input);
+    return this.files(value.workspaceId, async (files, repo) => gitBranchResultSchema.parse(
+      await files.ensure('human', value.taskId.toLowerCase(), repo.mainSha, true),
+    ));
+  }
+
+  async createWorker(input: Parameters<GitService['createWorker']>[0]) {
+    const value = parse(createWorkerRequestSchema, input);
+    return this.files(value.workspaceId, async (files) => gitWorktreeResultSchema.parse(
+      await files.ensure('agents', value.agentInstanceId.toLowerCase(), value.baseSha, true),
+    ));
+  }
+
+  async createResult(input: Parameters<GitService['createResult']>[0]) {
+    const value = parse(createResultRequestSchema, input);
+    return this.files(value.workspaceId, async (files) => gitWorktreeResultSchema.parse(
+      await files.ensure('results', value.runId.toLowerCase(), value.baseSha, true),
+    ));
+  }
+
+  async readText(input: Parameters<GitService['readText']>[0]) {
+    const value = parse(gitReadTextRequestSchema, input);
+    const path = filePath(value.path);
+    const allowed = pathSet(value.allowedPaths);
+    portablePaths(allowed);
+    if (!allowed.has(path)) invalidPath();
+    return this.files(value.workspaceId, async (files) => gitReadTextResultSchema.parse(await files.read(value.target, path)));
+  }
+
+  async checkpoint(input: Parameters<GitService['checkpoint']>[0]) {
+    const value = parse(gitCheckpointRequestSchema, input);
+    const batch = value.files.map(({ path, text }) => { textBytes(text); return { path: filePath(path), text }; });
+    uniquePaths(batch.map(({ path }) => path));
+    return this.files(value.workspaceId, async (files, repo) => gitCheckpointResultSchema.parse(
+      await files.checkpoint(value.taskId.toLowerCase(), repo.mainSha, batch),
+    ));
+  }
+
+  async applyWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0]) {
+    const value = parse(applyWorkerChangesRequestSchema, input);
+    const allowed = pathSet(value.allowedWritePaths);
+    portablePaths(allowed);
+    const changes = value.changes.map((change) => {
+      const path = filePath(change.path);
+      if (!allowed.has(path)) invalidPath();
+      if (change.newText === null && change.expectedHash === null) {
+        throw new ApiError('VALIDATION_FAILED', 'Deletion requires an existing file hash.');
+      }
+      if (change.newText !== null) textBytes(change.newText);
+      return { ...change, path };
+    });
+    uniquePaths(changes.map(({ path }) => path));
+    return this.files(value.workspaceId, async (files) => applyWorkerChangesResultSchema.parse(
+      await files.apply(value.agentInstanceId.toLowerCase(), changes),
+    ));
   }
 
   async ensureRepository(workspaceId: string): Promise<Repository> {

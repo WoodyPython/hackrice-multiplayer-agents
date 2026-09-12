@@ -1,11 +1,15 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** B05 · **Owner:** Role B
+**Reflects:** B05, D02 · **Owner:** Role B (data), Role D (Git handoff)
 
 D01 already integrates correctly: `GitWorkspaceLifecycleHook` honours the
 fire-and-forget contract, `ensureRepository` provides the self-healing path, and
 `recovery/runtime.ts` wires the application factory as design §15.1 specifies.
 What follows is for D02 onward.
+
+D02's implemented Git surface and the D03/D04 checkpoint handoff are documented
+in [Git files and checkpoints](git.md), reflecting D02. The B05 persistence
+surface below remains unchanged.
 
 ---
 

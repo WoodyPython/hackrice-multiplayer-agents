@@ -7,6 +7,32 @@ last pull and know in one line whether any of them need anything from you.
 
 ---
 
+## D02 — Draft/worker branches and safe file API
+**Implemented:** 2026-09-12 · working tree on main (commit pending) · Role D
+**Affects:** Roles C and D
+**Action required:** Rebuild `@app/contracts` (`npm run build`) and read
+[`interfaces/git.md`](interfaces/git.md) before wiring C04, D03/D04 or D05.
+No migration or new dependency is required by D02.
+
+- Persistent human, worker and result branches/worktrees with immutable base
+  refs, restart reuse and repair of missing worktrees.
+- Additive `createResult`, `readText`, and `applyWorkerChanges` contracts.
+  Exact path scopes and Git blob SHA-1 expected hashes guard worker batches.
+- Whole-batch validation and one checkpoint commit through a temporary index
+  and guarded ref update. Human checkpoints preserve omitted files.
+- Portable path, UTF-8, byte-limit and physical filesystem validation. Worker
+  content stays inert and separate from human drafts, result branches and main.
+- Recovery preserves a committed checkpoint if worktree refresh fails. Unknown
+  disk edits are rejected and preserved. C02/C04 still enforce agent lifetime
+  and supply authoritative scopes; no new HTTP routes are registered.
+
+Verified: `npm run build`, `git diff --check`, and the complete `npm test` suite:
+273 tests passed, including all 67 D01/D02 Git tests. The standalone Git runner
+also passed before the final staged-edit regression was added; the final full
+suite includes that regression.
+
+---
+
 ## C01 — Gemini adapter and backend model routing
 **Landed:** 2026-09-12 · `b1be712` · Role C
 **Affects:** Role C only, for now

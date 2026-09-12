@@ -1108,7 +1108,7 @@ Validate external inputs and model outputs with Zod. TypeScript types alone do n
 | TaskService | post, revise, start, answer, cancel, retry |
 | MaterialService | upload, link, readSelected |
 | CollaborationService | openRoom, persist, capture, isCurrent, closeEpoch |
-| GitService | initialize, createDraft, createWorker, checkpoint, integrate, buildReview, applyExpected |
+| GitService | initialize, createDraft, createWorker, createResult, readText, checkpoint, applyWorkerChanges, integrate, buildReview, applyExpected |
 | AgentService | plan, dispatchReady, execute, recordUsage, enforceDeadline |
 | ReviewService | prepare, resolve, invalidate, apply |
 | EventService | append, broadcastHint |
@@ -1160,6 +1160,15 @@ The server rejects:
 - Any write from an expired, canceled, or superseded instance.
 
 Batch validation occurs before applying edits. Keep the previous checkpoint until a full accepted batch is committed.
+
+The D02 internal file API uses Git blob SHA-1 values for expected file hashes.
+A null expected hash requires absence; deletion requires the existing non-null
+hash. Each accepted worker batch is a checkpoint. The trusted C02/C04 caller
+binds the instance, validates its execution state and supplies exact path scopes;
+these are never model-controlled arguments. Human checkpoint input upserts the
+supplied paths together and preserves omitted paths. Its existing contract has
+no deletion marker. See [the implemented Git interface](docs/interfaces/git.md)
+for the backend-only signatures and projection-failure recovery behavior.
 
 ### 13.2 Generated code remains inert
 

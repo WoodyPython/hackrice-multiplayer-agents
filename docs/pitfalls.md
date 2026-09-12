@@ -9,6 +9,16 @@ and would cost the next person the same.
 
 ---
 
+## A corruption fixture could not overwrite Git's hidden file on Windows
+
+**D02.** A test intentionally rewired one worktree's `.git` pointer to another.
+Node's default `writeFile` open mode failed with `EPERM` because Git marks this
+file hidden on Windows. The service had not run yet; this was fixture setup.
+Replacing the same-length pointer with `r+` lets the fixture reach the intended
+reciprocal-registration check. The runtime never rewrites that pointer.
+
+---
+
 ## A constraint-name match that never matched
 
 **B05, `draft_files`.** Find-or-create caught the unique violation by name and

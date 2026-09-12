@@ -1,6 +1,10 @@
 # For Role C — orchestration against the data layer
 
-**Reflects:** B05 · **Owner:** Role B
+**Reflects:** B05, D02 · **Owner:** Role B (data), Role D (Git handoff)
+
+D02 adds [Git files and checkpoints](git.md) for C04/C05: exact read/write scopes,
+Git blob hashes, one checkpoint per accepted batch, and result worktree creation.
+Bind the instance and validate its current execution state before calling it.
 
 ---
 

@@ -13,6 +13,7 @@ import type { Review, ReviewSource } from './review.js';
 import type { PostedTask, TaskDetail } from './task.js';
 import type { Workspace } from './workspace.js';
 import type { TaskEventType } from './events.js';
+import type { GitReadTarget } from './git.js';
 
 /**
  * Design section 12.4. These are the backend seams between roles. An owner
@@ -153,6 +154,29 @@ export interface CollaborationService {
 
 export interface GitService {
   initialize(workspaceId: string): Promise<{ mainSha: string }>;
+  createResult(input: {
+    workspaceId: string;
+    runId: string;
+    baseSha: string;
+  }): Promise<{ branch: string; worktreePath: string }>;
+  /** allowedPaths is supplied by trusted context selection, never model output. */
+  readText(input: {
+    workspaceId: string;
+    target: GitReadTarget;
+    path: string;
+    allowedPaths: string[];
+  }): Promise<{ path: string; text: string | null; hash: string | null }>;
+  /**
+   * C02/C04 bind the instance, check its current lifetime/state, and supply its
+   * authoritative exact write paths. This Git layer does not query agent state.
+   * Each accepted batch is a checkpoint; expected hashes are Git blob SHA-1s.
+   */
+  applyWorkerChanges(input: {
+    workspaceId: string;
+    agentInstanceId: string;
+    allowedWritePaths: string[];
+    changes: TextChange[];
+  }): Promise<{ commitSha: string; changedPaths: string[] }>;
   createDraft(input: { workspaceId: string; taskId: string }): Promise<{ branch: string }>;
   createWorker(input: {
     workspaceId: string;

@@ -23,3 +23,4 @@ export * from './run.js';
 export * from './review.js';
 export * from './events.js';
 export * from './services.js';
+export * from './git.js';
