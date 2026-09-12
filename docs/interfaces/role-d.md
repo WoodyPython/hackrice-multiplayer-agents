@@ -1,6 +1,6 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** B05, C02 · **Owner:** Role B (data), Role C (execution guard)
+**Reflects:** B07, C02 · **Owner:** Role B (data), Role C (execution guard)
 
 ## C02 guard for agent effects
 
@@ -93,15 +93,51 @@ that is a design conversation, not a route to add.
 
 ---
 
-## What B07 will add for you
+## Reviews and apply
 
-D05 and D06 depend on it: run snapshots, agent instances and dependencies,
-review source tuples, and the single pending apply record with its
-reconciliation. The tables and constraints exist from B01; the transactional
-operations do not yet.
+`PgReviewStore` holds the records; you build candidates and move the ref.
 
-The review source tuple is `(taskVersion, guidanceVersion, mainSha, humanSha,
-resultSha, documentRevisions, contextHash)` — `ReviewSource` in
-`@app/contracts`. Apply re-validates every element, and
-`CollaborationService.isCurrent` must check in-memory dirty state, not only the
-persisted row (design §7.6).
+`create({source})` records the exact tuple a candidate was built from —
+`ReviewSource` in `@app/contracts`: `(taskVersion, guidanceVersion, mainSha,
+humanSha, resultSha, documentRevisions, contextHash)`. It starts in `building`,
+because the schema permits a null candidate only in that state, so a review can
+never reach an owner without one. `markReady(id, candidateSha)` attaches it.
+
+**Call `invalidateForTask(taskId, reason)` on every accepted edit**, not on
+every persisted one. Design §7.6: a new edit marks a review stale immediately,
+before the debounce has written anything. Applied reviews are deliberately
+untouched — a record of what was published must not be rewritten by later
+typing.
+
+**The apply sequence is three steps, and the order is the whole point:**
+
+1. `claimForApply(reviewId, candidateSha)` — guarded on `status = ready` *and*
+   on the candidate matching, so a browser looking at an earlier candidate
+   cannot apply a refreshed one it never saw, and two simultaneous applies
+   resolve to one winner.
+2. `begin({...})` writes the pending record **before** the ref moves. Git and
+   Postgres do not share a transaction (§10.5), so this row is the only evidence
+   an apply was in flight if the process dies mid-way. One row per review,
+   enforced; a second call returns the existing one rather than creating a rival
+   record, because two records would make reconciliation ambiguous — exactly the
+   state §10.5 says to stop on.
+3. `settle(reviewId, status)` after the ref update, then `markApplied`.
+
+**On startup**, `pendingFromPreviousBoots(bootId)` returns operations stranded
+by a dead process. Reconcile each against main per §10.5: the candidate already
+on main means it succeeded, main still at the expected value means it never ran,
+anything else is ambiguous and stops.
+
+## Startup reconciliation
+
+`PgRunStore.markInterruptedFromPreviousBoots()` fills the placeholder in
+`recovery/runtime.ts`. Call it **before** the server accepts task actions, per
+§14.4 step 2. It marks stale runs and instances interrupted, clears the affected
+tasks' active-run pointers, and resolves their open questions.
+
+Clearing the pointer is not cosmetic: the unique active-run rule would otherwise
+leave every interrupted task permanently unstartable after a restart, and a task
+would sit in `needs_input` with nothing left to answer.
+
+`CollaborationService.isCurrent` must still check in-memory dirty state, not
+only the persisted row (§7.6).

@@ -24,6 +24,26 @@ last pull and know in one line whether any of them need anything from you.
 
 ---
 
+## B07 — Review and run metadata operations
+**Landed:** 2026-09-12 · Role B
+**Affects:** Roles C and D
+**Action required:** Everyone — run `npm run db:migrate` (migration `0006` adds a trigger). Role C — **C02 is unblocked**; read [`interfaces/role-c.md`](interfaces/role-c.md). Role D — **D05 and D06 are unblocked**, and `markInterruptedFromPreviousBoots()` fills the placeholder in `recovery/runtime.ts`.
+
+- `PgBudgetLedger`: atomic reserve-and-reconcile against `task_agent_budgets`.
+  The check and the reservation are one statement, so concurrent calls cannot
+  collectively overrun the budget. A failed call **charges** its reservation
+  rather than refunding it, per §9.3.
+- `PgRunStore`: plan materialisation with a cycle re-check, derived deadlines
+  that callers cannot extend, ready-set computation for parallel dispatch, and
+  startup reconciliation.
+- `PgReviewStore`: review source tuples, staleness invalidation, and the single
+  pending apply record with its cross-boot reconciliation.
+- Migration `0006` adds a database trigger enforcing §11.2's "a terminal or
+  expired instance cannot write". Late *usage* is still recordable; late results
+  and outcome changes are not.
+
+---
+
 ## C01 — Gemini adapter and backend model routing
 **Landed:** 2026-09-12 · `b1be712` · Role C
 **Affects:** Role C only, for now
