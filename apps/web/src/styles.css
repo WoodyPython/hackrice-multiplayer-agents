@@ -957,3 +957,117 @@ textarea::placeholder {
     transition: none;
   }
 }
+.create-workspace {
+  max-width: 900px;
+  justify-content: flex-start;
+}
+.create-workspace .brand {
+  margin-bottom: 35px;
+}
+.create-workspace h1 {
+  font-size: 50px;
+}
+.create-workspace .requirement-form {
+  width: 100%;
+  max-width: 600px;
+}
+.create-workspace .requirement-form p {
+  font-size: 13px;
+  margin: 16px 0;
+}
+.create-workspace .requirement-form small {
+  line-height: 1.7;
+}
+.requirement-form > .primary {
+  align-self: flex-start;
+  margin-top: 24px;
+}
+.guest-control {
+  position: relative;
+  color: #34453d;
+}
+.guest-control > button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.guest-control > small {
+  display: block;
+  max-width: 280px;
+}
+.guest-name-form {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  top: 0;
+  width: 300px;
+  padding: 18px;
+  background: white;
+  border: 1px solid #dce3dd;
+  border-radius: 10px;
+  box-shadow: 0 12px 25px #26382a18;
+}
+.guest-name-form label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.guest-name-form input {
+  width: 100%;
+}
+.guest-name-form .actions {
+  margin-top: 12px;
+}
+.guest-name-form small {
+  display: block;
+}
+.share-workspace {
+  max-width: 340px;
+}
+.share-workspace small,
+.share-workspace label {
+  display: block;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.share-workspace input {
+  width: 100%;
+  margin-top: 5px;
+}
+.storage-notice {
+  border: 1px solid #d9b57f;
+  padding: 18px;
+  background: #fff8eb;
+  border-radius: 9px;
+  margin-bottom: 24px;
+}
+.storage-notice p {
+  color: #775c34;
+  margin-bottom: 12px;
+}
+.live-topbar {
+  height: auto;
+  min-height: 73px;
+  gap: 16px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+@media (max-width: 650px) {
+  .live-topbar {
+    display: flex;
+    padding: 15px 18px;
+    flex-wrap: wrap;
+  }
+  .guest-name-form {
+    position: relative;
+    max-width: calc(100vw - 36px);
+  }
+  .create-workspace h1 {
+    font-size: 42px;
+  }
+  .create-workspace .requirement-form {
+    padding: 20px;
+  }
+  .share-workspace {
+    width: 100%;
+  }
+}

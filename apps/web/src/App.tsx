@@ -1,73 +1,138 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   Link,
   NavLink,
   Route,
   Routes,
   useLocation,
-  useNavigate,
   useParams,
-  useSearchParams,
 } from "react-router-dom";
-import { type TaskDetail as Task } from "@app/contracts";
+import { ApiError, uuidSchema, type Workspace } from "@app/contracts";
+import { BrowserContext, useBrowser } from "./browser-context";
+import { BrowserSession } from "./session";
 import {
-  createFixtureTask,
-  initialTasks,
-  summarize,
-  workspace,
-} from "./fixtures";
+  contributionLink,
+  WorkspaceApi,
+  workspaceError,
+} from "./workspace-api";
+import { DemoApp } from "./DemoApp";
 import { EmptyState } from "./components/EmptyState";
-import { RequirementForm } from "./components/RequirementForm";
-import { TaskBoard } from "./pages/TaskBoard";
-import { TaskDetail } from "./pages/TaskDetail";
+import { GuestNameControl } from "./components/GuestNameControl";
+import { CreateWorkspace } from "./pages/CreateWorkspace";
+import { WorkspaceSettings } from "./pages/WorkspaceSettings";
 
-function TaskRoute({ tasks, base }: { tasks: Task[]; base: string }) {
-  const { taskId } = useParams();
-  const task = tasks.find((item) => item.id === taskId);
-  return task ? (
-    <TaskDetail key={task.id} task={task} base={base} />
-  ) : (
-    <EmptyState
-      title="Task not found"
-      action={
-        <Link className="button" to={base}>
-          Back to tasks
-        </Link>
-      }
-    >
-      This task isn't available in this workspace. Check the link or return to
-      the board.
-    </EmptyState>
+function ShareWorkspace({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  const [manual, setManual] = useState(false);
+  const link = contributionLink(id);
+  return (
+    <div className="share-workspace">
+      <button
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(link);
+            setCopied(true);
+            setManual(false);
+          } catch {
+            setManual(true);
+            setCopied(false);
+          }
+        }}
+      >
+        Copy workspace link
+      </button>
+      {copied && (
+        <small role="status">Link copied. Anyone with it can contribute.</small>
+      )}
+      {manual && (
+        <label>
+          Copy this contribution link
+          <input
+            readOnly
+            value={link}
+            onFocus={(event) => event.target.select()}
+          />
+        </label>
+      )}
+    </div>
   );
 }
 
-function WorkspaceShell() {
-  const { workspaceId } = useParams();
-  const [tasks, setTasks] = useState(initialTasks);
-  const [search, setSearch] = useSearchParams();
-  const navigate = useNavigate();
+function LiveWorkspace({ id }: { id: string }) {
+  const { api, session } = useBrowser();
+  const revision = useSyncExternalStore(session.subscribe, session.getRevision);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [failure, setFailure] = useState<unknown>(null);
+  const [retry, setRetry] = useState(0);
+  const [loading, setLoading] = useState(true);
   const location = useLocation();
-  const base = `/w/${workspace.id}`;
-  const view = search.get("view") ?? "sample";
+  const base = `/w/${id}`;
   useEffect(() => {
-    document.title = `${workspace.name} — Common`;
+    const controller = new AbortController();
+    setLoading(true);
+    setFailure(null);
+    api
+      .read(id, controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) setWorkspace(value);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setFailure(error);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [api, id, revision, retry]);
+  useEffect(() => {
+    document.title = workspace
+      ? `${workspace.name} — Common`
+      : "Workspace — Common";
+  }, [workspace?.name]);
+  useEffect(() => {
     document.getElementById("main")?.focus();
   }, [location.pathname]);
-  if (workspaceId !== workspace.id)
+  if (!workspace && loading)
+    return (
+      <main aria-busy="true">
+        <p role="status">Opening workspace…</p>
+        <div className="skeleton heading-skeleton" />
+      </main>
+    );
+  if (
+    !workspace ||
+    (failure instanceof ApiError && failure.code === "WORKSPACE_NOT_FOUND")
+  )
     return (
       <main>
         <EmptyState
-          title="Workspace not found"
+          title={
+            failure instanceof ApiError &&
+            failure.code === "WORKSPACE_NOT_FOUND"
+              ? "Workspace not found"
+              : "Workspace unavailable"
+          }
           action={
-            <Link className="button" to="/">
-              Back home
-            </Link>
+            <div className="actions">
+              <button onClick={() => setRetry((value) => value + 1)}>
+                Try again
+              </button>
+              <Link className="button" to="/">
+                Back home
+              </Link>
+            </div>
           }
         >
-          Check the workspace link or open the sample workspace.
+          {workspaceError(failure)}
         </EmptyState>
       </main>
     );
+  // Server ownership is authoritative; stale reads never leave an owner form enabled.
+  const visibleWorkspace = {
+    ...workspace,
+    isOwner:
+      workspace.isOwner && !loading && !failure && !!session.getOwnerKey(id),
+  };
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main">
@@ -75,14 +140,11 @@ function WorkspaceShell() {
       </a>
       <aside className="sidebar">
         <Link to="/" className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            c
-          </span>
-          common<span className="brand-period">.</span>
+          <span className="brand-mark">c</span>common.
         </Link>
         <details className="workspace-menu">
           <summary>
-            <span className="workspace-icon">L</span>
+            <span className="workspace-icon">{workspace.name[0]}</span>
             <span>
               {workspace.name}
               <small>Shared workspace</small>
@@ -94,266 +156,201 @@ function WorkspaceShell() {
         <span className="nav-caption">Workspace</span>
         <nav aria-label="Workspace">
           <NavLink to={base} end>
-            <span aria-hidden="true">▦</span>Tasks
-            <span className="nav-count">{tasks.length}</span>
+            ▦ Tasks
           </NavLink>
-          <NavLink to={`${base}/files`}>
-            <span aria-hidden="true">▤</span>Files
-          </NavLink>
-          <NavLink to={`${base}/history`}>
-            <span aria-hidden="true">◷</span>History
-          </NavLink>
+          <NavLink to={`${base}/files`}>▤ Files</NavLink>
+          <NavLink to={`${base}/history`}>◷ History</NavLink>
         </nav>
         <div className="sidebar-bottom">
           <div className="collaboration-note">
-            <span aria-hidden="true">✳</span>
             <p>
               A shared space.
               <br />A little more possible.
             </p>
           </div>
-          <span className="guest-label">
-            <span className="avatar">M</span>Guest Maple
-            <small>Guest contributor</small>
-          </span>
         </div>
       </aside>
       <div className="main-shell">
-        <div className="topbar">
+        <header className="topbar live-topbar">
           <span>
-            Workspace <span className="breadcrumb-slash">/</span>{" "}
-            {workspace.name}
+            {workspace.name} ·{" "}
+            {visibleWorkspace.isOwner ? "Owner" : "Contributor"}
           </span>
-          <span className="preview-badge">
-            <span />
-            Sample workspace
-          </span>
-        </div>
-        <div className="preview-strip">
-          <span>Interactive preview · Changes last until you reload.</span>
-          <label>
-            Preview state{" "}
-            <select
-              aria-label="Preview state"
-              value={view}
-              onChange={(event) =>
-                setSearch(
-                  event.target.value === "sample"
-                    ? {}
-                    : { view: event.target.value },
-                )
-              }
-            >
-              <option value="sample">Sample data</option>
-              <option value="empty">Empty</option>
-              <option value="loading">Loading</option>
-              <option value="error">Load error</option>
-            </select>
-          </label>
-        </div>
+          <GuestNameControl />
+        </header>
         <main id="main" tabIndex={-1}>
-          {view === "loading" ? (
-            <section aria-busy="true" aria-label="Loading workspace">
-              <p role="status">Loading workspace…</p>
-              <div className="skeleton heading-skeleton" />
-              <div className="skeleton-grid">
-                {[0, 1, 2, 3, 4].map((index) => (
-                  <div className="skeleton" key={index} />
-                ))}
-              </div>
-            </section>
-          ) : view === "error" ? (
-            <EmptyState
-              title="We couldn't load this workspace"
-              action={<button onClick={() => setSearch({})}>Try again</button>}
-            >
-              Your work hasn't been changed. Retry loading the workspace to
-              continue.
-            </EmptyState>
-          ) : (
-            <Routes>
-              <Route
-                index
-                element={
-                  <TaskBoard
-                    tasks={view === "empty" ? [] : tasks.map(summarize)}
-                    base={base}
-                  />
-                }
-              />
-              <Route
-                path="tasks/new"
-                element={
-                  <>
-                    <Link className="back-link" to={base}>
-                      ← All tasks
-                    </Link>
-                    <header className="page-heading">
-                      <div>
-                        <span className="eyebrow">
-                          From an idea to a shared task
-                        </span>
-                        <h1>What shall we work on?</h1>
-                        <p>
-                          Post the brief first. Decide when to start together.
-                        </p>
-                      </div>
-                    </header>
-                    <RequirementForm
-                      onCancel={() => navigate(base)}
-                      onPost={(request) => {
-                        const task = createFixtureTask(request);
-                        setTasks((previous) => [task, ...previous]);
-                        navigate(`${base}/tasks/${task.id}`);
-                      }}
-                    />
-                  </>
-                }
-              />
-              <Route
-                path="tasks/:taskId"
-                element={<TaskRoute tasks={tasks} base={base} />}
-              />
-              <Route
-                path="files"
-                element={
-                  <>
-                    <header className="page-heading">
-                      <div>
-                        <span className="eyebrow">The shared library</span>
-                        <h1>Files</h1>
-                        <p>
-                          Approved work, source material, and drafts in one
-                          place.
-                        </p>
-                      </div>
-                    </header>
-                    <div className="library-grid">
-                      {[
-                        "Approved files",
-                        "Reference materials",
-                        "Active shared drafts",
-                      ].map((title) => (
-                        <section className="panel" key={title}>
-                          <EmptyState title={title}>
-                            File browsing and editing will connect in a later
-                            ticket.
-                          </EmptyState>
-                        </section>
-                      ))}
-                    </div>
-                  </>
-                }
-              />
-              <Route
-                path="history"
-                element={
-                  <>
-                    <header className="page-heading">
-                      <div>
-                        <span className="eyebrow">A record of progress</span>
-                        <h1>History</h1>
-                      </div>
-                    </header>
-                    <EmptyState title="The story starts with your first change">
-                      Applied changes and their associated tasks will appear
-                      here when history is connected.
-                    </EmptyState>
-                  </>
-                }
-              />
-              <Route
-                path="settings"
-                element={
-                  <>
-                    <header className="page-heading">
-                      <div>
-                        <span className="eyebrow">Workspace settings</span>
-                        <h1>{workspace.name}</h1>
-                        <p>{workspace.purpose}</p>
-                      </div>
-                    </header>
-                    <section className="panel requirements">
-                      <h2>Workspace guidance</h2>
-                      <p>{workspace.guidance}</p>
-                      <p className="muted">
-                        Owner controls will be available when workspace creation
-                        is connected.
-                      </p>
-                    </section>
-                  </>
-                }
-              />
-              <Route
-                path="*"
-                element={
-                  <EmptyState
-                    title="Page not found"
-                    action={
-                      <Link className="button" to={base}>
-                        Back to tasks
-                      </Link>
-                    }
-                  >
-                    This page isn't available in the workspace preview.
-                  </EmptyState>
-                }
-              />
-            </Routes>
+          {session.hasUnsavedOwner(id) && (
+            <div className="storage-notice" role="alert">
+              <p>
+                Workspace created, but this browser could not save owner access.
+                Keep this tab open and retry saving before leaving.
+              </p>
+              <button onClick={() => session.retryOwnerSave(id)}>
+                Retry saving owner access
+              </button>
+            </div>
           )}
+          {!!failure && (
+            <div role="alert">
+              <p>{workspaceError(failure)}</p>
+              <button onClick={() => setRetry((value) => value + 1)}>
+                Reload workspace
+              </button>
+            </div>
+          )}
+          <Routes>
+            <Route
+              index
+              element={
+                <>
+                  <header className="page-heading">
+                    <div>
+                      <span className="eyebrow">Your shared workspace</span>
+                      <h1>{workspace.name}</h1>
+                      <p>
+                        {workspace.purpose || "A place to shape work together."}
+                      </p>
+                    </div>
+                    <ShareWorkspace id={id} />
+                  </header>
+                  <div className="board-toolbar">
+                    <h2>Task board</h2>
+                  </div>
+                  <EmptyState title="Your workspace is ready">
+                    Share the link to invite collaborators. Task posting will be
+                    connected in the next task-workflow ticket.
+                  </EmptyState>
+                </>
+              }
+            />
+            <Route
+              path="settings"
+              element={
+                <WorkspaceSettings
+                  workspace={visibleWorkspace}
+                  onChange={setWorkspace}
+                />
+              }
+            />
+            <Route
+              path="files"
+              element={
+                <>
+                  <h1>Files</h1>
+                  <EmptyState title="Your shared library">
+                    Approved files, reference materials, and shared drafts will
+                    appear here when file browsing is connected.
+                  </EmptyState>
+                </>
+              }
+            />
+            <Route
+              path="history"
+              element={
+                <>
+                  <h1>History</h1>
+                  <EmptyState title="A record of progress">
+                    Applied changes will appear here when history is connected.
+                  </EmptyState>
+                </>
+              }
+            />
+            <Route
+              path="tasks/*"
+              element={
+                <EmptyState
+                  title="Task workflow is coming next"
+                  action={
+                    <Link className="button" to={base}>
+                      Back to workspace
+                    </Link>
+                  }
+                >
+                  Task posting and discussion are not yet connected in this
+                  workspace.
+                </EmptyState>
+              }
+            />
+            <Route
+              path="*"
+              element={
+                <EmptyState
+                  title="Page not found"
+                  action={
+                    <Link className="button" to={base}>
+                      Back to workspace
+                    </Link>
+                  }
+                >
+                  Check the address and try again.
+                </EmptyState>
+              }
+            />
+          </Routes>
         </main>
       </div>
     </div>
   );
 }
 
-export function App() {
+function WorkspaceRoute() {
+  const { workspaceId } = useParams();
+  const parsed = uuidSchema.safeParse(workspaceId);
+  return parsed.success ? (
+    <LiveWorkspace
+      key={parsed.data.toLowerCase()}
+      id={parsed.data.toLowerCase()}
+    />
+  ) : (
+    <main>
+      <EmptyState
+        title="Workspace not found"
+        action={
+          <Link className="button" to="/">
+            Back home
+          </Link>
+        }
+      >
+        Check the contribution link.
+      </EmptyState>
+    </main>
+  );
+}
+
+export function App({
+  session: injectedSession,
+  api: injectedApi,
+}: { session?: BrowserSession; api?: WorkspaceApi } = {}) {
+  const [session] = useState(() => injectedSession ?? new BrowserSession());
+  const api = useMemo(
+    () => injectedApi ?? new WorkspaceApi(session),
+    [session, injectedApi],
+  );
+  useEffect(() => session.connect(), [session]);
   return (
-    <Routes>
-      <Route
-        path="/"
-        element={
-          <main className="welcome">
-            <Link className="brand" to="/">
-              <span className="brand-mark">c</span>common.
-            </Link>
-            <span className="eyebrow">A little more possible, together</span>
-            <h1>
-              Make room
-              <br />
-              for good work.
-            </h1>
-            <p>
-              A shared place for your team's ideas, drafts, and the agents that
-              help bring them to life.
-            </p>
-            <Link className="button primary" to={`/w/${workspace.id}`}>
-              Explore the sample workspace →
-            </Link>
-            <small>
-              Workspace creation is coming next. This preview uses sample data.
-            </small>
-          </main>
-        }
-      />
-      <Route path="/w/:workspaceId/*" element={<WorkspaceShell />} />
-      <Route
-        path="*"
-        element={
-          <main>
-            <EmptyState
-              title="Page not found"
-              action={
-                <Link className="button" to="/">
-                  Back home
-                </Link>
-              }
-            >
-              Check the address and try again.
-            </EmptyState>
-          </main>
-        }
-      />
-    </Routes>
+    <BrowserContext.Provider value={{ session, api }}>
+      <Routes>
+        <Route path="/" element={<CreateWorkspace />} />
+        <Route path="/w/:workspaceId/*" element={<WorkspaceRoute />} />
+        <Route path="/demo/*" element={<DemoApp />} />
+        <Route
+          path="*"
+          element={
+            <main>
+              <EmptyState
+                title="Page not found"
+                action={
+                  <Link className="button" to="/">
+                    Back home
+                  </Link>
+                }
+              >
+                Check the address and try again.
+              </EmptyState>
+            </main>
+          }
+        />
+      </Routes>
+    </BrowserContext.Provider>
   );
 }

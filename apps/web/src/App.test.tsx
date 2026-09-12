@@ -16,7 +16,7 @@ import {
 } from "./fixtures";
 import { groupTasks } from "./board";
 
-const base = `/w/${workspace.id}`;
+const base = `/demo/w/${workspace.id}`;
 function open(path = base) {
   return render(
     <MemoryRouter initialEntries={[path]}>

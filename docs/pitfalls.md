@@ -7,6 +7,19 @@ evidence behind them.
 Short on purpose. Add an entry when something costs you more than a few minutes
 and would cost the next person the same.
 
+## A fast response reopened a creation form before navigation finished
+
+**A02, workspace creation.** Clearing the submitting flag in `finally` let a
+double-click submit a second POST after the first response arrived but before
+the route unmounted. Disabling only while a request was in flight did not cover
+that gap. The creation interaction test caught two POSTs for one double-click.
+
+The form now stays locked after success until navigation unmounts it. It unlocks
+only after failure so an explicit retry remains available. The test exercises a
+fast response and double-click, rather than only a deferred request.
+
+---
+
 ## An expiry that rolled back, and opposite lock orders
 
 **C02, question answers.** The answer path updated an expired question and then

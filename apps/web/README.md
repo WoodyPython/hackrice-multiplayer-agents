@@ -1,43 +1,75 @@
-# A01 workspace shell
+﻿# Workspace frontend — A01 / A02
 
-React, TypeScript, and Vite. Install from the **repository root**:
+Install from the **repository root** and run the API and frontend in separate terminals:
 
 ```sh
 npm install
+npm run db:up
+npm run db:migrate
+npm run dev
+# In another terminal, also at the repository root:
 npm run dev --workspace @app/web
 ```
 
-Open the Vite URL (normally http://127.0.0.1:5173) and select **Explore the
-sample workspace**. The root `npm run dev` still starts the server.
+Open http://127.0.0.1:5173. Vite proxies `/api` to the local API on port 3000;
+the preview server uses the same proxy. For another backend port, update the
+frontend proxy target. Production hosting must route `/api` to the Node service
+and serve the SPA for `/w/*`; deployment is owned by Role D.
 
-This is a fixture-backed preview. Posting validates with `postTaskRequestSchema`,
-creates a local `TaskDetail` in `posted` state, and opens Discussion. Reloading
-resets changes. No API requests, agent starts, owner keys, or persistence are
-implemented in A01. Start is shown disabled only for eligible tasks.
+## A02 real workspace flow
 
-All ten `TASK_STATUSES` appear in the five design section 4.3 columns. Canceled
-tasks remain under Needs attention because they support manual retry; they do
-not appear completed. Cards cannot be dragged to change status. Assignment
-summaries are sample presentation copy, not an API field or live progress.
+- `/` creates a workspace with a name and optional purpose.
+- `/w/:workspaceId` opens a contribution link directly, including after reload.
+  No name prompt, invitation acceptance, account, or public workspace directory.
+- The creating browser stores the one-time owner key per workspace. Only
+  workspace metadata reads (to obtain server-confirmed `isOwner`) and owner
+  updates carry `x-owner-key`. No secret enters a link, form body, identity,
+  cursor payload, error text, or log.
+- Copy workspace link builds a clean URL from the current frontend origin and
+  validated ID. Clipboard rejection reveals a selectable link instead.
+- `/w/:workspaceId/settings` edits name, purpose, and guidance for owners.
+  Contributors can read guidance. Missing/rejected keys remove owner controls;
+  settings text remains visible after save failures. Clearing browser storage
+  loses owner access, with no ownership recovery flow.
+- The header name control updates a browser-local contributor label while
+  retaining its random contributor ID. Names are trimmed, nonblank, at most 80
+  characters, and rendered as text. Previous contribution labels stay unchanged.
+- Creation checks storage before contacting the API. If storage fails after
+  creation, the key stays in this tab's memory with an explicit retry-save notice;
+  reloading before saving can lose it. A name can still be used in memory when
+  storage is blocked, with a visible persistence notice.
 
-Routes follow design section 4.1. `/` introduces the sample workspace;
-`/w/:workspaceId`, `/tasks/:taskId`, `/files`, `/history`, and `/settings` render
-the shell. `/w/:workspaceId/tasks/new` is the requirements form. Unknown links
-show a missing-resource page. File/history/settings screens are placeholders
-for later tickets, as are the Discussion/Drafts/Agents/Changes tabs.
+Task posting, discussion, files, history, editor, and review remain later-ticket
+integrations. Real workspaces do not show or submit sample tasks. No agent is
+started by creation or posting in the sample.
 
-Use **Preview state** to inspect sample, empty, loading, and retryable load-error
-states. The query string preserves the selected state across reloads. Mobile
-navigation stacks above content; the five-column board scrolls horizontally.
+## A01 sample
+
+Select **Explore the sample workspace** on `/` to open `/demo/w/:workspaceId`.
+This retains the schema-validated task board, inert local posting, task detail,
+requirements, and empty/loading/error preview controls. Reload resets demo tasks.
+All ten `TASK_STATUSES` map to the five design section 4.3 columns. Canceled
+tasks remain under Needs attention; dragging cannot change status. Demo posting
+uses the current guest label, and later name changes do not rewrite old cards.
+
+## A03 cursor integration
+
+See [the A02 browser interface](../../docs/interfaces/role-a-browser.md) for the
+session hook and `bindGuestAwareness`. It publishes the current label immediately
+and on renames, without reconnecting or changing identity. A03 attaches it to
+the active document's `provider.awareness`; A02 does not create a document room
+or a participant directory.
+
+## Verification
 
 ```sh
 npm run build
 npm run typecheck
 npm test
-# Frontend-only checks, no PostgreSQL required:
 npm test --workspace @app/web
 ```
 
-Tests cover schema-valid fixtures, status placement, filtering, validated
-posting, selected inputs, direct routes, keyboard tabs, navigation, and preview
-state recovery. Shared contracts and backend code remain owned by their roles.
+Frontend tests cover both A01 and A02, including creation double-clicks, owner
+key isolation, storage failures, direct entry, permission loss, settings saves,
+guest persistence, cross-tab names, and awareness updates. Browser visual QA
+still requires a browser-enabled session.

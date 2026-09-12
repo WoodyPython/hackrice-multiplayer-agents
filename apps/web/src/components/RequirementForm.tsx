@@ -5,9 +5,11 @@ import { inputOptions } from "../fixtures";
 export function RequirementForm({
   onPost,
   onCancel,
+  guestLabel = "Guest Maple",
 }: {
   onPost: (request: PostTaskRequest) => void;
   onCancel: () => void;
+  guestLabel?: string;
 }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -23,7 +25,7 @@ export function RequirementForm({
       outcome: data.get("outcome"),
       criteria: lines("criteria"),
       outputPaths: lines("outputPaths"),
-      creatorGuestLabel: "Guest Maple",
+      creatorGuestLabel: guestLabel,
       inputs: data
         .getAll("inputs")
         .map((index) => inputOptions[Number(index)]!.value),
