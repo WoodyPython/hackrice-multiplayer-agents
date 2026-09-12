@@ -14,6 +14,11 @@ add its profile and tests. Model configuration stays out of frontend requests.
 
 ## Calling the interface
 
+For budgeted execution, use [C02's AgentExecution](../agents/README.md).
+`getModel(preset)` exposes the routed model ID and verified minimum/maximum
+combined output allowance so C02 can reserve before calling `generate`.
+The following lower-level example describes the adapter seam itself.
+
 ```ts
 import { createGeminiAdapter, type AgentRequest } from './models/index.js';
 
