@@ -1,5 +1,13 @@
 # Pitfalls
 
+## A temporary merge index still asked for a worktree
+
+**D05.** Git 2.36 has no `merge-tree --write-tree`. The compatible merge path
+uses `read-tree -m` and `merge-file`, but an alternate index alone did not make
+`read-tree -m` work in the bare workspace repository. Adding `-i` explicitly
+disables worktree checks. Conflict detection then uses the temporary index's
+unmerged stages, while text merging works on server-allocated scratch files.
+
 ## A WebSocket error handler erased the useful close code
 
 **D03.** `ws` starts a protocol close with `1009` when a message exceeds

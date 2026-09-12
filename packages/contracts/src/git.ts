@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { agentInstanceIdSchema, runIdSchema, shaSchema, taskIdSchema, workspaceIdSchema } from './ids.js';
+import { agentInstanceIdSchema, repoPathSchema, runIdSchema, shaSchema, taskIdSchema, workspaceIdSchema } from './ids.js';
 import { textChangeSchema } from './draft.js';
 
 /** Backend-only selectors. Never accept refs or filesystem roots from a model. */
@@ -40,3 +40,14 @@ export const applyWorkerChangesRequestSchema = z.object({
   changes: z.array(textChangeSchema.extend({ path: z.string(), expectedHash: shaSchema.nullable() })),
 });
 export const applyWorkerChangesResultSchema = gitCheckpointResultSchema.extend({ changedPaths: z.array(z.string()) });
+
+export const gitIntegrateRequestSchema = z.object({
+  workspaceId: workspaceIdSchema, runId: runIdSchema, agentInstanceId: agentInstanceIdSchema,
+});
+/** Conflicts retain the current result head; only an empty list releases dependents. */
+export const gitIntegrateResultSchema = z.object({
+  resultSha: shaSchema,
+  // Full portable-path validation remains in Git, as for every file operation.
+  conflicts: z.array(repoPathSchema.refine((path) => !path.includes('\\') && /^(documents|code)\//.test(path)))
+    .refine((paths) => paths.every((path, i) => i === 0 || paths[i - 1]! < path)),
+});

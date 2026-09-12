@@ -190,6 +190,114 @@ export class ManagedWorktrees {
     return this.mutate(managed, changes, `Checkpoint worker ${agentInstanceId}`, guard);
   }
 
+  private async ancestor(base: string, head: string): Promise<boolean> {
+    return (await this.command(['merge-base', '--is-ancestor', base, head], { allowedExitCodes: [1] })).exitCode === 0;
+  }
+
+  private async integrationSource(kind: 'agents' | 'results', id: string) {
+    const location = this.location(kind, id);
+    const head = await this.ref(`refs/heads/${location.branch}`);
+    const base = await this.ref(location.baseRef);
+    if (!head && !base) throw new ApiError('INVALID_STATE', 'Create this Git workspace before integrating it.');
+    if (!head || !base) throw new GitRuntimeError('INVALID_WORKTREE_REFS');
+    await this.commit(head); await this.commit(base);
+    if (!await this.ancestor(base, head)) throw new GitRuntimeError('INVALID_WORKTREE_REFS');
+    return { head, base };
+  }
+
+  /** Coordinator operation over already accepted commits; never writes the worker. */
+  async integrate(runId: string, agentInstanceId: string) {
+    const result = await this.integrationSource('results', runId);
+    const worker = await this.integrationSource('agents', agentInstanceId);
+    if (!await this.ancestor(worker.base, result.head) || !await this.ancestor(result.base, worker.base)) {
+      throw new ApiError('INPUT_CONFLICT', 'Worker base is outside this result lineage or has not integrated.');
+    }
+    const trees = new Map<string, Tree>();
+    for (const sha of new Set([result.base, result.head, worker.base, worker.head])) {
+      const tree = await this.tree(sha);
+      for (const entry of tree.values()) await this.blob(entry.hash);
+      trees.set(sha, tree);
+    }
+    const current = trees.get(result.head)!;
+    const base = trees.get(worker.base)!;
+    const incoming = trees.get(worker.head)!;
+    const same = (a: Tree, b: Tree) => a.size === b.size && [...a].every(([path, entry]) =>
+      b.get(path)?.hash === entry.hash && b.get(path)?.mode === entry.mode);
+    if (same(base, incoming) || await this.ancestor(worker.head, result.head)) {
+      // Also repairs a projection left behind by an earlier successful publication.
+      await this.ensure('results', runId, result.base, false);
+      return { resultSha: result.head, conflicts: [] };
+    }
+
+    // Two individually valid trees can introduce a portable namespace collision.
+    // Report the original paths, never Git's synthesized conflict filenames.
+    const paths = [...new Set([...current.keys(), ...incoming.keys()])];
+    const conflicts = new Set<string>();
+    for (let i = 0; i < paths.length; i++) for (let j = i + 1; j < paths.length; j++) {
+      try { portablePaths([paths[i]!, paths[j]!]); }
+      catch { conflicts.add(paths[i]!); conflicts.add(paths[j]!); }
+    }
+
+    let resultSha = worker.head;
+    let proposed = incoming;
+    if (result.head !== worker.base) {
+      // read-tree handles trivial resolutions; merge-file resolves remaining
+      // text stages without checkout, attributes, external drivers, or hooks.
+      const temporary = await mkdtemp(join(this.repository, 'integration-'));
+      const indexFile = join(temporary, 'index');
+      try {
+        await this.command(['read-tree', '-i', '-m', worker.base, result.head, worker.head], { indexFile });
+        const listing = await this.command(['ls-files', '--unmerged', '-z'], { indexFile });
+        const stages = new Map<string, Map<number, Entry>>();
+        for (const record of listing.stdout.split('\0').filter(Boolean)) {
+          const match = /^(100644|100755) ([0-9a-f]{40}) ([123])\t([\s\S]+)$/.exec(record);
+          if (!match || filePath(match[4]!) !== match[4]) throw new GitRuntimeError('INVALID_TREE');
+          const path = match[4]!;
+          const entries = stages.get(path) ?? new Map<number, Entry>();
+          entries.set(Number(match[3]), { mode: match[1]!, hash: match[2]! });
+          stages.set(path, entries);
+        }
+        for (const [path, entries] of stages) {
+          const b = entries.get(1), ours = entries.get(2), theirs = entries.get(3);
+          if (!b || !ours || !theirs) { conflicts.add(path); continue; }
+          const mode = ours.mode === theirs.mode ? ours.mode : ours.mode === b.mode ? theirs.mode
+            : theirs.mode === b.mode ? ours.mode : undefined;
+          if (!mode) { conflicts.add(path); continue; }
+          const names = ['current', 'base', 'worker'].map((name) => join(temporary, name));
+          for (const [i, entry] of [ours, b, theirs].entries()) await writeFile(names[i]!, await this.blob(entry.hash));
+          const merged = await this.command(['merge-file', '-p', ...names], {
+            binary: true, allowedExitCodes: Array.from({ length: 127 }, (_, i) => i + 1),
+          });
+          if (merged.exitCode !== 0) { conflicts.add(path); continue; }
+          const bytes = merged.stdoutBytes!;
+          decodeText(bytes);
+          const hash = shaSchema.parse((await this.command(['hash-object', '-w', '--stdin', '--no-filters'], { input: bytes })).stdout.trim());
+          await this.command(['update-index', '-z', '--index-info'], {
+            indexFile, input: `0 ${'0'.repeat(40)}\t${path}\0${mode} ${hash}\t${path}\0`,
+          });
+        }
+        if (conflicts.size) return { resultSha: result.head, conflicts: [...conflicts].sort() };
+        if ((await this.command(['ls-files', '--unmerged', '-z'], { indexFile })).stdout) throw new GitRuntimeError('INVALID_TREE');
+        const treeSha = shaSchema.parse((await this.command(['write-tree'], { indexFile })).stdout.trim());
+        proposed = await this.tree(treeSha);
+        for (const entry of proposed.values()) await this.blob(entry.hash);
+        resultSha = shaSchema.parse((await this.command(['commit-tree', treeSha,
+          '-p', result.head, '-p', worker.head, '-m', `Integrate worker ${agentInstanceId} into run ${runId}`])).stdout.trim());
+      } finally {
+        // Exact server-allocated scratch directory; contains no user worktree.
+        await rm(temporary, { recursive: true, force: true });
+      }
+    }
+    if (conflicts.size) return { resultSha: result.head, conflicts: [...conflicts].sort() };
+    portablePaths(new Set([...current.keys(), ...proposed.keys()]));
+    const managed = await this.ensure('results', runId, result.base, false);
+    if (managed.head !== result.head) throw new ApiError('CONFLICT', 'Result head changed during integration.');
+    await this.command(['update-ref', `refs/heads/${managed.branch}`, resultSha, result.head]);
+    try { await this.synchronize({ ...managed, head: resultSha }, proposed); }
+    catch { throw new GitRuntimeError('WORKTREE_SYNC_FAILED'); }
+    return { resultSha, conflicts: [] };
+  }
+
   private async mutate(managed: Managed, changes: TextChange[], message: string, guard?: WorkerCommitGuard) {
     const current = await this.tree(managed.head);
     const proposed = new Map(current);

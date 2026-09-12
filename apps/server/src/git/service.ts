@@ -5,6 +5,7 @@ import {
   createDraftRequestSchema, createResultRequestSchema, createWorkerRequestSchema,
   gitBranchResultSchema, gitCheckpointRequestSchema, gitCheckpointResultSchema,
   gitReadTextRequestSchema, gitReadTextResultSchema, gitWorktreeResultSchema,
+  gitIntegrateRequestSchema, gitIntegrateResultSchema,
   shaSchema, type GitService, type WorkerCommitGuard,
 } from '@app/contracts';
 import { GitRuntimeError, runGit, type GitRunner } from './command.js';
@@ -47,9 +48,9 @@ async function directory(path: string): Promise<void> {
   if (info.isSymbolicLink() || !info.isDirectory()) throw new GitRuntimeError('INVALID_DIRECTORY');
 }
 
-/** D01/D02 GitService subset; integration/review/apply belong to later tickets. */
+/** Git files and D05 integration; review/apply belong to later tickets. */
 export class LocalGitService implements Pick<GitService,
-  'initialize' | 'createDraft' | 'createWorker' | 'createResult' | 'checkpoint' | 'readText' | 'applyWorkerChanges'> {
+  'initialize' | 'createDraft' | 'createWorker' | 'createResult' | 'checkpoint' | 'readText' | 'applyWorkerChanges' | 'integrate'> {
   private readonly root: string;
   private preparation?: Promise<void>;
 
@@ -201,6 +202,13 @@ export class LocalGitService implements Pick<GitService,
 
   async ensureRepository(workspaceId: string): Promise<Repository> {
     return this.withRepository(workspaceId, async (repository) => repository);
+  }
+
+  async integrate(input: Parameters<GitService['integrate']>[0]) {
+    const value = parse(gitIntegrateRequestSchema, input);
+    return this.files(value.workspaceId, async (files) => gitIntegrateResultSchema.parse(
+      await files.integrate(value.runId.toLowerCase(), value.agentInstanceId.toLowerCase()),
+    ));
   }
 
   /**

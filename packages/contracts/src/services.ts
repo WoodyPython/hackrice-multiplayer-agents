@@ -189,6 +189,10 @@ export interface GitService {
     taskId: string;
     files: Array<{ path: string; text: string }>;
   }): Promise<{ commitSha: string }>;
+  /** Backend coordinator call over completed worker commits. An empty conflicts
+   * list releases dependents; otherwise resultSha is the unchanged result head.
+   * Caller owns membership, completion/scope checks, and ordered DB recording.
+   */
   integrate(input: {
     workspaceId: string;
     runId: string;

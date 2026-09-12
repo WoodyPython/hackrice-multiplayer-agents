@@ -50,6 +50,32 @@ Newest first. One entry per landed ticket.
 
 ---
 
+## D05 — Parallel worker-result integration
+**Implemented:** 2026-09-12 · local main worktree (commit pending) · Role D
+**Affects:** Roles C and D
+**Action required:** Rebuild `@app/contracts`. C05 should read
+[the D05 integration contract](interfaces/git.md#worker-result-integration-d05),
+especially ordered result-head recording, completed-worker authority, and the
+requirement that prerequisites integrate before dependents start. No migration
+or dependency is added.
+
+- Serialized three-way integration into the existing result branch, with
+  fast-forward and two-parent merge commits and guarded ref publication.
+- Complete conflict paths from unresolved Git stages and portable namespace
+  collisions; conflicts preserve the result, workers, human drafts, and main.
+- Immutable base validation, whole-tree text checks, idempotent repeated/no-op
+  integration, and preserved commits after result projection failures.
+- Runtime schemas, focused Git tests, and C05 handoff documentation. Scheduler,
+  metadata lifecycle, review, Apply, Yjs, and restart orchestration are unchanged.
+
+Verified after reconciling `origin/main` at `9c14b3a`: `npm run build`, all 44
+focused D04 capture/D05 integration tests, and `git diff --check` passed. The
+incoming D04 `withDraftCapture` fix resolves the earlier build/capture blocker.
+Before that pull, the full suite passed 498 backend tests (including all 86 Git
+checks) and 8 frontend tests, with 17 failures isolated to that missing method.
+The full suite has not been rerun after the pull.
+
+---
 ## D04 — Live draft to Git capture
 **Implemented:** 2026-09-12 · local main worktree (commit pending) · Role D
 **Affects:** Roles A, C, and D

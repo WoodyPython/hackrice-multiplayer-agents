@@ -1,6 +1,52 @@
 # Git files and checkpoints
 
-**Reflects:** D04 · **Owner:** Role D
+**Reflects:** D05 · **Owner:** Role D
+
+## Worker-result integration (D05)
+
+`LocalGitService.integrate({ workspaceId, runId, agentInstanceId })` returns
+`{ resultSha, conflicts }`. This is a backend-only coordinator operation on
+completed, already accepted worker commits. UUIDs are validated and normalized.
+The existing runtime singleton serializes integrations under its workspace lock.
+Create the result at the captured start snapshot and each worker at the current
+result head after its prerequisites integrate. Missing branches are rejected.
+
+An empty `conflicts` list means `resultSha` is the resulting run head. Otherwise
+it is the unchanged prior head, and `conflicts` contains sorted, unique original
+paths. Text conflicts and portable namespace collisions (including case aliases
+and file/directory collisions) preserve the whole result. Conflicts do not publish
+partial files or marker text. Main, human drafts, worker refs, and Yjs are untouched.
+
+Git 2.36 is sufficient: integration uses a temporary `read-tree -m` index and
+`merge-file -p` for unresolved text stages. No checkout, merge driver, rename
+inference, hooks, generated-code execution, or dependency is introduced. Clean
+divergence creates a two-parent commit; a first worker fast-forwards. No-change
+and already-integrated workers return the current result SHA without a new commit.
+
+### C05 handoff
+
+C05 resolves workspace/run/instance membership, checks current run/boot and
+cancellation, requires durable C04 completion, and validates the worker's stored
+scope and final commit before calling. D05 has no database dependency; IDs alone
+are not evidence of ownership or completion. Completed artifacts are integrated
+by the coordinator; do not reopen a completed instance with `assertActive` or
+change its immutable `agent_instances.result_sha`.
+
+Keep integration and metadata recording ordered in C05: await a conflict-free
+integration, await `PgRunStore.recordResultHead(runId, resultSha)`, then release
+dependents using the current integrated SHA as their persisted `base_sha`.
+`readyInstances` currently tests completion only; C05 must additionally require
+successful integration of mutating prerequisites. Read-only workers have no
+worker branch and are handled by C05 without calling this method. C05 owns
+blocked-assignment metadata, conflict events, dispatch, and run settlement.
+Do not concurrently record an older return value after a newer result head.
+
+A conflict never releases dependents. Git/validation failures also stop release.
+`WORKTREE_SYNC_FAILED` means the result ref was published but projection failed;
+retrying integration or `createResult` with its original base repairs projection
+and preserves the commit. Already-integrated calls return the latest result head.
+If database recording fails, retain Git as the saved artifact and stop dependent
+dispatch; D08 owns cross-boot reconciliation. This is not automatic workflow replay.
 
 ## Live draft capture (D04)
 
@@ -278,7 +324,7 @@ again. Do not reset the branch or blindly replay old expected hashes. Retrying
 with the same instance preserves its base and committed history.
 
 Git and files are accessed with trusted arguments and raw object I/O. Generated
-code is never run. Integration, start-snapshot combination, reviews, Apply,
+code is never run. Start-snapshot combination, reviews, Apply,
 execution-state recovery and branch retention policies remain later tickets.
 
 Verification: `npm run build`, `npm run test:git --workspace @app/server`, and
