@@ -1,12 +1,12 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** D08, B07, C02, C05, C06, C07, plus the A06/A07 requests below · **Owner:** Role B (data), Role C (execution guard)
+**Reflects:** D08, B07, C02, C05, C06, C07, C08, plus the A06/A07 requests below · **Owner:** Role B (data), Role C (execution guard)
 
 ## D08 runtime recovery
 
 Startup now calls `markInterruptedFromPreviousBoots()` before building the application and reconciles pending applies before attaching transport, opening orchestration, or listening. Existing saved snapshots and Git checkpoints restore on demand. No old execution is resumed; the existing explicit retry route creates a new attempt after interruption clears the active-run pointer.
 
-`LocalReviewService.reconcilePreviousApplies()` shares D07's finalization transaction: main at the candidate completes metadata and closes epochs, main at the expected SHA retains pending owner/freshness checks, and any other SHA records ambiguity and blocks document writes. Storage failures abort startup. See [D08 recovery details](git.md#startup-recovery-d08). C08 retains ownership of saved-output selection and broader retry behavior.
+`LocalReviewService.reconcilePreviousApplies()` shares D07's finalization transaction: main at the candidate completes metadata and closes epochs, main at the expected SHA retains pending owner/freshness checks, and any other SHA records ambiguity and blocks document writes. Storage failures abort startup. See [D08 recovery details](git.md#startup-recovery-d08). C08 retains ownership of saved-output selection and broader retry behavior; retry reads saved accepted commits as immutable references and never replays old tool calls. See [C08 notes](../../apps/server/src/orchestration/RETRY.md).
 
 ## C07 additions to `reviews/routes.ts`
 
@@ -221,10 +221,10 @@ it is opened.
 
 ---
 
-## Startup reconciliation
+## Startup reconciliation (landed in D08)
 
-`PgRunStore.markInterruptedFromPreviousBoots()` fills the placeholder in
-`recovery/runtime.ts`. Call it **before** the server accepts task actions, per
+`PgRunStore.markInterruptedFromPreviousBoots()` is now called from
+`recovery/runtime.ts` **before** the server accepts task actions, per
 §14.4 step 2. It marks stale runs and instances interrupted, clears the affected
 tasks' active-run pointers, and resolves their open questions.
 

@@ -19,6 +19,8 @@
     "test:scheduler": "vitest run --config vitest.scheduler.config.ts",
     "test:start": "vitest run --config vitest.start.config.ts",
     "test:review": "vitest run --config vitest.review.config.ts",
+    "test:retry": "vitest run --config vitest.retry.config.ts",
+    "gemini:smoke": "tsx scripts/gemini-smoke.ts",
     "test:watch": "vitest",
     "supabase:smoke": "tsx scripts/supabase-smoke.ts"
   },

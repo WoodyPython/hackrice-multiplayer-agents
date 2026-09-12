@@ -2,6 +2,27 @@
 
 Newest first. One entry per landed ticket.
 
+## C08 — Manual retries and failure cases
+**Implemented:** 2026-09-12 · working tree · Role C
+**Affects:** Roles A, B, C, and D
+**Action required:** A05 can consume the saved-output list and optional retry selections. Configure `GEMINI_API_KEY` and run `gemini:smoke` for real-call verification. Read [C08 retry notes](../apps/server/src/orchestration/RETRY.md). No migration or dependency added.
+
+- Retry resolves same-task saved checkpoint selections atomically with its new
+  run; client-supplied SHAs and duplicate/foreign selections are rejected.
+- Current requirements/draft/materials are captured, while the saved validated
+  assignment graph keeps logical budget keys stable across fresh instances.
+- Saved files are scoped, immutable reference inputs to `read_file`; earlier
+  checkpoints, manifests and usage remain intact.
+- Added integrated timeout/cancel/unknown-usage/late-billing tests and prevented
+  shutdown during capture from dispatching later work.
+- Rebased onto D08 (`4fa3e58`), which now owns startup interruption and pending
+  apply reconciliation; real provider verification remains blocked by missing
+  Gemini configuration.
+- Verified: full workspace build (`npm run build`) and `npm run test:retry`
+  (7/7) against real PostgreSQL.
+
+---
+
 ## D08 — Minimal restart/retry support
 **Implemented:** 2026-09-12 · local main worktree · Role D
 **Action required:** None. No migration or dependency. C08 continues to own saved-output selection and broader manual retry behavior.

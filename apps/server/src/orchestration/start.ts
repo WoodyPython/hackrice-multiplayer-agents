@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   ApiError, ORCHESTRATOR_AGENT_KEY, isActiveRunStatus,
   type AssignmentSchedulingService, type OrchestrationHook, type OrchestratorPlanningService,
@@ -8,8 +9,9 @@ import { appendEvent } from '../events/service.js';
 import { ModelAdapterError, type ModelAdapter } from '../models/types.js';
 import { PgRunStore } from '../runs/run-store.js';
 import { CaptureError, StartCapture, type CaptureDeps, type CapturedStart } from './capture.js';
-import { PlanningError } from './plan-store.js';
+import { PgPlanStore, PlanningError } from './plan-store.js';
 import { SchedulingError } from './scheduler-store.js';
+import { readRetry } from './retry-store.js';
 
 /**
  * C06: the explicit Start hook (design section 2.2, steps 4 onward).
@@ -105,6 +107,7 @@ export class StartOrchestrator implements OrchestrationHook {
     let captured: CapturedStart;
     try {
       captured = await this.capture.capture(workspaceId, taskId, runId);
+      if (this.closed) return;
       // Steps 4 to 6. Refuses a run from a previous boot, so a slow capture
       // cannot resurrect one that startup already marked interrupted.
       await this.runs.recordCapture(runId, {
@@ -128,12 +131,26 @@ export class StartOrchestrator implements OrchestrationHook {
         preset: 'orchestrator', modelId: this.deps.adapter.getModel('orchestrator').modelId,
       });
       attempt.planningInstanceId = planning.id;
+      if (this.closed) return;
       // Step 8. C03 validates and stores the plan atomically with completion.
-      await this.deps.planner.plan({ runId, agentInstanceId: planning.id, context: captured.context });
+      const retry = await readRetry(this.deps.db, runId);
+      if (this.closed) return;
+      if (retry?.plan) {
+        // Retry the same logical assignments, not a newly named graph that
+        // would accidentally mint fresh per-agent budgets. Tool calls are new.
+        await this.deps.ledger.start(planning.id);
+        await new PgPlanStore(this.deps).save(planning.id, runId,
+          createHash('sha256').update(JSON.stringify(captured.context)).digest('hex'), retry.plan,
+          { inputSnapshotSha: captured.inputSnapshotSha, manifest: captured.context.manifest });
+        await this.event(runId, 'retry_plan_reused', { sourceRunId: retry.sourceRunId });
+      } else {
+        await this.deps.planner.plan({ runId, agentInstanceId: planning.id, context: captured.context });
+      }
     } catch (error) { await this.fail(runId, error); return; }
 
     try {
       // Step 9. C05 instantiates the stored graph and dispatches in parallel.
+      if (this.closed) return;
       const result = await this.deps.scheduler.schedule({
         runId, planningInstanceId: attempt.planningInstanceId!, context: captured.context,
       });

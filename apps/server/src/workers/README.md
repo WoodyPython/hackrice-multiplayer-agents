@@ -37,7 +37,7 @@ is added by C04.
 
 | Tool | Model arguments | Result |
 |---|---|---|
-| `read_file` | `path`, `source: worker / approved / draft` | Text, Git blob hash, issued reference |
+| `read_file` | `path`, `source: worker / approved / draft / saved`; `savedOutputId` required only for saved | Text, Git blob hash, issued reference |
 | `read_material` | Selected `materialId` | Immutable text and issued SHA-256 reference |
 | `propose_changes` | `changes: [{path, expectedHash, newText}]` | Checkpoint SHA and changed paths |
 | `ask_question` | `body` | Waits for answer, then returns text and reference |

@@ -1135,6 +1135,7 @@ Task discussion entries persist independently of event delivery. A browser recon
 | POST /api/workspaces/:w/tasks/:t/start | Explicitly capture input and start agents |
 | POST /api/workspaces/:w/tasks/:t/cancel | Stop current execution |
 | POST /api/workspaces/:w/tasks/:t/retry | Explicit new attempt from saved context/checkpoints |
+| GET /api/workspaces/:w/tasks/:t/saved-outputs | Selectable accepted checkpoint files from terminal attempts |
 | GET/POST /api/workspaces/:w/tasks/:t/discussion | Read/add task-local entries |
 | POST /api/workspaces/:w/tasks/:t/answer | Answer an open agent question; records the answering discussion entry and resolves the question |
 | POST /api/workspaces/:w/materials | Upload workspace reference |
@@ -1351,6 +1352,16 @@ Retry creates a new explicit attempt:
 
 Do not blindly rerun an old tool call after a crash. A new agent works from saved artifacts and proposes new validated changes.
 
+C08 resolves optional saved-output selections from terminal attempts of the same
+task inside the new-run transaction. The resulting immutable file references
+enter the new capture and can be read by workers; they never replace the live
+draft. Retry reuses the most recent validated assignment graph and its logical
+keys/scopes, with fresh instances and current requirements. If no plan was ever
+accepted, planning runs normally on the retained orchestrator budget. Requesting
+a different assignment graph uses the separate Start/revision flow. Real-call
+verification requires configured Gemini credentials, and end-to-end restart
+recovery remains dependent on D08.
+
 ### 14.4 Startup
 
 A single startup routine:
@@ -1448,7 +1459,7 @@ These live in docs/ at the repository root.
 
 Every row is a single-owner work package. “Expected behavior” defines what that component must do and can be checked in isolation or against the listed prerequisites. It is not a separate release checklist.
 
-Implementation status and verification are recorded in `docs/CHANGELOG.md`. C06 now connects Start end to end: it captures the run's context, combines the start snapshot, plans, dispatches through C05, and terminalizes the run. C07 adds a fresh reviewer assessment against a review's exact candidate and composes its evidence from durable data; the request-revision handoff and the run's ready/incomplete derivation were already covered by B03's existing Start transition and C06 respectively, so C07 added nothing further for either. C08's manual retries and failure cases remain a separate work package.
+Implementation status and verification are recorded in `docs/CHANGELOG.md`. C06 now connects Start end to end: it captures the run's context, combines the start snapshot, plans, dispatches through C05, and terminalizes the run. C07 adds a fresh reviewer assessment against a review's exact candidate and composes its evidence from durable data; the request-revision handoff and the run's ready/incomplete derivation were already covered by B03's existing Start transition and C06 respectively, so C07 added nothing further for either. C08 implements manual retries with saved-output selection and scripted failure coverage; representative real calls and D08 startup integration remain unverified.
 
 ### 16.1 Role B — Supabase and application data
 

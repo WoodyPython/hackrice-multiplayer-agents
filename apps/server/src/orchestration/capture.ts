@@ -5,6 +5,7 @@ import {
 } from '@app/contracts';
 import type { Db } from '../db/client.js';
 import type { PgDraftStore } from '../drafts/store.js';
+import { readRetry } from './retry-store.js';
 
 /**
  * C06 capture: design section 2.2 steps 4 to 6.
@@ -82,6 +83,13 @@ export class StartCapture {
       .orderBy('seq').execute();
 
     const sources: PlanningContext['sources'] = [];
+    const retry = await readRetry(db, runId);
+    const savedOutputs: NonNullable<PlanningContext['savedOutputs']> = [];
+    for (const output of retry?.savedOutputs ?? []) {
+      const file = await this.deps.git.readText({ workspaceId, target: { kind: 'commit', commitSha: output.commitSha },
+        path: output.path, allowedPaths: [output.path] });
+      savedOutputs.push({ ...output, hash: file.hash, text: file.text });
+    }
     const materials = await this.materials(workspaceId, taskId, sources, omitted);
     const mainSha = (await this.deps.git.initialize(workspaceId)).mainSha;
     const approvedPaths = await this.approved(workspaceId, taskId, mainSha, sources, omitted);
@@ -94,6 +102,7 @@ export class StartCapture {
       discussionCutoffSeq: run.discussion_cutoff_seq,
       materials, approvedPaths, approvedCommitSha: mainSha,
       draftCheckpointSha: draft.checkpointSha, draftFileHashes,
+      ...(retry ? { savedOutputs: savedOutputs.map(({ text: _text, ...source }) => source) } : {}),
     };
 
     // Section 8.4. Combined before planning so a conflict is surfaced without
@@ -106,7 +115,7 @@ export class StartCapture {
     const parsed = planningContextSchema.safeParse({
       task: { id: taskId, version: run.task_version, title: task.title, outcome: task.outcome,
         criteria: task.criteria, outputPaths },
-      guidance: workspace.guidance, manifest, discussion, sources,
+      guidance: workspace.guidance, manifest, discussion, sources, ...(retry ? { savedOutputs } : {}),
     });
     if (!parsed.success) throw new CaptureError('capture_failed');
     return { context: parsed.data, inputSnapshotSha: snapshot.snapshotSha,

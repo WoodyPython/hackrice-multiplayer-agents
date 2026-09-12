@@ -1,6 +1,6 @@
 # For Role A — calling the API
 
-**Reflects:** B07, C06, D06, the Supabase verification of 2026-09-12, and the
+**Reflects:** B07, C06, C08, D06, the Supabase verification of 2026-09-12, and the
 A04 draft listing · **Owner:** Role B
 
 What the frontend needs from the data layer. Shapes and enums live in
@@ -70,6 +70,14 @@ Anything double-submittable takes a `clientRequestId`: posting a task, adding a
 discussion entry, starting a run. Send a fresh UUID per user intent and reuse it
 on retry. A replay returns the original result rather than creating a second one,
 so a double-tapped button is safe.
+
+For manual retries, use `GET /api/workspaces/:w/tasks/:t/saved-outputs` to list
+accepted checkpoint files, including partial output from failed attempts.
+`POST .../tasks/:t/retry` accepts `clientRequestId`, optional `expectedVersion`,
+and optional `savedOutputs: [{ agentInstanceId, path }]`. Send the selection
+identities, not the returned commit SHA. A replay preserves the original
+selection. Retry uses current requirements and draft with the saved assignment
+graph and retained budgets. See [C08](../../apps/server/src/orchestration/RETRY.md).
 
 ---
 

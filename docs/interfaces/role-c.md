@@ -1,6 +1,11 @@
 # For Role C — orchestration against the data layer
 
-**Reflects:** B07, C02, C03, C04, C05, C06, C07, plus the A05 request below · **Owner:** Role B (data), Role C (execution)
+C08 adds scoped checkpoint selection and retained-plan manual retries. See
+[retry contracts and validation](../../apps/server/src/orchestration/RETRY.md).
+D08 landed (`4fa3e58`) and owns startup interruption/reconciliation; real
+Gemini calls for retry's smoke verification remain unverified.
+
+**Reflects:** B07, C02, C03, C04, C05, C06, C07, C08, plus the A05 request below · **Owner:** Role B (data), Role C (execution)
 
 > **Resolved: `PgAgentLedger` is the ledger.** B07 briefly shipped a second one,
 > `PgBudgetLedger` under `src/runs`; it has been deleted. Yours won on three

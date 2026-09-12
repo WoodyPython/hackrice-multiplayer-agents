@@ -11,7 +11,10 @@ const strings = { type: 'array', items: { type: 'string' } };
 const object = (properties: Record<string, unknown>) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 export const WORKER_TOOLS: ToolDefinition[] = [
   { name: 'read_file', description: 'Read a selected captured file or your worker file. Returns text, expected hash and a source reference.',
-    parameters: object({ path, source: { type: 'string', enum: ['worker', 'approved', 'draft'] } }) },
+    parameters: { type: 'object', required: ['path', 'source'], additionalProperties: false, properties: {
+      path, source: { type: 'string', enum: ['worker', 'approved', 'draft', 'saved'] },
+      savedOutputId: { type: 'string', description: 'Required only for saved: an ID from selectedSources.savedOutputs.' },
+    } } },
   { name: 'read_material', description: 'Read a selected immutable material. Returns a source reference.',
     parameters: object({ materialId: { type: 'string' } }) },
   { name: 'propose_changes', description: 'Checkpoint an atomic batch in your exact write scope. Read first; use returned hashes, null for a new file. No code is executed.',
@@ -57,6 +60,15 @@ export class WorkerTools {
     switch (call.name) {
       case 'read_file': {
         const args = workerToolArguments.read_file.parse(call.arguments);
+        if (args.source === 'saved') {
+          const selected = manifest.savedOutputs?.find((s) => s.id === args.savedOutputId && s.path === args.path);
+          if (!selected) throw new WorkerToolError('scope_violation');
+          const file = await git.readText({ workspaceId: agent.workspace_id, target: { kind: 'commit', commitSha: selected.commitSha },
+            path: selected.path, allowedPaths: [selected.path] });
+          signal.throwIfAborted(); await store.ledger.assertActive(agent.id);
+          if (file.hash !== selected.hash) throw new WorkerToolError('source_changed');
+          return { ...file, reference: file.hash ? this.reference({ kind: 'saved', path: file.path, hash: file.hash, commitSha: selected.commitSha }) : null };
+        }
         const allowedPaths = args.source === 'worker' ? binding.workerReadPaths : args.source === 'approved'
           ? manifest.approvedPaths : Object.keys(manifest.draftFileHashes);
         if (!isPermittedWritePath(args.path) || !allowedPaths.includes(args.path)) throw new WorkerToolError('scope_violation');

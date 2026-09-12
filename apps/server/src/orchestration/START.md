@@ -102,7 +102,7 @@ section 14.4 forbids. Such a run is left completely untouched.
 Cancellation is durable in B03's transaction before the hook is called;
 `onCancelRequested` stops the local planner and scheduler scopes and sweeps
 deadlines. Review preparation and the request-revision handoff are C07. Manual
-retry and restart reconciliation are C08/D08.
+retry is implemented in [C08](./RETRY.md); startup reconciliation remains D08.
 
 ## Verification
 

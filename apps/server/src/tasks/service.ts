@@ -6,6 +6,7 @@ import {
   type PostTaskRequest,
   type Run,
   type StartTaskRequest,
+  type RetryTaskRequest,
   type TaskDetail,
   type TaskSummary,
   type UpdateTaskRequest,
@@ -16,6 +17,7 @@ import type { Database, TaskRow } from '../db/types.js';
 import { appendEvent } from '../events/service.js';
 import { assertCancelable, assertRevisable, assertTransition } from './transitions.js';
 import { toIso } from '../http/serialize.js';
+import { prepareRetry, savedOutputs } from '../orchestration/retry-store.js';
 
 /**
  * B03: posted tasks and the Start transaction (design sections 2.1 to 2.4).
@@ -177,6 +179,7 @@ export class PgTaskService {
     workspaceId: string,
     taskId: string,
     input: StartTaskRequest,
+    retry?: RetryTaskRequest,
   ): Promise<{ run: Run; taskStatus: TaskDetail['status']; idempotentReplay: boolean }> {
     const result = await this.deps.db.transaction().execute(async (trx) => {
       const task = await this.lockTask(trx, workspaceId, taskId);
@@ -200,6 +203,7 @@ export class PgTaskService {
       }
 
       assertTransition(task.status, 'planning', 'start this task');
+      const retryRecord = retry ? await prepareRetry(trx, workspaceId, taskId, retry) : undefined;
 
       const workspace = await trx
         .selectFrom('workspaces')
@@ -260,7 +264,7 @@ export class PgTaskService {
         runId: runRow.id,
         eventKey: eventKeys.taskStarted(runRow.id),
         type: 'task.started',
-        payload: { attempt: runRow.attempt, taskVersion: runRow.task_version },
+        payload: { attempt: runRow.attempt, taskVersion: runRow.task_version, ...(retryRecord ? { retry: retryRecord } : {}) },
       });
 
       return { run: toRun(runRow), taskStatus: 'planning' as const, idempotentReplay: false };
@@ -280,20 +284,25 @@ export class PgTaskService {
    * budget rows: section 14.3 is explicit that "an exhausted budget remains
    * exhausted on retry", which is why nothing here touches task_agent_budgets.
    *
-   * C08 adds section 14.3's "let the user select saved output as input"; this
-   * is the transaction underneath it.
+   * Saved-output selections and the retained plan are pinned atomically with
+   * the new run; idempotent replays retain the original selections.
    */
   async retry(
     workspaceId: string,
     taskId: string,
-    input: { clientRequestId: string },
+    input: { clientRequestId: string; expectedVersion?: number; savedOutputs?: RetryTaskRequest['savedOutputs'] },
   ): Promise<{ run: Run; idempotentReplay: boolean }> {
     const task = await this.readTask(workspaceId, taskId);
     const started = await this.start(workspaceId, taskId, {
-      expectedVersion: task.version,
+      expectedVersion: input.expectedVersion ?? task.version,
       clientRequestId: input.clientRequestId,
-    });
+    }, { ...input, savedOutputs: input.savedOutputs ?? [] });
     return { run: started.run, idempotentReplay: started.idempotentReplay };
+  }
+
+  async savedOutputs(workspaceId: string, taskId: string) {
+    await this.readTask(workspaceId, taskId);
+    return savedOutputs(this.deps.db, workspaceId, taskId);
   }
 
   // -------------------------------------------------------------------------

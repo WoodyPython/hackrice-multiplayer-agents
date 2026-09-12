@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   WORKER_PRESETS, planningContextSchema,
@@ -143,6 +144,9 @@ export class OrchestratorPlanner implements OrchestratorPlanningService {
 }
 
 function validateContext(context: PlanningContext): void {
+  if (!isDeepStrictEqual(context.savedOutputs?.map(({ text: _text, ...source }) => source) ?? [], context.manifest.savedOutputs ?? [])) {
+    throw new PlanningError('context_mismatch');
+  }
   const { manifest } = context;
   if (context.task.version !== manifest.taskVersion ||
       context.discussion.some((entry) => entry.seq > manifest.discussionCutoffSeq) ||

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { capturedSavedOutputSchema } from './retry.js';
 import {
   agentInstanceIdSchema,
   repoPathSchema,
@@ -41,6 +42,7 @@ export type Run = z.infer<typeof runSchema>;
  * Section 3.3. The exact inputs a run was built from, captured once at Start.
  */
 export const contextManifestSchema = z.object({
+  savedOutputs: z.array(capturedSavedOutputSchema.omit({ text: true })).optional(),
   taskVersion: z.number().int().positive(),
   guidanceVersion: z.number().int().positive(),
   discussionCutoffSeq: z.number().int().nonnegative(),
@@ -217,6 +219,7 @@ export type PlanValidationError = z.infer<typeof planValidationErrorSchema>;
 
 /** C06 supplies an immutable captured context, never fresh live task reads. */
 export const planningContextSchema = z.object({
+  savedOutputs: z.array(capturedSavedOutputSchema).optional(),
   task: z.object({
     id: taskIdSchema, version: z.number().int().positive(), title: z.string(),
     outcome: z.string(), criteria: z.array(z.string()), outputPaths: z.array(repoPathSchema),

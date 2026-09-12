@@ -3,7 +3,8 @@ import { repoPathSchema, shaSchema } from './ids.js';
 
 /** Model arguments never contain workspace/run/agent IDs, refs or scopes. */
 export const workerToolArguments = {
-  read_file: z.object({ path: repoPathSchema, source: z.enum(['worker', 'approved', 'draft']) }).strict(),
+  read_file: z.object({ path: repoPathSchema, source: z.enum(['worker', 'approved', 'draft', 'saved']),
+    savedOutputId: z.string().uuid().optional() }).strict().refine((v) => (v.source === 'saved') === (v.savedOutputId !== undefined)),
   read_material: z.object({ materialId: z.string().uuid() }).strict(),
   propose_changes: z.object({ changes: z.array(z.object({
     path: repoPathSchema, expectedHash: shaSchema.nullable(), newText: z.string().nullable(),
@@ -21,7 +22,7 @@ export type WorkerFinish = z.infer<typeof workerToolArguments.finish_assignment>
 /** Issued by a successful read, not a model-authored citation. */
 export interface WorkerReference {
   id: string;
-  kind: 'worker' | 'approved' | 'draft' | 'material' | 'answer';
+  kind: 'worker' | 'approved' | 'draft' | 'material' | 'answer' | 'saved';
   path?: string;
   materialId?: string;
   questionId?: string;

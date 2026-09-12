@@ -13,6 +13,15 @@ Migration 0007 allows null candidates for `stale` as well as `building`, while
 retaining the candidate requirement for ready/conflict/applied reviews. Final
 readiness also checks live revisions, covering edits between capture and row creation.
 
+## Shutdown during capture could launch work after cancellation
+
+**C08.** C06 closed the planner and scheduler instances that already existed,
+but a slow capture could finish after those cancellation calls and create a
+new planning/worker scope. The abort-ignoring-provider retry test exposed the
+hang during cleanup. C06 now checks its closed flag at capture, planning-instance
+creation, and dispatch boundaries; D08 retains responsibility for interrupted
+rows at the next boot.
+
 ## A review assessment cannot reuse the agent ledger's active-run gate
 
 **C07.** The obvious way to run a fresh reviewer pass against a review's

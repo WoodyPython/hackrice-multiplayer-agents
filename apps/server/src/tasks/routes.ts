@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   answerQuestionRequestSchema,
   cancelTaskRequestSchema,
-  clientRequestIdSchema,
+  retryTaskRequestSchema,
   listDiscussionQuerySchema,
   listTaskAgentsResponseSchema,
   listTasksQuerySchema,
@@ -140,16 +140,18 @@ export async function registerTaskRoutes(
   /** A new attempt at the current version, reusing existing agent budgets. */
   app.post('/api/workspaces/:workspaceId/tasks/:taskId/retry', async (request, reply) => {
     const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
-    const body = parseOrThrow(
-      z.object({ clientRequestId: clientRequestIdSchema }),
-      request.body ?? {},
-    );
+    const body = parseOrThrow(retryTaskRequestSchema, request.body ?? {});
     const { run, idempotentReplay } = await deps.tasks.retry(workspaceId, taskId, body);
     return reply.status(202).send({
       runId: run.id,
       attempt: run.attempt,
       idempotentReplay,
     });
+  });
+
+  app.get('/api/workspaces/:workspaceId/tasks/:taskId/saved-outputs', async (request) => {
+    const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
+    return { outputs: await deps.tasks.savedOutputs(workspaceId, taskId) };
   });
 
   // --- discussion ----------------------------------------------------------
