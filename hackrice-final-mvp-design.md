@@ -171,7 +171,7 @@ Legal task transitions, enforced in the service layer under the task row lock:
 
 | From | May become |
 |---|---|
-| posted | planning, canceled |
+| posted | planning, canceled; manual-edit review may go directly to ready_for_review or conflict |
 | planning | working, needs_input, conflict, incomplete, interrupted, canceled |
 | working | needs_input, ready_for_review, conflict, incomplete, interrupted, canceled, completed |
 | needs_input | working, ready_for_review, conflict, incomplete, interrupted, canceled |
@@ -1076,6 +1076,9 @@ Task discussion entries persist independently of event delivery. A browser recon
 | POST /api/workspaces/:w/tasks/:t/checkpoint | Flush live documents to a Git checkpoint |
 | POST /api/workspaces/:w/tasks/:t/review | Prepare combined candidate |
 | POST /api/workspaces/:w/reviews/:r/resolve | Create candidate with chosen conflict resolutions |
+| GET /api/workspaces/:w/reviews/:r | Read the stored review and its current candidate |
+| GET /api/workspaces/:w/reviews/:r/diff | Read candidate diff against the captured approved main |
+| GET /api/workspaces/:w/reviews/:r/preview?path=... | Read immutable candidate text for safe preview |
 | POST /api/workspaces/:w/reviews/:r/apply | Apply exact candidate; owner key required |
 | GET /api/workspaces/:w/tasks/:t/events | Durable progress record, cursor-paginated |
 | GET /api/workspaces/:w/realtime | Channel name plus the publishable realtime location, or null when unconfigured |

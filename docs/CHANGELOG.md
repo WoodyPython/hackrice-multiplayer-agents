@@ -53,6 +53,73 @@ Newest first. One entry per landed ticket.
 - Validation after syncing D05: full build and suite passed with 537 backend
   and 27 frontend tests. The focused scheduler suite also passed all 19 checks.
 
+## Fix — Supabase storage and realtime verified against a live project
+**Landed:** 2026-09-12 · Role B
+**Affects:** anyone running against Supabase; Role A (realtime is now advertised)
+**Action required:** Pull if your `.env` points at a Supabase project. Local-disk
+runs are unaffected — the bug was in the Supabase implementation only.
+
+- **Both integrations are verified.** `npm run supabase:smoke --workspace
+  @app/server` passes all four checks against a live project. B04 storage and
+  B06 realtime are no longer unverified, and the notes saying so are gone from
+  `blob-store.ts`.
+- **`SupabaseBlobStore` could not recognise a missing object.** Supabase Storage
+  answers a GET for an absent object with **HTTP 400**, not 404, and puts the
+  status it means inside the body (`"statusCode":"404"`, `"code":"NoSuchKey"`).
+  `get` mapped only a real 404 to `null` and threw on everything else, so the
+  `null` branch of `BlobStore.get` had never once run against the implementation
+  that ships. `delete` had the same hole, which would have turned the upload
+  path's lost-dedupe-race rollback into a second error.
+  *What it would have cost:* `readSelected` exists to turn a missing object into
+  `MATERIAL_NOT_FOUND` rather than feed an empty file to a model. Without this it
+  would have been a 500 the first time an object actually went missing.
+- Classification is by the body's `code`, never the status: `NoSuchBucket` and
+  `AccessDenied` also arrive as 400, so mapping the status class to `null` would
+  have converted a mistyped `SUPABASE_STORAGE_BUCKET` into "every material is
+  missing" — indistinguishable from an empty store. Six tests cover the recorded
+  response shapes; each was checked by mutating the fix until it failed.
+- Verified end-to-end against the hosted project, not only by the smoke script:
+  workspace creation, `realtime` advertised as an object, upload and
+  byte-identical read back through the API, and a row whose object was removed
+  from the bucket answering 404 `MATERIAL_NOT_FOUND`. Test rows were removed
+  afterwards.
+- Docs: a [`pitfalls.md`](pitfalls.md) entry, and the failure table in
+  [`supabase-setup.md`](supabase-setup.md) corrected — it promised 404/401/403
+  and this project answers 400 for all three.
+
+Verified: `npm run build` and `npm test` — **502 backend + 23 frontend**, all
+passing (496 backend before this; the six new tests are the classification
+checks). The known `git-files.test.ts` flake did not fire on this run.
+
+---
+
+## D06 - Combined review candidates
+**Implemented:** 2026-09-12 - local main worktree (commit pending) - Role D
+**Affects:** Roles A, C, and D
+**Action required:** Rebuild `@app/contracts` and read the
+[D06 review contract](interfaces/git.md#combined-review-candidates-d06).
+Resolution uses `resolveCandidateRequestSchema` with `expectedCandidateSha`;
+second-stage conflicts expose `combined_task` versus `approved_main`.
+No migration or new dependency is required.
+
+- Two-stage human/agent/approved combination in temporary review worktrees,
+  with private immutable candidates and exact persisted source/context records.
+- Contributor prepare/resolve routes and scoped review, diff, and text-preview
+  reads; real changed-file data and explicit conflict source labels.
+- Whole-file/manual/deletion resolutions, portable namespace conflicts, and
+  new commits per resolution round. Old candidates and source branches survive.
+- Atomic candidate/status/task/event finalization, existing D04 live capture,
+  runtime wiring, and focused Git, database, HTTP, and two-client tests.
+- Apply, continuous staleness invalidation, AI assessment/revision dispatch,
+  epoch closure, and workflow restart reconciliation remain later tickets.
+
+Verified: workspace build, `git diff --check`, and the full suite passed:
+538 backend tests and 27 frontend tests, including 23 D06 Git/API checks.
+The new live-capture check uses two real WebSocket clients; no frontend UI was
+added or manually exercised by this ticket.
+
+---
+
 ## A03 - Simultaneous editor binding
 **Landed:** 2026-09-12 - Role A
 **Affects:** Role A; A04/A07 can link to shared task drafts
@@ -68,6 +135,7 @@ Newest first. One entry per landed ticket.
   two real WebSocket clients against D03 for convergence, awareness, persistence,
   and offline reconnect. No manual two-browser visual check was performed.
 
+---
 ## Fix — restore `withDraftCapture`, wire Supabase storage, handoff docs
 **Landed:** 2026-09-12 · Role B
 **Affects:** everyone

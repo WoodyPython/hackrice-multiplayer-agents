@@ -33,6 +33,24 @@ records it with the new combined head, and keeps the worker checkpoint immutable
 Tests pause integration after both workers finish and verify the dependent still
 has no base or running clock. Missing D05 support returns a visible pending state.
 
+## A conflicted review cannot temporarily become ready
+
+**D06 integration with B07.** The database requires a candidate SHA for every
+review outside `building`, while B07's `markConflict()` only changes status.
+Calling it directly on a newly created row violates `reviews_candidate_ck`.
+Calling `markReady()` first would briefly expose unresolved content as ready.
+D06 instead saves the provisional candidate and `conflict` status in one guarded
+UPDATE. Clean candidate, task state, and `review.ready` event are also committed
+in one transaction; an event failure rolls all readiness changes back.
+
+## A deleted path can alias a retained path in candidate preview
+
+**D06.** Resolving a case or file/directory collision can remove one source path
+while retaining its counterpart. D02's worktree read deliberately rejects their
+combined namespace. Preview reads immutable Git objects directly instead: an
+absent source path returns null even when its counterpart remains in the tree.
+The complete candidate tree still passes portable path validation.
+
 ## A temporary merge index still asked for a worktree
 
 **D05.** Git 2.36 has no `merge-tree --write-tree`. The compatible merge path
@@ -56,6 +74,49 @@ evidence behind them.
 
 Short on purpose. Add an entry when something costs you more than a few minutes
 and would cost the next person the same.
+
+---
+
+## Supabase Storage reports a missing object as 400, not 404
+
+**B04/B06 verification, first live Supabase project.** `npm run supabase:smoke`
+failed at the read-after-delete step with `storage read failed with 400`, two
+lines after reporting a successful upload and an identical read back. Nothing
+was wrong with the project, the bucket, or the key. Storage worked; the store
+could not recognise an object that was absent.
+
+Supabase Storage answers a GET for an object that is not there with **HTTP 400**,
+and puts the status it means inside the body:
+
+```json
+{"statusCode":"404","error":"not_found","message":"Object not found","code":"NoSuchKey"}
+```
+
+`get` mapped only a real `404` to `null` and threw on everything else, so the
+branch that makes `BlobStore.get` return `Uint8Array | null` had never once run
+against the implementation that ships. `delete` had the same hole.
+
+**Why it stayed invisible:** `LocalDiskBlobStore` implements the contract
+correctly and is what every test injects, so the materials suite passed against
+the wrong implementation. The Supabase path had no test at all, and the one
+place its `null` is load-bearing — `readSelected` turning a missing object into
+`MATERIAL_NOT_FOUND` rather than serving an empty file to a model — would have
+become a 500 the first time an object actually went missing.
+
+**The trap in the fix:** a missing *bucket* is also 400 and also claims
+`"statusCode":"404"`; a rejected key is 400 claiming `"403"`. Mapping 400 to
+`null` makes the smoke test pass and silently converts a mistyped
+`SUPABASE_STORAGE_BUCKET` into "every material is missing" — a configuration
+error no caller can tell apart from an empty store. The discriminator has to be
+the body's `code` (`NoSuchKey` / `NoSuchBucket` / `AccessDenied`), not the status
+it claims.
+
+**Instead:** where a hosted API's status line disagrees with its body, believe
+the body, and match the specific condition rather than the status class. And
+when an interface returns `T | null`, check that *every* implementation can
+actually produce the `null` — not just the one the tests use.
+
+---
 
 ## A fast response reopened a creation form before navigation finished
 

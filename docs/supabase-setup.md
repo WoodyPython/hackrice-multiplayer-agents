@@ -86,8 +86,9 @@ the session pooler string.
 npm run supabase:smoke --workspace @app/server
 ```
 
-It uploads a small object, reads it back, compares the bytes, deletes it, and
-sends one broadcast. It leaves nothing behind.
+It uploads a small object, reads it back, compares the bytes, deletes it,
+confirms it then reads as missing, and sends one broadcast. It leaves nothing
+behind.
 
 Expected:
 
@@ -98,12 +99,24 @@ ok    storage: delete
 ok    realtime: broadcast accepted
 ```
 
-| Failure | Cause |
-|---|---|
-| `storage upload: ... 404` | Bucket does not exist, or its name differs from `SUPABASE_STORAGE_BUCKET` |
-| `storage upload: ... 401` / `403` | Using the anon key where the service-role key is required |
-| `realtime broadcast: ... 404` | Realtime is not enabled for the project |
-| `realtime broadcast: ... 401` | Wrong key |
+**Storage reports almost everything as `400`.** The status line is not the
+status it means — the real one is in the response body, which the store reads
+and deliberately never prints (§13.3: the body can echo a request, and the
+service-role key travels in the headers). So diagnose a storage failure by the
+body's `code`, not by the number in the message:
+
+| Failure | Body `code` | Cause |
+|---|---|---|
+| `storage upload failed with 400` | `NoSuchBucket` | Bucket does not exist, or its name differs from `SUPABASE_STORAGE_BUCKET` |
+| `storage upload failed with 400` | `AccessDenied` | Using the anon key where the service-role key is required |
+| `storage read failed with 400` | `NoSuchBucket` | As above — a read cannot find the bucket either |
+| `realtime broadcast: ... 404` | — | Realtime is not enabled for the project |
+| `realtime broadcast: ... 401` | — | Wrong key |
+
+To see a body, re-run the request by hand; the store will not show it to you.
+`NoSuchKey` is *not* in that table on purpose: a missing object is a normal
+answer, and the store returns `null` for it rather than failing. See
+[`pitfalls.md`](pitfalls.md) for why that distinction cost an afternoon.
 
 **When it passes, say so in `docs/CHANGELOG.md`.** Both integrations are
 currently marked unverified in B04 and B06, and that note is the only signal

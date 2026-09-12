@@ -17,6 +17,8 @@ import { createGeminiAdapter } from '../models/gemini.js';
 import { ModelAdapterError, type ModelAdapter } from '../models/types.js';
 import { OrchestratorPlanner, ParallelAssignmentScheduler, StartOrchestrator } from '../orchestration/index.js';
 import { WorkerExecutor } from '../workers/executor.js';
+import { LocalReviewService } from '../reviews/service.js';
+import { registerReviewRoutes } from '../reviews/routes.js';
 
 export interface LiveDocumentAttachment {
   close(): Promise<void>;
@@ -93,6 +95,8 @@ export async function startRuntime(options: RuntimeOptions) {
     });
     app = await (options.applicationFactory ?? buildApp)({ db: db.db, config, lifecycle, orchestration });
     await registerCheckpointRoutes(app, collaboration);
+    const reviews = new LocalReviewService({ db: db.db, git, collaboration });
+    await registerReviewRoutes(app, reviews);
     live = options.attachLiveDocuments
       ? await options.attachLiveDocuments(app.server)
       : attachLiveDocuments(app.server, liveDeps, collaboration);
@@ -105,7 +109,7 @@ export async function startRuntime(options: RuntimeOptions) {
     }
     orchestration.open();
     await app.listen(options.listen ?? { host: '0.0.0.0', port: config.PORT });
-    return { app, git, lifecycle, collaboration, orchestration, close };
+    return { app, git, lifecycle, collaboration, orchestration, reviews, close };
   } catch (error) {
     await close().catch(() => undefined);
     throw error instanceof GitRuntimeError ? error : new GitRuntimeError('STARTUP_FAILED');

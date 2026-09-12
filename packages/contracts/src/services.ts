@@ -255,7 +255,9 @@ export interface GuardedWorkerGitService extends Pick<GitService, 'readText'> {
 
 export interface ReviewService {
   prepare(input: { workspaceId: string; taskId: string }): Promise<Review>;
-  resolve(input: { workspaceId: string; reviewId: string; resolutions: unknown }): Promise<Review>;
+  /** D06 requires the candidate being resolved. Optional in the legacy type for
+   * additive compatibility; new callers supply it and runtime validation enforces it. */
+  resolve(input: { workspaceId: string; reviewId: string; resolutions: unknown; expectedCandidateSha?: string }): Promise<Review>;
   /** Called when typing, requirement edits, or guidance changes make it stale. */
   invalidate(input: { taskId: string; reason: string }): Promise<void>;
   apply(input: {
