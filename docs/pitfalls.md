@@ -24,6 +24,42 @@ Windows as well as Unix. Changing that path restored the existing tests.
 
 ---
 
+## A throw inside a transaction rolled back the work it was reporting
+
+**B03, answering an expired agent question.** The handler marked the question
+expired, settled the task, and then threw `AGENT_TIMED_OUT` — all inside the
+transaction callback. The throw rolled the transaction back, so the expiry it
+had just written was discarded. Every call redid the work and undid it again,
+and the self-healing this path was documented as providing never happened once.
+
+The caller saw the right error, which is why it looked fine. Nothing asserted
+that the row had actually changed. Found by Role C during C02, along with the
+test that catches it.
+
+**Why:** returning from a transaction callback commits; throwing rolls back.
+Both are correct behaviours, and code that writes *and then* reports a failure
+sits exactly on the seam.
+
+**Instead:** return the error from the callback and throw it after the
+transaction resolves. And when a handler's job is to repair state before
+reporting a failure, assert the repair, not just the error — an assertion on the
+thrown code alone passes against a complete rollback.
+
+---
+
+## Two paths took the same two locks in opposite orders
+
+**B03 and C02.** Answering a question locked the question row and then the task.
+Deadline enforcement and cancellation locked the task and then the question.
+Under concurrency that is a deadlock, and it survived review on both sides
+because each path is individually reasonable.
+
+**Instead:** fix a global lock order and write it down. Here it is task, then
+question, matching design §6.3's "a consistent lock order prevents deadlock:
+workspace operation lock, then task document gate."
+
+---
+
 ## A constraint-name match that never matched
 
 **B05, `draft_files`.** Find-or-create caught the unique violation by name and
