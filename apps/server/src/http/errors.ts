@@ -91,6 +91,24 @@ export function registerErrorHandler(app: {
       return;
     }
 
+    /*
+     * An oversized upload. @fastify/multipart and the body parser both abort
+     * the stream themselves, so this never reaches the route's own size check.
+     *
+     * Reported as VALIDATION_FAILED rather than a bare 413 so the client has
+     * one branch for every reason a file can be refused — type, emptiness, NUL
+     * content, encoding, size — all of which section 3.4 treats alike.
+     */
+    if (
+      error.statusCode === 413 ||
+      error.code === 'FST_REQ_FILE_TOO_LARGE' ||
+      error.code === 'FST_ERR_CTP_BODY_TOO_LARGE'
+    ) {
+      const api = new ApiError('VALIDATION_FAILED', 'File exceeds the 1 MiB limit.');
+      void reply.status(api.httpStatus).send(api.toBody());
+      return;
+    }
+
     request.log.error({ err: error }, 'unhandled error');
     const api = new ApiError('INTERNAL_ERROR', 'Something went wrong.');
     void reply.status(api.httpStatus).send(api.toBody());

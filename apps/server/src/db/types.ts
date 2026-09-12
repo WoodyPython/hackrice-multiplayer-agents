@@ -315,4 +315,6 @@ export type RunRow = Selectable<RunsTable>;
 export type NewRun = Insertable<RunsTable>;
 
 export type AgentQuestionRow = Selectable<AgentQuestionsTable>;
+export type MaterialRow = Selectable<MaterialsTable>;
+export type NewMaterial = Insertable<MaterialsTable>;
 export type NewAgentQuestion = Insertable<AgentQuestionsTable>;

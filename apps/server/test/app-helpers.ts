@@ -1,6 +1,7 @@
 import { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { NullOrchestrationHook, NullWorkspaceLifecycleHook } from '@app/contracts';
+import type { BlobStore } from '../src/materials/blob-store.js';
 import type { AppConfig } from '../src/config.js';
 import { BOOT_ID } from '../src/config.js';
 import { buildApp } from '../src/http/app.js';
@@ -59,6 +60,7 @@ export interface TestApp {
 export async function buildTestApp(options: {
   config?: Partial<AppConfig>;
   captureLogs?: boolean;
+  blobs?: BlobStore;
 } = {}): Promise<TestApp> {
   const handle = connectTestDb();
   const lifecycle = new NullWorkspaceLifecycleHook();
@@ -70,6 +72,7 @@ export async function buildTestApp(options: {
     config: testConfig(options.config),
     lifecycle,
     orchestration,
+    ...(options.blobs ? { blobs: options.blobs } : {}),
     ...(logs ? { logStream: logs } : {}),
   });
   await app.ready();

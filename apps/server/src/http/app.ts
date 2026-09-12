@@ -1,4 +1,5 @@
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
@@ -8,6 +9,7 @@ import {
   type OrchestrationHook,
   type WorkspaceLifecycleHook,
 } from '@app/contracts';
+import { join } from 'node:path';
 import type { AppConfig } from '../config.js';
 import type { Db } from '../db/client.js';
 import { PgWorkspaceService } from '../workspaces/service.js';
@@ -15,6 +17,10 @@ import { registerWorkspaceRoutes } from '../workspaces/routes.js';
 import { PgDiscussionService } from '../discussion/service.js';
 import { PgTaskService } from '../tasks/service.js';
 import { registerTaskRoutes } from '../tasks/routes.js';
+import { PgMaterialService } from '../materials/service.js';
+import { registerMaterialRoutes } from '../materials/routes.js';
+import type { BlobStore } from '../materials/blob-store.js';
+import { LocalDiskBlobStore } from '../materials/blob-store.js';
 import { registerErrorHandler } from './errors.js';
 
 /**
@@ -37,6 +43,11 @@ export interface AppDeps {
   lifecycle?: WorkspaceLifecycleHook;
   /** Role C implements this in C06. Defaults to a no-op recorder. */
   orchestration?: OrchestrationHook;
+  /**
+   * Where material bytes live. Defaults to local disk so the server runs
+   * without a Supabase project; swap in SupabaseBlobStore at deploy time.
+   */
+  blobs?: BlobStore;
   /**
    * Capture log output instead of writing to stdout. Exists so the redaction
    * rules below can be asserted rather than assumed: a test drives an owner
@@ -114,6 +125,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
    */
   await app.register(rateLimit, { global: false });
 
+  // Section 3.4's 1 MiB per-text-file transport limit, enforced at the parser
+  // so an oversized body never reaches memory whole.
+  await app.register(multipart, {
+    limits: { fileSize: 1024 * 1024, files: 1, fields: 8 },
+  });
+
   registerErrorHandler(app);
 
   app.get('/health', async () => ({
@@ -158,6 +175,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   await registerTaskRoutes(app, { tasks, discussion });
+
+  const materials = new PgMaterialService({
+    db: deps.db,
+    blobs: deps.blobs ?? new LocalDiskBlobStore(join(config.gitDataRoot, 'materials')),
+  });
+  await registerMaterialRoutes(app, { materials });
 
   return app;
 }
