@@ -735,6 +735,18 @@ Each agent has one in-flight model request at a time, which makes its own usage 
 
 Git mutation is briefly serialized per workspace; model execution remains parallel.
 
+C05 implements this scheduling boundary through a per-runtime scheduler.
+Worker completion and integration readiness are distinct: dependents require
+a durable successful integration receipt before receiving the current result
+head as their base. Conflicted or unavailable integration blocks dependents
+while independent peers may finish. Provider retry waits emit durable waiting
+and resumed events without creating human questions or extending deadlines.
+D05's guarded integration checks the exact Git sources and worker delta, then
+rechecks run/cancellation authority immediately before result publication under
+the workspace lock. C06 owns Start-hook wiring and run finalization after
+scheduling returns. Isolated consumers lacking D05 retain changed results as
+pending integration.
+
 ## 9. Models, token usage, and the fixed deadline
 
 ### 9.1 Backend model adapter
@@ -1358,7 +1370,7 @@ These live in docs/ at the repository root.
 
 Every row is a single-owner work package. “Expected behavior” defines what that component must do and can be checked in isolation or against the listed prerequisites. It is not a separate release checklist.
 
-Completed so far: B01 through B04. The schema and its migrations, the contracts package, the application factory and configuration, anonymous workspaces with owner-key checks, posted tasks with discussion and the Start transaction, and reference materials behind a storage interface. Everything else is open.
+Implementation status and verification are recorded in `docs/CHANGELOG.md`. C05 now dispatches parallel assignments and consumes D05's guarded result integration. C06's explicit Start orchestration and C07's review handoff remain separate work packages.
 
 ### 16.1 Role B — Supabase and application data
 

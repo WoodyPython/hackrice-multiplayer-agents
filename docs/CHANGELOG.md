@@ -2,6 +2,27 @@
 
 Newest first. One entry per landed ticket.
 
+## C05 — Parallel assignment scheduler
+**Implemented:** 2026-09-12 · working tree · Role C
+**Affects:** Roles A, B, C, and D
+**Action required:** C06 injects the singleton scheduler/executor and LocalGitService, supplies captured context, and owns durable cancellation/run finalization. D05's real merge is now connected through a guarded capability. Read [C05 integration notes](../apps/server/src/orchestration/SCHEDULER.md). No migration or dependency is added by C05.
+
+- Loads/revalidates the saved plan, creates stable worker instances and complete
+  dependency graphs, and dispatches independent workers without a global cap.
+- Persists bases and integration receipts, serializes workspace integrations,
+  and releases dependents only after successful integration. Conflicts/failures
+  retain checkpoints and let independent peers finish.
+- Synced upstream through `cb2fe1f` (including D05 `d18cb4d`) and connected D05's
+  real merge with exact-source/scope checks and a guard immediately before
+  result publication. Isolated callers without D05 keep pending results.
+- Adds durable provider backoff/resume events on the existing fixed clock and
+  budget. No HTTP Start wiring or frontend progress work is included.
+- Focused checks cover concurrency, graph gating, conflicts, failures, stale
+  publication, duplicate dispatch, and real parallel C04/D05 merges with
+  dependent output reads. Guard checks preserve main/human/worker refs.
+- Validation after syncing D05: full build and suite passed with 537 backend
+  and 27 frontend tests. The focused scheduler suite also passed all 19 checks.
+
 ## A03 - Simultaneous editor binding
 **Landed:** 2026-09-12 - Role A
 **Affects:** Role A; A04/A07 can link to shared task drafts

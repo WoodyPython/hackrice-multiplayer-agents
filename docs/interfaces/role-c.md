@@ -1,6 +1,6 @@
 # For Role C — orchestration against the data layer
 
-**Reflects:** B07, C02, C03, C04 · **Owner:** Role B (data), Role C (execution)
+**Reflects:** B07, C02, C03, C04, C05 · **Owner:** Role B (data), Role C (execution)
 
 > **Resolved: `PgAgentLedger` is the ledger.** B07 briefly shipped a second one,
 > `PgBudgetLedger` under `src/runs`; it has been deleted. Yours won on three
@@ -13,12 +13,20 @@
 ## C02 execution and accounting
 
 C04's `WorkerExecutor` now wraps the five worker tools in this execution scope.
-C05 must persist each worker's base, create mutating worktrees, and dispatch
-after prerequisites finish. C06 supplies the immutable captured context and
+C05 now persists each worker's base, creates mutating worktrees, and dispatches
+after prerequisites have successful integration receipts. C06 supplies the immutable captured context and
 owns cancellation/run finalization. Read the [C04 integration notes](../../apps/server/src/workers/README.md).
 `agent.completed` worker events contain `{ agentId, result }`; result holds the
 summary, issued references, limitations, verified artifact hashes and result SHA.
 `agent.checkpointed` records accepted Git checkpoints. No migration is needed.
+
+`ParallelAssignmentScheduler.schedule({ runId, planningInstanceId, context })`
+loads the durable C03 plan and returns assignment outcomes plus the combined
+result SHA. Use one scheduler per process, catch setup errors, and finalize
+runs in C06/C07. Completed worker status alone is not integration readiness.
+The runtime's `LocalGitService.integrateGuarded` is selected automatically for
+D05 merging. Only isolated callers without that capability fall back to the
+recorder returning `unavailable`. See [C05 integration notes](../../apps/server/src/orchestration/SCHEDULER.md).
 
 `PgAgentLedger` and `AgentExecution` are available under `src/agents`; their
 [integration notes](../../apps/server/src/agents/README.md) describe the callable

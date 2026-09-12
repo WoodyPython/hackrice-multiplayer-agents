@@ -1,6 +1,6 @@
 # Git files and checkpoints
 
-**Reflects:** D05 · **Owner:** Role D
+**Reflects:** D05, C05 guard integration · **Owner:** Role D
 
 ## Worker-result integration (D05)
 
@@ -25,6 +25,17 @@ and already-integrated workers return the current result SHA without a new commi
 
 ### C05 handoff
 
+C05 uses the additive `LocalGitService.integrateGuarded(input, guard)` capability.
+Besides workspace/run/agent IDs, input fixes `baseSha`, `workerResultSha`,
+`expectedResultSha`, and exact `writePaths`. D05 checks all three Git sources
+and the complete delta before preparing the merge. Under the workspace lock,
+it invokes the supplied guard immediately before the result ref CAS (also on
+no-op/conflict outcomes). The guard verifies current task/run/boot and durable
+completion under database row locks, publishes, and records the integration
+receipt plus result head atomically in the database. A rejected guard never
+publishes. No database transaction surrounds Git preparation. The existing
+unguarded method remains compatible for trusted backend callers.
+
 C05 resolves workspace/run/instance membership, checks current run/boot and
 cancellation, requires durable C04 completion, and validates the worker's stored
 scope and final commit before calling. D05 has no database dependency; IDs alone
@@ -33,12 +44,12 @@ by the coordinator; do not reopen a completed instance with `assertActive` or
 change its immutable `agent_instances.result_sha`.
 
 Keep integration and metadata recording ordered in C05: await a conflict-free
-integration, await `PgRunStore.recordResultHead(runId, resultSha)`, then release
+guarded integration and its committed receipt/result head, then release
 dependents using the current integrated SHA as their persisted `base_sha`.
 `readyInstances` currently tests completion only; C05 must additionally require
 successful integration of mutating prerequisites. Read-only workers have no
 worker branch and are handled by C05 without calling this method. C05 owns
-blocked-assignment metadata, conflict events, dispatch, and run settlement.
+blocked-assignment metadata, conflict events and dispatch; C06/C07 own run settlement.
 Do not concurrently record an older return value after a newer result head.
 
 A conflict never releases dependents. Git/validation failures also stop release.

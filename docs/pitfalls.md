@@ -1,5 +1,15 @@
 # Pitfalls
 
+## A completed worker is not necessarily integrated
+
+**C05.** B07's ready-set query tests only prerequisite agent completion. C04
+completes a worker before D05 merges its branch, so using that ready set directly
+would start dependents on an older result head and release them even after a
+merge conflict. C05 now requires a separate successful integration receipt,
+records it with the new combined head, and keeps the worker checkpoint immutable.
+Tests pause integration after both workers finish and verify the dependent still
+has no base or running clock. Missing D05 support returns a visible pending state.
+
 ## A temporary merge index still asked for a worktree
 
 **D05.** Git 2.36 has no `merge-tree --write-tree`. The compatible merge path

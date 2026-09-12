@@ -13,13 +13,18 @@ const workers = new WorkerExecutor({
 const result = await workers.execute({ agentInstanceId, context: capturedContext });
 ```
 
-C05 must create the instance with its validated preset/instruction/write paths,
-link dependencies, select and persist `base_sha` after integrating prerequisites,
-and create the mutating worker's branch using that base before dispatch. Readonly
+C05's `ParallelAssignmentScheduler` creates the instance with its validated preset/instruction/write paths,
+links dependencies, selects and persists `base_sha` after integrating prerequisites,
+and creates the mutating worker's branch using that base before dispatch. Readonly
 workers read their base commit without requiring a worktree. Use one executor
 per runtime; identical concurrent calls coalesce. This is not an automatic
 restart/replay facility. Terminal instances cannot execute again. Manual retry
 uses a new instance and the existing task/agent budget.
+
+See [C05's handoff](../orchestration/SCHEDULER.md) for durable integration
+receipts and the guarded D05 implementation. Provider backoff now emits
+`agent.waiting` events with `reason: 'provider_backoff'`, a waiting/resumed flag,
+delay and retry time. This does not change the agent deadline or create a question.
 
 C06 supplies the original captured `PlanningContext`, retains the executor for
 cancel/shutdown, sweeps deadlines, and finalizes runs after peers settle. Its

@@ -48,6 +48,16 @@ export class PgWorkerStore {
         ...Object.keys(manifest.draftFileHashes), ...prerequisites.flatMap((p) => p.write_paths)])] };
   }
 
+  async providerWait(id: string, requestKey: string, delayMs: number, waiting: boolean, signal: AbortSignal) {
+    await this.ledger.withActiveWrite(id, async (trx, agent) => {
+      signal.throwIfAborted();
+      await appendEvent(trx, { workspaceId: agent.workspace_id, taskId: agent.task_id, runId: agent.run_id,
+        eventKey: `agent:${id}:provider:${requestKey}:${waiting ? 'waiting' : 'resumed'}`, type: 'agent.waiting',
+        payload: { agentId: id, reason: 'provider_backoff', waiting, delayMs,
+          retryAt: waiting ? new Date(this.now().getTime() + delayMs).toISOString() : null } });
+    });
+  }
+
   /** No Git call is made while waiting for these DB locks. Git invokes this
    * boundary while it already holds the workspace lock and has a candidate.
    */

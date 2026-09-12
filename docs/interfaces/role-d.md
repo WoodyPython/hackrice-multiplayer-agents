@@ -1,6 +1,17 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** B07, C02 · **Owner:** Role B (data), Role C (execution guard)
+**Reflects:** B07, C02, C05 · **Owner:** Role B (data), Role C (execution guard)
+
+## C05 integration handoff for D05
+
+C05 now consumes `LocalGitService.integrateGuarded` through the shared
+`GuardedResultIntegrationService` capability. D05 prepares under its workspace
+Git lock and awaits `ResultIntegrationGuard`
+before publishing the result ref. C05 records the combined head and receipt
+under task/run/agent locks; completed worker checkpoints remain immutable.
+Isolated callers lacking that capability use the pending-result recorder. See the
+[exact contract and recovery boundary](../../apps/server/src/orchestration/SCHEDULER.md#d05-integration-seam).
+Do not adapt the unguarded `GitService.integrate` by checking only after it returns.
 
 ## C02 guard for agent effects
 

@@ -51,3 +51,29 @@ export const gitIntegrateResultSchema = z.object({
   conflicts: z.array(repoPathSchema.refine((path) => !path.includes('\\') && /^(documents|code)\//.test(path)))
     .refine((paths) => paths.every((path, i) => i === 0 || paths[i - 1]! < path)),
 });
+
+/**
+ * Design section 8.4's start snapshot: approved main (A) combined with the
+ * latest human-draft checkpoint (L) into the private starting snapshot S.
+ *
+ * A separate capability rather than another `GitService` method, for the same
+ * reason as the guarded worker/result seams: an implementation that predates it
+ * cannot silently start a run from an uncombined base. The snapshot is a commit
+ * object only — no branch is published, because the run's result branch is
+ * created at it by the scheduler.
+ */
+export const startSnapshotRequestSchema = createDraftRequestSchema.extend({
+  mainSha: shaSchema, draftSha: shaSchema,
+});
+/** Exactly one outcome: a snapshot commit, or the paths that prevented one. */
+export const startSnapshotResultSchema = z.object({
+  snapshotSha: shaSchema.nullable(),
+  conflicts: gitIntegrateResultSchema.shape.conflicts,
+}).refine((result) => (result.snapshotSha === null) === (result.conflicts.length > 0));
+export type StartSnapshot = z.infer<typeof startSnapshotResultSchema>;
+
+export interface StartSnapshotService {
+  /** Never writes main, the human draft, or any branch. Conflicts surface
+   * before any agent starts (section 8.4), and produce no snapshot. */
+  combineStartSnapshot(input: z.infer<typeof startSnapshotRequestSchema>): Promise<StartSnapshot>;
+}

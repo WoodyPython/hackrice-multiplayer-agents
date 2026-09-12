@@ -63,13 +63,16 @@ export class WorkerExecutor implements WorkerExecutionService {
       let backoff = 1000;
       while (true) {
         let response;
+        const requestKey = randomUUID();
         try {
-          response = await scope.generate(randomUUID(), { preset: binding.agent.preset,
+          response = await scope.generate(requestKey, { preset: binding.agent.preset,
             systemInstruction: SYSTEM, tools: WORKER_TOOLS, messages });
           backoff = 1000;
         } catch (error) {
           if (!(error instanceof ModelAdapterError) || !error.retryable) throw error;
+          await this.store.providerWait(id, requestKey, backoff, true, scope.signal);
           await scope.run((signal) => waitForWorker(backoff, signal));
+          await this.store.providerWait(id, requestKey, backoff, false, scope.signal);
           backoff = Math.min(backoff * 2, 30000); continue;
         }
         if (response.blockReason) throw new WorkerToolError('blocked_response');
