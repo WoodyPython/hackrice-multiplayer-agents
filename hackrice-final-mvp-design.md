@@ -983,6 +983,8 @@ The review includes:
 
 Each AI finding identifies the snapshot it examined. If the combined candidate includes newer human edits or approved-workspace changes, label the earlier finding accordingly; do not imply the AI reviewed the new content. The owner reviews the exact combined candidate. A fresh AI assessment can be requested as an explicit assignment with its own recorded snapshot.
 
+C07 implements the fresh assessment as its own execution path, not another worker inside a run: by the time anyone requests one, the run that produced the candidate is typically already terminal, and the task's active-run lifecycle is exactly the thing a late worker result must be checked against. Reusing that lifecycle for a request that arrives after it closed would mean weakening the guard rather than satisfying it, so the assessment reserves and settles against the same per-task-and-agent budget table under its own stable key, and records its finding as a durable event keyed to the exact candidate it examined — idempotent, so a repeat request for the same candidate reads back the recorded finding rather than spending budget twice.
+
 Server-generated work logs use unique task/run paths. Agents cannot forge approval metadata or write a test-pass indicator by saying “tests passed.”
 
 Task discussion and live keystrokes are not committed one event at a time. Git stores meaningful file checkpoints and published results.
@@ -1425,7 +1427,7 @@ These live in docs/ at the repository root.
 
 Every row is a single-owner work package. “Expected behavior” defines what that component must do and can be checked in isolation or against the listed prerequisites. It is not a separate release checklist.
 
-Implementation status and verification are recorded in `docs/CHANGELOG.md`. C06 now connects Start end to end: it captures the run's context, combines the start snapshot, plans, dispatches through C05, and terminalizes the run. C07's review handoff remains a separate work package.
+Implementation status and verification are recorded in `docs/CHANGELOG.md`. C06 now connects Start end to end: it captures the run's context, combines the start snapshot, plans, dispatches through C05, and terminalizes the run. C07 adds a fresh reviewer assessment against a review's exact candidate and composes its evidence from durable data; the request-revision handoff and the run's ready/incomplete derivation were already covered by B03's existing Start transition and C06 respectively, so C07 added nothing further for either. C08's manual retries and failure cases remain a separate work package.
 
 ### 16.1 Role B — Supabase and application data
 

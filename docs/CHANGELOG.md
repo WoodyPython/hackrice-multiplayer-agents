@@ -2,6 +2,36 @@
 
 Newest first. One entry per landed ticket.
 
+## C07 — Reviewer, evidence, and review handoff
+**Implemented:** 2026-09-12 · working tree · Role C
+**Affects:** Roles A, C, and D
+**Action required:** `registerReviewRoutes` now takes a required third argument; rebuild and see the interface note below if anything calls it directly. Two additive routes: `GET .../reviews/:reviewId/evidence` and `POST .../reviews/:reviewId/assess`. Read [C07 integration notes](../apps/server/src/orchestration/REVIEW.md). No migration or dependency is added.
+
+- `ReviewAssessor` runs one fresh reviewer-preset pass against a review's own
+  current candidate (design section 10.4), deliberately decoupled from
+  `PgAgentLedger`/`agent_instances`: those are gated on the task's active run,
+  which a review no longer has by the time anyone asks to assess it. It
+  reserves and settles against the same `task_agent_budgets` table under a
+  dedicated `review:<reviewId>` key, records its result as a durable
+  `review.assessed` event, and is idempotent per exact candidate SHA — a
+  repeat request against the same candidate is read back, never re-run.
+- `ReviewEvidenceComposer` composes `ReviewEvidence` from durable data alone —
+  no new table. In-run `agent.completed` summaries are labeled against the run's
+  own examined SHA and flagged stale the moment the review's source tuple
+  diverges from what that run actually captured; fresh assessments are folded
+  in and re-flagged stale once a later resolution produces a new candidate.
+  `validationsPerformed` are checks the server actually ran, not a model's claim.
+- Two of design section 16.3's four C07 bullets were already delivered by
+  earlier tickets and needed no new code: "ready/incomplete results" by C06's
+  `StartOrchestrator.finish()`, and the "request-revision handoff" mechanism by
+  B03's existing `planning`-from-`ready_for_review`/`conflict` transition plus
+  ordinary discussion posting, which C06's capture already reads into the next
+  attempt. See the interface note for why no new route was added for either.
+- Verified: full build; `npm run test:review` passes all 14 checks against
+  real PostgreSQL, including budget exhaustion, a retried provider error
+  charging both attempts, in-process coalescing, staleness in both directions,
+  and the two new HTTP routes.
+
 ## C06 — Explicit Start and captured context
 **Implemented:** 2026-09-12 · working tree · Role C
 **Affects:** Roles A, B, C, and D

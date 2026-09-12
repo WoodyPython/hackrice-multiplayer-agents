@@ -1,5 +1,25 @@
 # Pitfalls
 
+## A review assessment cannot reuse the agent ledger's active-run gate
+
+**C07.** The obvious way to run a fresh reviewer pass against a review's
+candidate looked like another worker: create an `agent_instances` row, call
+`PgAgentLedger.reserve`/`recordUsage` like everything else does. It cannot
+work. Every one of those methods calls `isCurrent()`, which requires
+`task.active_run_id === run.id` — correct for a worker, since that is exactly
+the check that rejects a late result from a run that is no longer in charge.
+But a review is assessed precisely when its run is *no longer* the active one
+(it is terminal, or never existed for a manual-edit task), so that same check
+would refuse every legitimate request. Weakening `isCurrent()` to admit this
+case would also admit the late-result case it exists to reject.
+
+The fix is not a smaller variant of the ledger; it is a separate, self-
+contained accounting path (`ReviewAssessor`) that reserves and settles against
+the same `task_agent_budgets` table under its own agent key, never touching
+`agent_instances` at all. Recognizing "this shares the ledger's table but not
+its lifecycle gate" earlier would have saved an initial pass that tried to
+extend `createInstance` with an `allowTerminalRun` flag before backing out.
+
 ## A test that scripts an invalid plan runs until the token budget drains
 
 **C06.** A planning test returning a plan that fails validation looked like the

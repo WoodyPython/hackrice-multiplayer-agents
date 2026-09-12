@@ -133,6 +133,27 @@ detail beyond the table: the codes are stable, the set is not closed.
 
 ---
 
+## Review evidence and a fresh assessment (C07)
+
+Two additions to D06's existing review routes, for A06:
+
+- `GET /reviews/:r/evidence` → `ReviewEvidence`: real `changedFiles`,
+  `agentSummaries` (each labeled generated, carrying `examinedSha` and a
+  `staleAgainstCandidate` flag — render that distinctly, e.g. "may be out of
+  date" rather than silently dropping it), `validationsPerformed` (real
+  server checks, `passed`/`detail`), and `generatedCodeWasNotExecuted: true`.
+- `POST /reviews/:r/assess` → `ReviewAssessment`, no body. Triggers one fresh
+  reviewer pass against the candidate held right now. Idempotent per exact
+  candidate: calling it again before the candidate changes returns the same
+  finding rather than running a second one, so a retry button is always safe.
+  Errors map to `REVIEW_NOT_FOUND`, `AGENT_TIMED_OUT`, `AGENT_TOKEN_EXHAUSTED`,
+  or `INVALID_STATE` — the usual table above applies.
+
+Neither route mutates the review or its candidate; both are safe to call from
+a read-only review screen.
+
+---
+
 ## Staying current: events and refresh hints
 
 Two pieces, and the split matters. **Durable events are authoritative; realtime

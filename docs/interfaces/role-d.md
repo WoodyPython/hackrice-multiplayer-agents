@@ -1,6 +1,27 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** B07, C02, C05, C06 · **Owner:** Role B (data), Role C (execution guard)
+**Reflects:** B07, C02, C05, C06, C07 · **Owner:** Role B (data), Role C (execution guard)
+
+## C07 additions to `reviews/routes.ts`
+
+`registerReviewRoutes(app, reviews, c07)` now takes a required third argument:
+`{ evidence: ReviewEvidenceComposer, assessments: ReviewAssessmentService }`,
+both constructed in `recovery/runtime.ts` alongside the rest of Role C's stack
+and sharing its one `ModelAdapter`. Two additive routes follow D06's existing
+shape — read the review through `reviews.read()` first, then hand its result
+to the injected capability rather than touching Git:
+
+- `GET .../reviews/:reviewId/evidence` → `ReviewEvidence`
+- `POST .../reviews/:reviewId/assess` → `ReviewAssessment`, no body
+
+Both read-only from D06's side: neither mutates a review row or its candidate.
+`ReviewAssessmentError` is translated to a proper `ApiError`
+(`REVIEW_NOT_FOUND`, `AGENT_TIMED_OUT`, `AGENT_TOKEN_EXHAUSTED`, or
+`INVALID_STATE`) at the route, the one place a C07 error crosses HTTP
+synchronously — everywhere else in this design, an agent outcome reaches the
+browser through a durable event instead. See
+[C07's notes](../../apps/server/src/orchestration/REVIEW.md) for why this
+capability is not built on the run/agent-instance lifecycle at all.
 
 ## C06 changes inside the runtime
 

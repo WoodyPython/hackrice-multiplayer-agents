@@ -10,11 +10,12 @@ import type {
 import type { AgentQuestion, DiscussionEntry } from './discussion.js';
 import type { DraftCapture, DraftFile, DocumentRevisions, TextChange } from './draft.js';
 import type { Material } from './material.js';
-import type { Review, ReviewSource } from './review.js';
+import type { Review, ReviewAssessment, ReviewSource } from './review.js';
 import type { PostedTask, TaskDetail } from './task.js';
 import type { Workspace } from './workspace.js';
 import type { TaskEventType } from './events.js';
 import type { GitReadTarget } from './git.js';
+import { ApiError } from './errors.js';
 
 /**
  * Design section 12.4. These are the backend seams between roles. An owner
@@ -311,6 +312,37 @@ export class NullOrchestrationHook implements OrchestrationHook {
 }
 
 export type { PostedTask };
+
+// --- The D06 <-> C07 seam --------------------------------------------------
+
+/**
+ * Role D's review routes call this for a fresh AI assessment. Role C
+ * implements it in C07.
+ *
+ * A review can be assessed long after the run that produced its candidate
+ * finished, or for a manual-edit task that never had a run at all (section
+ * 10.4: "a fresh AI assessment can be requested as an explicit assignment
+ * with its own recorded snapshot"). That is why this seam does not go through
+ * the run/agent-instance lifecycle C02 guards: a completed run's active-run
+ * gate would refuse it outright, correctly, since nothing here writes Git or
+ * needs late-result rejection.
+ */
+export interface ReviewAssessmentService {
+  /** Idempotent per (reviewId, the review's current candidateSha): a repeat
+   * call for the same candidate returns the recorded assessment rather than
+   * spending budget again. */
+  assess(input: { workspaceId: string; taskId: string; reviewId: string }): Promise<ReviewAssessment>;
+}
+
+/** Stand-in until C07 lands, and for isolated tests that exercise review
+ * routes without agent execution configured. */
+export class NullReviewAssessmentService implements ReviewAssessmentService {
+  readonly calls: Array<{ workspaceId: string; taskId: string; reviewId: string }> = [];
+  async assess(input: Parameters<ReviewAssessmentService['assess']>[0]): Promise<ReviewAssessment> {
+    this.calls.push(input);
+    throw new ApiError('INVALID_STATE', 'Review assessment is not configured.');
+  }
+}
 
 // --- The B02 <-> D01 seam --------------------------------------------------
 
