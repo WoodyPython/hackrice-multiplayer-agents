@@ -51,12 +51,20 @@ export interface RequestAllowance {
 }
 
 export interface ModelAdapter {
+  /** Verified provider bounds; minimum includes any mandatory thinking. */
+  getModel(preset: AgentRequest['preset']): ModelProfile;
   countInput(request: AgentRequest, signal?: AbortSignal): Promise<number>;
   generate(
     request: AgentRequest,
     limits: RequestAllowance,
     signal: AbortSignal,
   ): Promise<AgentResponse>;
+}
+
+export interface ModelProfile {
+  modelId: string;
+  minOutputTokens: number;
+  maxOutputTokens: number;
 }
 
 export type ModelErrorCode =

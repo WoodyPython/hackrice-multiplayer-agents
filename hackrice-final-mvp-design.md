@@ -803,6 +803,12 @@ Gemini supplies token counting and usage metadata. Its thinking controls are mod
 
 Use reported total usage when it covers the required categories; do not sum total plus its components. For missing usage after a failed request, retain its reservation as unknown rather than giving the agent that budget back.
 
+That makes the accounting a ledger rather than a counter, with three states per call: reserved while the call is in flight, reported once the provider says what it cost, and unknown when it failed without usable usage. Only the first two ever release a reservation. Returning budget on a failed call would let an agent that keeps failing consume unbounded provider capacity while its recorded usage stayed at zero, which is precisely the case the limit exists to bound.
+
+The check and the reservation are one operation, not a read followed by a write. Several of an agent's calls can be prepared at once, and a separate check lets two of them both observe enough headroom and both take it.
+
+An abandoned reservation is charged rather than left outstanding. The charge is retained either way, but an accumulating pile of holds that never clear would make the remaining-budget arithmetic unable to distinguish a live in-flight call from a dead one.
+
 A model switch must verify token-counting and thinking/output-bound behavior before use. The limit is an execution accounting rule, not a guaranteed invoice cap.
 
 ### 9.4 No other fixed agent quotas
@@ -955,7 +961,7 @@ Reserve and reconcile model-call usage atomically against task_agent_budgets, re
 - Gap-free discussion sequence per task, allocated under the task row lock so sequence order matches commit order and a run cutoff is exact.
 - At most one open question per agent instance. An answered question must reference its answering entry; an unanswered one must not.
 - Scoped foreign keys or explicit checks preventing a material from workspace A being attached to workspace B. Prefer composite foreign keys carrying workspace_id so the database rejects cross-workspace attachment without application code.
-- Agent state transition checks: a terminal/expired instance cannot write.
+- Agent state transition checks: a terminal/expired instance cannot write. Enforced in the database, unlike task transitions, because an agent write can arrive from a detached context with no request holding a lock: section 9.2 notes that cancelling a local request does not stop the provider, so a result can land after a deadline, a cancellation, or a restart. Recording late usage stays permitted; changing an outcome or a work product does not.
 - Review status cannot become applied from stale/conflict/building.
 
 The dependency graph is validated before dispatch. Do not rely only on foreign keys to prevent cycles.
@@ -1230,7 +1236,7 @@ Do not blindly rerun an old tool call after a crash. A new agent works from save
 
 A single startup routine:
 1. Assigns the process a new boot ID.
-2. Marks nonterminal agent instances from a previous boot interrupted.
+2. Marks nonterminal agent instances and runs from a previous boot interrupted, clears the affected tasks' active-run pointers, and resolves their open questions. Clearing the pointer is what makes a retry possible: the unique active-run rule would otherwise leave those tasks permanently unstartable after any restart, and a task would report needs_input with nothing left to answer.
 3. Loads document snapshots on demand.
 4. Reconciles pending apply operations.
 5. Accepts new task actions.
@@ -1259,6 +1265,7 @@ This allocation has no time estimates. Dependencies identify the order in which 
 | apps/server/src/workspaces, tasks, discussion, materials | B |
 | apps/server/src/db and events | B |
 | apps/server/src/drafts | B |
+| apps/server/src/runs | B |
 | apps/server/src/http and config | B |
 | apps/server/src/models, orchestration, agents | C |
 | apps/server/src/git, collaboration, reviews, recovery | D |

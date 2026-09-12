@@ -60,6 +60,7 @@ describe('migrations', () => {
       '0003_indexes.sql',
       '0004_rls.sql',
       '0005_task_idempotency.sql',
+      '0006_agent_write_guard.sql',
     ]);
   });
 

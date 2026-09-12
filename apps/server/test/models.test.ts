@@ -50,6 +50,16 @@ function transport(...responses: Array<{ body: unknown; status?: number }>) {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('Gemini adapter through the real SDK', () => {
+  it.each(['orchestrator', 'writer'] as const)('exposes a usable minimum output bound for %s', async (preset) => {
+    const http = transport({ body: complete });
+    const adapter = createGeminiAdapter(config);
+    const profile = adapter.getModel(preset);
+    expect(profile.minOutputTokens).toBe(preset === 'orchestrator' ? 129 : 1);
+    await adapter.generate({ ...request, preset }, { maxOutputTokens: profile.minOutputTokens }, signal());
+    expect(http.body(0).generationConfig.maxOutputTokens).toBe(profile.minOutputTokens);
+    expect(profile.maxOutputTokens).toBe(65536);
+  });
+
   it.each(AGENT_PRESETS)('routes %s using backend configuration', async (preset) => {
     const http = transport({ body: complete });
     await createGeminiAdapter(config).generate({ ...request, preset }, allowance, signal());

@@ -266,7 +266,13 @@ export class PgDiscussionService {
     taskId: string,
     input: AnswerQuestionRequest,
   ): Promise<{ question: AgentQuestion; answerEntry: DiscussionEntry }> {
-    return this.deps.db.transaction().execute(async (trx) => {
+    const result = await this.deps.db.transaction().execute(async (trx) => {
+      // Deadline enforcement and cancellation lock the task before questions.
+      // Taking a question first can deadlock against either of those paths.
+      const task = await trx.selectFrom('tasks').select('id')
+        .where('id', '=', taskId).where('workspace_id', '=', workspaceId)
+        .forUpdate().executeTakeFirst();
+      if (!task) throw new ApiError('TASK_NOT_FOUND', 'No such task in this workspace.');
       const question = await trx
         .selectFrom('agent_questions')
         .selectAll()
@@ -300,7 +306,7 @@ export class PgDiscussionService {
           .where('id', '=', question.id)
           .execute();
         await this.settleTaskIfNoOpenQuestions(trx, taskId, question.run_id);
-        throw new ApiError(
+        return new ApiError(
           'AGENT_TIMED_OUT',
           'The agent that asked this ran out of time. Retry the task to ask again.',
         );
@@ -352,6 +358,9 @@ export class PgDiscussionService {
         answerEntry: await this.loadEntry(trx, taskId, answerEntryId),
       };
     });
+    // Commit the expiry before reporting it; throwing inside rolls it back.
+    if (result instanceof ApiError) throw result;
+    return result;
   }
 
   // -------------------------------------------------------------------------

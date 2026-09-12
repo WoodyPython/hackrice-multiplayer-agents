@@ -33,7 +33,8 @@ export const runGit: GitRunner = (args, options = {}) => {
   );
   Object.assign(env, {
     GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
+    // Git for Windows understands /dev/null; recent versions reject NUL here.
+    GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_TERMINAL_PROMPT: '0',
     GIT_AUTHOR_NAME: 'Workspace Server',
     GIT_AUTHOR_EMAIL: 'workspace@localhost',

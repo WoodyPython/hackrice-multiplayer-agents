@@ -7,6 +7,57 @@ evidence behind them.
 Short on purpose. Add an entry when something costs you more than a few minutes
 and would cost the next person the same.
 
+## An expiry that rolled back, and opposite lock orders
+
+**C02, question answers.** The answer path updated an expired question and then
+threw inside its transaction, rolling the expiry back. It now returns the error
+from the transaction and throws after commit. It also locked the question before
+the task, opposite to deadline/cancel enforcement. Both paths now lock the task
+first; concurrent expiry/answer tests exercise the boundary.
+
+## Windows Git rejected its null config path
+
+**C02 verification, D01 runtime.** Fourteen existing Git/runtime tests failed
+with `COMMAND_FAILED`. The underlying error was `unable to access 'NUL': Invalid
+argument` from Git's global configuration override. `/dev/null` works in Git for
+Windows as well as Unix. Changing that path restored the existing tests.
+
+---
+
+## A throw inside a transaction rolled back the work it was reporting
+
+**B03, answering an expired agent question.** The handler marked the question
+expired, settled the task, and then threw `AGENT_TIMED_OUT` — all inside the
+transaction callback. The throw rolled the transaction back, so the expiry it
+had just written was discarded. Every call redid the work and undid it again,
+and the self-healing this path was documented as providing never happened once.
+
+The caller saw the right error, which is why it looked fine. Nothing asserted
+that the row had actually changed. Found by Role C during C02, along with the
+test that catches it.
+
+**Why:** returning from a transaction callback commits; throwing rolls back.
+Both are correct behaviours, and code that writes *and then* reports a failure
+sits exactly on the seam.
+
+**Instead:** return the error from the callback and throw it after the
+transaction resolves. And when a handler's job is to repair state before
+reporting a failure, assert the repair, not just the error — an assertion on the
+thrown code alone passes against a complete rollback.
+
+---
+
+## Two paths took the same two locks in opposite orders
+
+**B03 and C02.** Answering a question locked the question row and then the task.
+Deadline enforcement and cancellation locked the task and then the question.
+Under concurrency that is a deadlock, and it survived review on both sides
+because each path is individually reasonable.
+
+**Instead:** fix a global lock order and write it down. Here it is task, then
+question, matching design §6.3's "a consistent lock order prevents deadlock:
+workspace operation lock, then task document gate."
+
 ---
 
 ## A corruption fixture could not overwrite Git's hidden file on Windows

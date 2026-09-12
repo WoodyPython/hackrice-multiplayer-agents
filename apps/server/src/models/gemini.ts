@@ -62,6 +62,13 @@ export class GeminiAdapter implements ModelAdapter {
     }
   }
 
+  getModel(preset: AgentRequest['preset']) {
+    agentPresetSchema.parse(preset);
+    const modelId = preset === 'orchestrator' ? this.routing.orchestrator : this.routing.worker;
+    const profile = MODEL_PROFILES[modelId]!;
+    return { modelId, minOutputTokens: profile.minThinking + 1, maxOutputTokens: profile.maxOutput };
+  }
+
   private prepare(request: AgentRequest) {
     if (!agentPresetSchema.safeParse(request.preset).success || request.messages.length === 0) {
       throw new ModelAdapterError('invalid_request', 'A valid preset and conversation are required.');

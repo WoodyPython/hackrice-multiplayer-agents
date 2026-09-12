@@ -316,6 +316,10 @@ export type NewRun = Insertable<RunsTable>;
 
 export type AgentQuestionRow = Selectable<AgentQuestionsTable>;
 export type MaterialRow = Selectable<MaterialsTable>;
+export type AgentInstanceRow = Selectable<AgentInstancesTable>;
+export type ReviewRow = Selectable<ReviewsTable>;
+export type ApplyOperationRow = Selectable<ApplyOperationsTable>;
+export type ModelCallRow = Selectable<ModelCallsTable>;
 export type DraftFileRow = Selectable<DraftFilesTable>;
 export type NewMaterial = Insertable<MaterialsTable>;
 export type NewAgentQuestion = Insertable<AgentQuestionsTable>;
