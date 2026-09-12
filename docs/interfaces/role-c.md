@@ -1,6 +1,6 @@
 # For Role C — orchestration against the data layer
 
-**Reflects:** B07, C02, C03, C04, C05 · **Owner:** Role B (data), Role C (execution)
+**Reflects:** B07, C02, C03, C04, C05, C06 · **Owner:** Role B (data), Role C (execution)
 
 > **Resolved: `PgAgentLedger` is the ledger.** B07 briefly shipped a second one,
 > `PgBudgetLedger` under `src/runs`; it has been deleted. Yours won on three
@@ -37,10 +37,12 @@ Create each instance with a stable task-scoped agent key and the model ID from
 finish. Reuse that scope for model calls, retries, tools, backoff, and human
 waits. Manual attempts create new instances but preserve the budget key.
 
-C06 must close scopes on completion/cancel/shutdown, sweep persisted deadlines,
-and finalize the run after peer agents settle. C02 marks failed required output
-incomplete without prematurely ending other agents. The current HTTP hook
-remains a null implementation until C06 lands.
+`StartOrchestrator` now closes scopes on completion/cancel/shutdown, sweeps
+persisted deadlines on a timer, and finalizes the run after peer agents settle.
+C02 marks failed required output incomplete without prematurely ending other
+agents. The runtime supplies the real hook; `NullOrchestrationHook` remains the
+default for tests that exercise the Start transaction alone. See
+[C06 integration notes](../../apps/server/src/orchestration/START.md).
 
 For database effects, use `ledger.withActiveWrite` with its supplied transaction.
 Do not nest another service transaction inside that callback. Provider usage
@@ -70,6 +72,9 @@ would report either failure.
 ---
 
 ## `OrchestrationHook.onRunCreated` — your entry point
+
+**Implemented in C06 by `StartOrchestrator`.** What follows is the contract it
+keeps; the notes above link to how it is wired.
 
 B03 creates the run row inside the Start transaction and calls you **after
 commit**. The run arrives with `task_version`, `guidance_version`,
@@ -153,8 +158,14 @@ constraint that would make that fail.
   Your parallel dispatch set (§8.7).
 - `recordCapture(runId, {inputSnapshotSha, contextManifest})` — after C06's
   capture. Refuses a run from a previous boot.
-- `settle(runId, status, reason)` — terminal run status, clears the task's
-  active-run pointer, resolves open questions. Idempotent.
+- `settle(runId, status, reason, taskStatus?)` — terminal run status, clears the
+  task's active-run pointer, resolves open questions, and terminalizes
+  assignments that never reached a terminal status. Idempotent. C06 added the
+  optional task status: run and task must settle in one transaction, because
+  ending the run first leaves the task reporting `planning` with nothing behind
+  it, and ending the task first leaves it terminal while the active-run row
+  still blocks every retry. An illegal task transition is ignored rather than
+  raised — the run is already over, and refusing would strand it.
 - `markInterruptedFromPreviousBoots()` — Role D calls this at startup.
 
 **The database also refuses late writes from terminal instances.** Migration

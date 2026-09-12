@@ -1,6 +1,25 @@
 # For Role D — Git and live runtime against the data layer
 
-**Reflects:** B07, C02, C05 · **Owner:** Role B (data), Role C (execution guard)
+**Reflects:** B07, C02, C05, C06 · **Owner:** Role B (data), Role C (execution guard)
+
+## C06 changes inside the runtime
+
+`startRuntime` now builds Role C's stack and passes the real `OrchestrationHook`
+to `buildApp`, so Start executes. Three ordering constraints came with it:
+
+- The `LiveDocumentCoordinator` is constructed **before** the application,
+  because Start captures the human draft through that same singleton. A second
+  coordinator for one runtime would capture a different set of rooms.
+- Shutdown stops orchestration **first**, before sockets and the database, so an
+  in-flight run's last writes are not aborted mid-transaction. Runs still active
+  at exit stay for `markInterruptedFromPreviousBoots` to reconcile.
+- `startRuntime` returns `orchestration` alongside `collaboration`. Its `open()`
+  owns the agent deadline sweep; one process per data root owns it.
+
+Material bytes reach workers through the same `defaultBlobStore(config)`
+selection the application uses, now exported from `http/app.ts`. Without
+`GEMINI_API_KEY` the process still boots and serves everything else; each Start
+ends its run with `model_configuration` instead of hanging in `planning`.
 
 ## C05 integration handoff for D05
 
@@ -22,9 +41,9 @@ canceled, or belong to an old run/boot. Short database writes can instead use
 `withActiveWrite` and its supplied transaction. See the
 [C02 integration notes](../../apps/server/src/agents/README.md).
 
-`AgentExecution.close()` aborts local work; C06 owns scope lifecycle and durable
-run finalization. Late provider usage remains recordable, but late results must
-not change accepted output. The Git runner now uses `/dev/null` for its empty
+`AgentExecution.close()` aborts local work; `StartOrchestrator` owns scope
+lifecycle and durable run finalization (C06). Late provider usage remains
+recordable, but late results must not change accepted output. The Git runner now uses `/dev/null` for its empty
 global config on Windows as well as Unix; this Git for Windows rejected `NUL`.
 
 D01 already integrates correctly: `GitWorkspaceLifecycleHook` honours the

@@ -148,7 +148,9 @@ wanders outside their own, merge conflicts should be near zero.
 
 ### Environment values you'll need to add
 
-`.env.example` lists everything. Role C needs a real `GEMINI_API_KEY` locally.
+`.env.example` lists everything. A real `GEMINI_API_KEY` is now required to run
+a task: without one the server still boots and serves the workspace, editor and
+materials, but every Start ends its run immediately with `model_configuration`.
 Supabase values (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) are only needed
 for B04/B06 and will be distributed once the project exists — local PostgreSQL
 covers everything until then.

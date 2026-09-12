@@ -1,6 +1,6 @@
 # For Role A — calling the API
 
-**Reflects:** B07 · **Owner:** Role B
+**Reflects:** B07, C06 · **Owner:** Role B
 
 What the frontend needs from the data layer. Shapes and enums live in
 `@app/contracts` — import them rather than transcribing anything here.
@@ -103,6 +103,32 @@ Cursor-paginated by `seq`, not by timestamp. `GET .../discussion` returns:
 
 Each entry carries `afterActiveRunCutoff`, which is what drives the
 "Added after this run started" label from design §2.3. Poll with `?afterSeq=`.
+
+---
+
+## What a started run does now (C06)
+
+Start is no longer inert. After the 202, the task moves on its own and reaches a
+terminal state on **every** path, so no run sits in `planning` forever:
+`working` once assignments dispatch, then `ready_for_review`, `conflict`,
+`incomplete`, or `canceled`. Poll the task and its events; nothing pushes.
+
+Alongside the agent events, the run emits `agent.waiting` entries keyed
+`run:<runId>:start:<reason>` with `payload.phase === 'start'`. The reason is a
+stable code, never a message, and is safe to render or map to your own copy:
+
+| Reason | What to show |
+|---|---|
+| `context_captured` | Inputs are frozen; `payload.omitted[]` lists selections that could not be captured (a deleted material, a path absent from main) |
+| `snapshot_conflict` | Approved main and the draft could not be combined; `payload.paths[]` are the files. The task is in `conflict` |
+| `integration_conflict` | Worker outputs conflicted; `payload.paths[]` are the files |
+| `assignments_incomplete` | At least one assignment failed, was blocked, or never integrated |
+| `task_version_changed`, `guidance_version_changed` | The task moved between Start and capture; start a fresh attempt |
+| `model_configuration` | The server has no provider key configured |
+| anything else | A generic failure; show saved work and offer retry |
+
+Never show these codes raw as the primary message, and do not parse them for
+detail beyond the table: the codes are stable, the set is not closed.
 
 ---
 

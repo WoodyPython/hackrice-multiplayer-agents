@@ -2,6 +2,36 @@
 
 Newest first. One entry per landed ticket.
 
+## C06 — Explicit Start and captured context
+**Implemented:** 2026-09-12 · working tree · Role C
+**Affects:** Roles A, B, C, and D
+**Action required:** Start now executes. A run reaches a terminal state on every path, so A05 can drive progress from run/task status and the `run:<runId>:start:*` events. C07 picks up `ready_for_review` runs with a recorded `result_head_sha`. The runtime builds the whole Role C stack; do not construct a second scheduler, ledger or executor against one data root. Read [C06 integration notes](../apps/server/src/orchestration/START.md). No migration or dependency is added.
+
+- `StartOrchestrator` implements the B03 `OrchestrationHook`: it captures the
+  context manifest, creates the planning instance, runs C03 planning and C05
+  dispatch, and terminalizes the run. It never throws into Start, never
+  re-triggers on a replay, and leaves a previous boot's run untouched.
+- Capture unions explicitly selected inputs with materials attached directly to
+  the task (section 3.3), stops discussion at the run's cutoff, and reads
+  approved files at the recorded main commit and drafts at the D04 checkpoint.
+  Selections that cannot be captured are reported in the capture event rather
+  than captured as empty text.
+- Additive Git capability `LocalGitService.combineStartSnapshot` implements
+  section 8.4's start snapshot. A conflicting combination ends the run before
+  any model call, with the task in `conflict` and the affected paths recorded.
+  The three-way merge core is now shared with D05's integration path.
+- `PgRunStore.settle` takes an optional task status and terminalizes leftover
+  assignments, so a run and its task settle in one transaction. Existing callers
+  are unaffected. Run/task/agent finalization has one writer.
+- Failure reasons are stable codes, never provider or filesystem text.
+- The runtime assembles ledger, adapter, planner, scheduler, worker executor and
+  orchestrator as per-process singletons, starts the deadline sweep, and stops
+  dispatch first on shutdown. Without `GEMINI_API_KEY` the process still serves
+  everything else and reports `model_configuration` per Start.
+- Verified: full build; `npm run test:start` passes all 8 checks against real
+  PostgreSQL and a real repository, including a genuinely diverged main combined
+  into one snapshot, and a conflicting one refused before any model call.
+
 ## C05 — Parallel assignment scheduler
 **Implemented:** 2026-09-12 · working tree · Role C
 **Affects:** Roles A, B, C, and D

@@ -4,11 +4,13 @@ import {
   type AgentPlan,
   type ContextManifest,
   type RunStatus,
+  type TaskStatus,
 } from '@app/contracts';
 import type { Db } from '../db/client.js';
 import type { AgentInstanceRow, RunRow } from '../db/types.js';
 import { appendEvent } from '../events/service.js';
 import { toIsoOrNull } from '../http/serialize.js';
+import { canTransition } from '../tasks/transitions.js';
 
 /**
  * B07: run-level metadata and scheduling shape (design sections 8.3, 14.4).
@@ -83,11 +85,19 @@ export class PgRunStore {
    * Clearing `active_run_id` is what frees the unique-active-run slot for a
    * retry. Leaving it set would make the task permanently unstartable while
    * reporting a run that is no longer doing anything.
+   *
+   * `taskStatus` settles the task in the same transaction (C06). Two
+   * transactions cannot do this safely: ending the run first leaves the task
+   * reporting `planning` with nothing behind it, and ending the task first
+   * leaves it terminal while the active-run row still blocks every retry.
+   * An illegal transition is ignored rather than raised, because the run is
+   * already over and refusing here would strand it.
    */
   async settle(
     runId: string,
     status: Extract<RunStatus, 'completed' | 'incomplete' | 'interrupted' | 'canceled'>,
     reason?: string,
+    taskStatus?: TaskStatus,
   ): Promise<void> {
     await this.deps.db.transaction().execute(async (trx) => {
       // Lock order is task, then run, matching src/agents and section 6.3.
@@ -98,12 +108,12 @@ export class PgRunStore {
         .executeTakeFirst();
       if (!run) throw new ApiError('RUN_NOT_FOUND', 'No such run.');
 
-      await trx
+      const task = await trx
         .selectFrom('tasks')
-        .select('id')
+        .selectAll()
         .where('id', '=', run.task_id)
         .forUpdate()
-        .executeTakeFirst();
+        .executeTakeFirstOrThrow();
 
       const locked = await trx
         .selectFrom('runs')
@@ -120,9 +130,13 @@ export class PgRunStore {
         .where('id', '=', runId)
         .execute();
 
+      const settlesTask =
+        taskStatus !== undefined &&
+        task.active_run_id === runId &&
+        canTransition(task.status, taskStatus);
       await trx
         .updateTable('tasks')
-        .set({ active_run_id: null, updated_at: now })
+        .set({ active_run_id: null, updated_at: now, ...(settlesTask ? { status: taskStatus } : {}) })
         .where('id', '=', run.task_id)
         .where('active_run_id', '=', runId)
         .execute();
@@ -134,6 +148,16 @@ export class PgRunStore {
         .set({ status: 'canceled', resolved_at: now })
         .where('run_id', '=', runId)
         .where('status', '=', 'open')
+        .execute();
+
+      // Assignments that never reached a terminal status cannot finish once the
+      // run is over, and would otherwise report as pending forever. The
+      // migration 0006 trigger keeps this from touching settled instances.
+      await trx
+        .updateTable('agent_instances')
+        .set({ status: status === 'interrupted' ? 'interrupted' : 'canceled', ended_at: now })
+        .where('run_id', '=', runId)
+        .where('status', 'in', ['pending', 'running', 'needs_input'])
         .execute();
 
       await appendEvent(trx, {

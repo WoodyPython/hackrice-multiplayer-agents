@@ -12,8 +12,10 @@ Full specification: [hackrice-final-mvp-design.md](hackrice-final-mvp-design.md)
 
 Role C integration: [model adapter](apps/server/src/models/README.md) and
 [C02 budgets/deadlines](apps/server/src/agents/README.md), plus
-[C03 planning](apps/server/src/orchestration/README.md) and
-[C04 worker tools](apps/server/src/workers/README.md).
+[C03 planning](apps/server/src/orchestration/README.md),
+[C04 worker tools](apps/server/src/workers/README.md),
+[C05 scheduling](apps/server/src/orchestration/SCHEDULER.md) and
+[C06 Start orchestration](apps/server/src/orchestration/START.md).
 
 ## Getting started
 

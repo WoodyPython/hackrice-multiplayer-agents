@@ -41,8 +41,9 @@ try {
 
 B07's `PgRunStore` now supplies run metadata, dependency linking and ready-set
 reads. `PgAgentLedger` remains the sole budget/instance lifecycle surface after
-the B07 consolidation. C06 dispatch is not yet implemented: this module does
-not replace the current `NullOrchestrationHook` or start agents on HTTP requests.
+the B07 consolidation. C06 now supplies the real `OrchestrationHook`, so Start
+creates the planning instance and dispatches through this module; see the
+[C06 integration notes](../orchestration/START.md).
 The coordinator must retain each scope across its entire tool loop, including
 `execution.run(signal => ...)` for tool work, backoff, and human-answer waits.
 It must call `close()` on completion, cancellation, and shutdown, and periodically
@@ -104,16 +105,16 @@ write merely because `generate` previously returned a valid response.
 C04 implements that boundary using the guarded Git checkpoint capability and
 `withActiveWrite` under the workspace lock. `WorkerExecutor` retains the scope
 across tool repairs, provider backoff and question waits; see the
-[worker integration notes](../workers/README.md). C05/C06 still own dispatch and
-durable cancellation/finalization.
+[worker integration notes](../workers/README.md). C05 owns dispatch and C06 owns
+durable cancellation and run finalization.
 
 Timeout marks the agent `timed_out`, expires its open questions, retains call
 reservations and accepted checkpoints, emits one durable event, and marks the
 task incomplete. Token exhaustion follows the same pattern. Other parallel
-agents can still finish. C06 must aggregate their states, terminalize the run,
-and clear `active_run_id`; C02 does not prematurely terminate peer assignments.
-New attempts remain protected by the existing unique active-run index until
-that finalization occurs.
+agents can still finish. `StartOrchestrator` aggregates their states,
+terminalizes the run and clears `active_run_id`; C02 does not prematurely
+terminate peer assignments. New attempts remain protected by the existing unique
+active-run index until that finalization occurs.
 
 The question answer path now locks the task before the question, matching
 deadline/cancel lock order, and commits question expiry before returning its

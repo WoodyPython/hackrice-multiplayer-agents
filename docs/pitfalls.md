@@ -1,5 +1,28 @@
 # Pitfalls
 
+## A test that scripts an invalid plan runs until the token budget drains
+
+**C06.** A planning test returning a plan that fails validation looked like the
+obvious way to check that a run terminalizes. It is not: validation feedback
+asks for a corrected plan, and the loop is bounded by the agent's budget and
+ten-minute deadline, not by an attempt count. An adapter that always returns the
+same invalid plan therefore spends 64,000 tokens at 100 per call before
+anything fails — minutes of real database round-trips, then a 30-second test
+timeout with no useful message. Script a *fatal* outcome instead (a blocked
+response, unexpected tool calls) when the subject is run finalization. Keep
+invalid-plan repair where it belongs, in the C03 planning tests.
+
+## Settling a run and its task in two transactions strands one of them
+
+**C06.** `PgRunStore.settle` ended the run and cleared `active_run_id` but left
+the task status alone, so C06 had to write the task separately. Both orders are
+broken. Run first: if the task write fails, the task reports `planning` with no
+active run, which is precisely the stuck state section 2.2 warns about. Task
+first: if the settle fails, the task is terminal while the active-run row still
+exists, so Start is refused by the unique index and Cancel is refused because
+the status is no longer cancelable — unstartable until a restart. `settle` now
+takes the task status and writes both under the locks it already held.
+
 ## A completed worker is not necessarily integrated
 
 **C05.** B07's ready-set query tests only prerequisite agent completion. C04

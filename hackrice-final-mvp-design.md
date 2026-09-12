@@ -131,6 +131,8 @@ Steps 1 and 2 are one database transaction; the run row itself is the duplicate-
 
 Steps 4 onward run after the response. If capture fails or the start snapshot conflicts, the run ends in a terminal state and the task reports it. A failed capture never leaves the task without a run record explaining why.
 
+C06 implements steps 4 onward. Its capture unions explicitly selected inputs with materials attached directly to the task, and reports a selection it cannot capture rather than substituting empty text. A run and its task reach their terminal states in one transaction: ending the run first would leave the task reporting `planning` with nothing behind it, and ending the task first would leave it terminal while the active-run row still blocks every retry. Failure is recorded as a stable code, never provider or filesystem text.
+
 Double-clicks or concurrent Start requests produce one active attempt. Two independent mechanisms enforce this: a per-task idempotency key returns the original run for a replayed request, and a unique active-run constraint rejects a genuinely concurrent second request.
 
 ### 2.3 Discussion after start
@@ -686,6 +688,8 @@ If this combination conflicts, surface it before starting agents. No model calls
 Human Yjs content is not replaced by S; it continues on its own draft lineage. The run's input preview shows S so the captured material is inspectable.
 
 The task-run result branch starts at S. Each eligible worker starts from the current result branch after its prerequisites have integrated.
+
+The combination is a separate Git capability rather than another method on the existing service, so an implementation that predates it cannot silently start a run from an uncombined base. Where the draft already descends from main, the checkpoint is S and nothing new is written; where main has moved independently, a three-way merge over their merge base produces S with both as parents. No branch is published: S becomes reachable when the result branch is created at it. A conflict surfaces before any planning model call, with the affected paths recorded and the task in `conflict`.
 
 ### 8.5 Worker isolation and integration
 
@@ -1370,7 +1374,7 @@ These live in docs/ at the repository root.
 
 Every row is a single-owner work package. “Expected behavior” defines what that component must do and can be checked in isolation or against the listed prerequisites. It is not a separate release checklist.
 
-Implementation status and verification are recorded in `docs/CHANGELOG.md`. C05 now dispatches parallel assignments and consumes D05's guarded result integration. C06's explicit Start orchestration and C07's review handoff remain separate work packages.
+Implementation status and verification are recorded in `docs/CHANGELOG.md`. C06 now connects Start end to end: it captures the run's context, combines the start snapshot, plans, dispatches through C05, and terminalizes the run. C07's review handoff remains a separate work package.
 
 ### 16.1 Role B — Supabase and application data
 

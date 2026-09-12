@@ -1,6 +1,27 @@
 # Git files and checkpoints
 
-**Reflects:** D05, C05 guard integration · **Owner:** Role D
+**Reflects:** D05, C05 guard integration, C06 start snapshot · **Owner:** Role D
+
+## Start snapshot (section 8.4, added by C06)
+
+`LocalGitService.combineStartSnapshot({ workspaceId, taskId, mainSha, draftSha })`
+implements `StartSnapshotService` from `@app/contracts` and returns
+`{ snapshotSha, conflicts }`. Exactly one is populated: a snapshot commit, or
+the sorted paths that prevented one.
+
+It combines approved main (A) with the human-draft checkpoint (L) into the
+private starting snapshot S. When the draft already descends from main the
+checkpoint *is* the snapshot and nothing new is written; when main has moved
+independently, a three-way merge over their merge base produces a commit with
+both as parents. Portable namespace collisions between the two trees are
+reported as conflicts, with original paths rather than Git's synthesized names.
+
+No ref is published: the snapshot is reachable once C05 creates the result
+branch at it, and `gc.auto=0` keeps the loose commit until then. Main, the human
+draft and every worker ref are read-only here — a contributor keeps typing on
+their own lineage while a run is prepared. `draftSha` must be in the task's own
+human lineage; a checkpoint from another task is refused rather than merged.
+The three-way stage resolution is shared with D05's integration path.
 
 ## Worker-result integration (D05)
 
@@ -335,8 +356,9 @@ again. Do not reset the branch or blindly replay old expected hashes. Retrying
 with the same instance preserves its base and committed history.
 
 Git and files are accessed with trusted arguments and raw object I/O. Generated
-code is never run. Start-snapshot combination, reviews, Apply,
-execution-state recovery and branch retention policies remain later tickets.
+code is never run. Start-snapshot combination landed with C06 above; reviews,
+Apply, execution-state recovery and branch retention policies remain later
+tickets.
 
 Verification: `npm run build`, `npm run test:git --workspace @app/server`, and
 `npm test` (the last command rebuilds the separate test database).

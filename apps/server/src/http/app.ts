@@ -75,7 +75,7 @@ export interface AppDeps {
  * not a production target: it shares the persistent disk section 5.3 reserves
  * for Git and has no replication.
  */
-function defaultBlobStore(config: AppConfig) {
+export function defaultBlobStore(config: AppConfig): BlobStore {
   if (config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY) {
     return new SupabaseBlobStore({
       url: config.SUPABASE_URL,
