@@ -1,15 +1,18 @@
 import { Link } from "react-router-dom";
 import { TASK_STATUSES, type TaskSummary } from "@app/contracts";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { groupTasks, statusPresentation } from "../board";
 import { EmptyState } from "../components/EmptyState";
 
 export function TaskBoard({
   tasks,
   base,
+  heading,
 }: {
   tasks: TaskSummary[];
   base: string;
+  /** Replaces the default header, so a live workspace can show its own name. */
+  heading?: ReactNode;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
@@ -20,16 +23,18 @@ export function TaskBoard({
   );
   return (
     <>
-      <header className="page-heading">
-        <div>
-          <span className="eyebrow">Your shared workspace</span>
-          <h1>Good work starts here.</h1>
-          <p>Bring an idea. Shape it together. Ship something useful.</p>
-        </div>
-        <Link className="button primary" to={`${base}/tasks/new`}>
-          ＋ Post a task
-        </Link>
-      </header>
+      {heading ?? (
+        <header className="page-heading">
+          <div>
+            <span className="eyebrow">Your shared workspace</span>
+            <h1>Good work starts here.</h1>
+            <p>Bring an idea. Shape it together. Ship something useful.</p>
+          </div>
+          <Link className="button primary" to={`${base}/tasks/new`}>
+            ＋ Post a task
+          </Link>
+        </header>
+      )}
       <div className="board-toolbar">
         <div className="board-title">
           <h2>Task board</h2>

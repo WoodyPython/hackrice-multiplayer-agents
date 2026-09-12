@@ -53,6 +53,121 @@ Newest first. One entry per landed ticket.
 - Validation after syncing D05: full build and suite passed with 537 backend
   and 27 frontend tests. The focused scheduler suite also passed all 19 checks.
 
+## Docs — design document amended to match what was built
+**Landed:** 2026-09-12 · Role A
+**Affects:** everyone. Documentation only; no code.
+**Action required:** None. Read the §4.3 note before touching board card copy.
+
+The design document is the specification and wins where anything disagrees with
+it, so these are amendments rather than notes filed elsewhere:
+
+- **§4.1 — the editor route.** The table said
+  `/w/:w/tasks/:t/edit/:fileId`; A03 shipped `/w/:w/tasks/:t/drafts` with an
+  in-page file selector. §4.4 already requires a selector as a control, so a
+  per-file route duplicates it and forces a navigation that remounts the Yjs
+  binding. The table now matches the implementation.
+- **§4.1 — History's data source** is named: `apply_operations` joined to its
+  review and task. Empty until D07 writes to it, which makes an empty History a
+  correct answer rather than a missing feature.
+- **§4.3 — board cards may no longer claim agent activity.** The old wording
+  asked for a "current assignment summary" that `TaskSummary` does not carry;
+  the first implementation satisfied it with per-status copy, so every working
+  task claimed a "Writer" was "preparing a first draft" whether or not such an
+  agent existed. That is the fake progress §4.7 forbids.
+- **§2.1 — approved files are not selectable** in the input picker, because
+  nothing can enumerate them: the Git service has `readText(path)` and no tree
+  operation.
+- **§4.5 — agent progress has no data source.** `AgentProgress` is fully
+  specified in contracts and served by no route; events carry only `{agentId}`.
+  Separate from orchestration being absent.
+- **§4.6 — review has no read path.** `reviewId` is not on the task detail
+  shape and the only way to obtain one is `POST /tasks/:t/review`, a mutation.
+  There is no apply route at all.
+
+Also corrected: an earlier note in [the Role A interface](interfaces/role-a.md)
+called History possibly unbuildable. That was wrong — `apply_operations` and its
+store already exist, and what is missing is a listing method, a route, and a
+contract, all in Role B files. It is a small ticket, not a blocked one.
+
+[`handoff-b08.md`](handoff-b08.md)'s status table is updated: **D07 is unblocked
+now**, and **C05 is not implemented** despite `6950fc3 "Add C05"` — that commit
+adds one npm script pointing at a vitest config that does not exist, with no
+scheduler behind it. C06 depends on C05, so anyone planning around it should
+confirm first.
+
+---
+
+## A04 — Task posting, discussion, and materials (plus the unblocked half of A07)
+**Landed:** 2026-09-12 · Role A
+**Affects:** everyone. One additive Role B route; no migration, no dependency.
+**Action required:** Pull and `npm run build`. Roles C and D: three endpoints the
+frontend needs do not exist — see **Blocked on** below and
+[the Role A interface](interfaces/role-a.md#still-missing-and-what-it-blocks).
+
+- **The live workspace was still a placeholder.** A01 built the board, task
+  detail, and requirement form against `fixtures.ts` and mounted them only at
+  `/demo`; every real route (`/w/:id`, `/files`, `/history`, `/tasks/*`) rendered
+  "coming next", and `workspace-api.ts` could only talk about workspaces. All of
+  them are now live.
+- **Post, revise, discuss, attach, start, stop, retry.** Requirements use §2.1's
+  optimistic version check; a 409 keeps what you typed and refetches rather than
+  discarding the edit. Every state-changing call carries a `clientRequestId`
+  created once per user intent and reused on retry.
+- **Agent questions route through `/answer`, not `/discussion`.** §2.6 makes a
+  question a record, not a formatted comment. The same words posted as a comment
+  would land above the run's discussion cutoff and reach no agent — identical
+  text, silently doing nothing. There is a test asserting the endpoint, because
+  this is invisible in the rendered output.
+- **Entries above the active cutoff are labelled "Added after this run
+  started"** (§2.3), and the compose box says plainly that a running attempt
+  will not read what you are typing.
+- **Files** (§4.1, the A07 half that is not blocked): reference-material upload
+  with §3.4's text-only rule stated in the picker, active shared drafts across
+  the workspace, and Edit together.
+- **Fixed: the board invented agent progress.** `board.ts` hardcoded
+  `working → "Writer · preparing a first draft"` and rendered it on every
+  working card regardless of what was running, or whether anything was.
+  `TaskSummary` carries no assignment summary, so §4.7's "avoid fake progress"
+  rules that out. Copy is now state-derived and claims nothing about agents.
+- **New:** `GET /api/workspaces/:w/drafts` (Role B, `src/drafts`) lists active
+  documents workspace-wide. The Files view cannot use the per-task listing — it
+  needs the task ID it is trying to discover.
+- `/demo` still works and no longer shares fixture data with live code:
+  `RequirementForm` and `TaskDetail` take their options and tab bodies as props
+  instead of importing `fixtures.ts`, which is why the live form previously
+  offered three material IDs that existed in no real workspace.
+
+**Blocked on, and stated in the UI rather than faked:**
+
+- **Agents tab** — C06 supplies the orchestration hook (`buildApp` still
+  defaults to `NullOrchestrationHook`, so Start records an attempt and runs
+  nothing), *and* no route serves `AgentProgress`. Both are needed; the schema
+  already exists.
+- **Changes tab** — C07 and D07. No apply route exists, and nothing exposes a
+  task's review ID.
+- **Approved files** — nothing in the system can enumerate main; the Git service
+  has `readText(path)` and no tree operation. The section says "not available
+  yet" rather than showing an empty list, which would claim the workspace has
+  approved nothing.
+- **History** — §4.1 specifies the screen and no data source exists for it.
+
+**Two divergences from the design document, for the team to rule on:**
+
+1. §4.1 specifies the editor at `/w/:w/tasks/:t/edit/:fileId`. A03 shipped
+   `/w/:w/tasks/:t/drafts` with an in-page file selector. The implementation
+   looks better — §4.4 requires a file selector as a control, so a per-file
+   route duplicates it — but the document still says otherwise, and by our own
+   rule the document wins until amended.
+2. §4.1's History screen may not be buildable as specified without a new
+   endpoint nobody owns.
+
+Verified: `npm run build` and `npm test` — **547 backend + 38 frontend** (544 + 27 before this: three for the new route, eleven for the frontend flows). The three
+frontend properties that cannot be seen in rendered output (answer routing,
+idempotency-key reuse, no fabricated progress) and the new route's workspace
+scoping were each confirmed by mutating the code until the test failed.
+
+---
+
 ## Fix — Supabase storage and realtime verified against a live project
 **Landed:** 2026-09-12 · Role B
 **Affects:** anyone running against Supabase; Role A (realtime is now advertised)

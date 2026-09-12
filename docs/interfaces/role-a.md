@@ -1,6 +1,7 @@
 # For Role A — calling the API
 
-**Reflects:** B07, C06, D06, plus the Supabase verification of 2026-09-12 · **Owner:** Role B
+**Reflects:** B07, C06, D06, the Supabase verification of 2026-09-12, and the
+A04 draft listing · **Owner:** Role B
 
 What the frontend needs from the data layer. Shapes and enums live in
 `@app/contracts` — import them rather than transcribing anything here.
@@ -169,6 +170,60 @@ never as a permission. A forged hint should at worst cause a wasted refetch.
 
 Missed and duplicate hints are both normal. If your refetch is idempotent, you
 have handled every case the transport can produce.
+
+## Drafts
+
+`GET /workspaces/:w/drafts` lists every **active** document in the workspace —
+path, epoch, owning task, persisted revision. Added for the Files view, which
+has to answer "what is being edited anywhere" and therefore cannot use the
+per-task listing: that one needs the task ID it is trying to discover.
+
+`GET /tasks/:t/drafts` is still the editor's file selector.
+
+Both exclude closed epochs. Offering a closed document produces
+`DOCUMENT_EPOCH_CLOSED` the moment someone opens it, so it is filtered at the
+source rather than handled at the click.
+
+`POST /drafts/open` is "Edit together" (§2.5) and is find-or-create: **200 means
+you joined an existing editing session**, which is the normal outcome when two
+people click the same file, not a collision to report.
+
+---
+
+## Still missing, and what it blocks
+
+Three things the frontend needs do not exist. Recorded here so they are not
+rediscovered:
+
+| Needed | For | Owner |
+|---|---|---|
+| A route serving `AgentProgress` | A05's Agents tab (§4.5) | B or C |
+| A `reviewId` on task detail, or a read path to the current review | A06 — `POST /tasks/:t/review` is a mutation, and nothing else exposes the ID | B |
+| An approved-file **listing** (Git has `readText(path)` only — no tree op) | A07's Files view and the approved-file input picker (§2.1, §4.1) | D, then B |
+| A workspace-wide `apply_operations` listing + route | History (§4.1). Table and store already exist; empty until D07 | B |
+
+`agentProgressSchema`, `applyReviewRequestSchema`, and
+`applyReviewResponseSchema` are all already in `@app/contracts` with no route
+behind them. The shapes are agreed; the endpoints are not built.
+
+**History** is a smaller gap than it first looks. The data model is already
+there: `apply_operations` (migration 0002) carries workspace, review, candidate
+SHA, status and settle time, and `src/runs/review-store.ts` already writes,
+settles and reads it. Joining it to its review and task gives §4.1's "applied
+changes and associated tasks" directly.
+
+What is missing is a workspace-wide listing method, a route, and a contract
+shape — all Role B, all in files Role B already owns. Nothing writes
+`apply_operations` until owner apply (D07) exists, so the screen will correctly
+show an empty list for now; that is a reason to build it cheaply, not a reason it
+cannot be built. The `task.applied` event type is likewise declared in contracts
+with no writer anywhere.
+
+The route currently renders "not available yet" rather than an empty list,
+because an empty list today would be indistinguishable from "nothing has been
+applied" — which happens to be true but not for the reason a reader would infer.
+
+---
 
 ## Tasks
 

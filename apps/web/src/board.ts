@@ -1,5 +1,17 @@
 import { type TaskStatus, type TaskSummary } from "@app/contracts";
 
+/**
+ * Board placement and per-status copy (design §4.3).
+ *
+ * Every `summary` below describes the TASK STATE and nothing else. An earlier
+ * version named agents and steps here — `working` read "Writer · preparing a
+ * first draft" — which the card rendered for every working task regardless of
+ * what was actually running, or whether anything was. §4.7 rules that out:
+ * "avoid fake progress". The API carries no assignment summary on
+ * `TaskSummary`, so the honest board says what state the task is in and leaves
+ * the assignment detail to the Agents tab, which reads real records.
+ */
+
 export const columns = [
   "Posted",
   "Working",
@@ -8,16 +20,16 @@ export const columns = [
   "Completed",
 ] as const;
 export const statusPresentation = {
-  posted: { column: "Posted", label: "Posted", summary: "Ready when you are" },
+  posted: { column: "Posted", label: "Posted", summary: "Ready to start when you are" },
   planning: {
     column: "Working",
     label: "Planning",
-    summary: "Orchestrator · planning assignments",
+    summary: "Planning assignments",
   },
   working: {
     column: "Working",
     label: "Working",
-    summary: "Writer · preparing a first draft",
+    summary: "Agents are working",
   },
   needs_input: {
     column: "Needs attention",
@@ -47,7 +59,7 @@ export const statusPresentation = {
   canceled: {
     column: "Needs attention",
     label: "Canceled",
-    summary: "Stopped · saved work remains available",
+    summary: "Stopped — saved work remains available",
   },
   completed: {
     column: "Completed",

@@ -142,6 +142,63 @@ describe('opening a document', () => {
   });
 });
 
+describe('listing active documents', () => {
+  /**
+   * The Files view (section 4.1) has to answer "what is being edited anywhere",
+   * which the per-task listing cannot: it needs the owning task ID in order to
+   * ask. Both listings exclude closed epochs, because offering a closed
+   * document produces DOCUMENT_EPOCH_CLOSED the moment anyone opens it.
+   */
+  it('returns every active document in the workspace, across tasks', async () => {
+    const first = await makeTask();
+    const second = await makeTask();
+    await store.openForTask(workspaceId, first, 'documents/a.md');
+    await store.openForTask(workspaceId, second, 'documents/b.md');
+
+    const res = await t.app.inject({
+      method: 'GET',
+      url: `/api/workspaces/${workspaceId}/drafts`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const paths = res.json().drafts.map((draft: { path: string }) => draft.path);
+    expect(paths).toContain('documents/a.md');
+    expect(paths).toContain('documents/b.md');
+    // The per-task listing sees only its own, which is why the workspace one
+    // had to exist rather than the view calling that per task it does not know.
+    const scoped = await store.listActiveForTask(workspaceId, first);
+    expect(scoped.map((draft) => draft.path)).toEqual(['documents/a.md']);
+  });
+
+  it('omits a closed epoch', async () => {
+    const taskId = await makeTask();
+    await store.openForTask(workspaceId, taskId, 'documents/closing.md');
+    await store.closeEpoch(workspaceId, taskId);
+
+    const res = await t.app.inject({
+      method: 'GET',
+      url: `/api/workspaces/${workspaceId}/drafts`,
+    });
+    const paths = res.json().drafts.map((draft: { path: string }) => draft.path);
+    expect(paths).not.toContain('documents/closing.md');
+  });
+
+  it('does not leak documents from another workspace', async () => {
+    const taskId = await makeTask();
+    await store.openForTask(workspaceId, taskId, 'documents/private.md');
+
+    const other = (await createWorkspaceViaApi(t.app, { name: 'Elsewhere' }))
+      .workspaceId;
+    const res = await t.app.inject({
+      method: 'GET',
+      url: `/api/workspaces/${other}/drafts`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().drafts).toEqual([]);
+  });
+});
+
 describe('Edit together', () => {
   it('creates a manual-edit task and its document', async () => {
     const res = await t.app.inject({
