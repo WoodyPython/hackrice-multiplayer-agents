@@ -1,30 +1,30 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AGENT_TIMEOUT_MS, TASK_AGENT_TOKEN_BUDGET, type AgentPlan } from '@app/contracts';
-import { PgBudgetLedger, billableTokens } from '../src/runs/budget-ledger.js';
+import type { AgentPlan } from '@app/contracts';
+import { PgAgentLedger } from '../src/agents/ledger.js';
 import { PgRunStore, assertAcyclic } from '../src/runs/run-store.js';
 import { PgReviewStore } from '../src/runs/review-store.js';
 import { BOOT_ID, fakeSha } from './helpers.js';
 import { buildTestApp, createWorkspaceViaApi, type TestApp } from './app-helpers.js';
 
 /**
- * B07 acceptance (design sections 8.3, 9.2, 9.3, 10.1, 10.3, 10.5, 11.2, 14.4).
+ * B07 acceptance (design sections 8.3, 10.1, 10.3, 10.5, 11.2, 14.4).
  *
- * The ledger gets the most attention here. It is the one piece where a wrong
- * answer is invisible: an over-refunded budget lets an agent run forever while
- * its recorded usage looks fine, and a double-charge stops it early for no
- * reason a log would explain.
+ * Token accounting and agent lifecycle are covered by agents.test.ts, against
+ * PgAgentLedger. There is one ledger and one instance-creation path, so these
+ * fixtures use it too rather than inserting rows directly — a test that builds
+ * state a different way from production is a test of the fixture.
  */
 
 let t: TestApp;
-let ledger: PgBudgetLedger;
+let ledger: PgAgentLedger;
 let runs: PgRunStore;
 let reviews: PgReviewStore;
 let workspaceId: string;
 
 beforeAll(async () => {
   t = await buildTestApp();
-  ledger = new PgBudgetLedger({ db: t.handle.db });
+  ledger = new PgAgentLedger({ db: t.handle.db, bootId: BOOT_ID });
   runs = new PgRunStore({ db: t.handle.db, bootId: BOOT_ID });
   reviews = new PgReviewStore({ db: t.handle.db });
   workspaceId = (await createWorkspaceViaApi(t.app, { name: 'Runs' })).workspaceId;
@@ -45,6 +45,7 @@ async function makeTask(title = 'Run task'): Promise<string> {
   return res.json().id;
 }
 
+/** A run that is active and pointed at by its task, as Start leaves it. */
 async function makeRun(taskId: string, attempt = 1): Promise<string> {
   const row = await t.handle.db
     .insertInto('runs')
@@ -60,31 +61,11 @@ async function makeRun(taskId: string, attempt = 1): Promise<string> {
     })
     .returning('id')
     .executeTakeFirstOrThrow();
-  return row.id;
-}
-
-async function makeAgent(
-  taskId: string,
-  runId: string,
-  agentKey = 'orchestrator',
-  budget = TASK_AGENT_TOKEN_BUDGET,
-): Promise<string> {
-  await ledger.ensure(workspaceId, taskId, agentKey, budget);
-  const row = await t.handle.db
-    .insertInto('agent_instances')
-    .values({
-      workspace_id: workspaceId,
-      task_id: taskId,
-      run_id: runId,
-      agent_key: agentKey,
-      assignment_key: agentKey,
-      preset: 'writer',
-      model_id: 'gemini-2.5-flash',
-      boot_id: BOOT_ID,
-      status: 'pending',
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow();
+  await t.handle.db
+    .updateTable('tasks')
+    .set({ status: 'working', active_run_id: row.id })
+    .where('id', '=', taskId)
+    .execute();
   return row.id;
 }
 
@@ -98,256 +79,26 @@ const PLAN: AgentPlan = {
   ],
 };
 
+async function materialise(runId: string, plan: AgentPlan = PLAN) {
+  const created = [];
+  for (const assignment of plan.assignments) {
+    created.push(
+      await ledger.createInstance({
+        runId,
+        agentKey: assignment.id,
+        assignmentKey: assignment.id,
+        preset: assignment.preset,
+        modelId: 'gemini-2.5-flash',
+        instruction: assignment.instruction,
+        writePaths: assignment.writePaths,
+      }),
+    );
+  }
+  await runs.linkDependencies(runId, plan);
+  return created;
+}
+
 // ---------------------------------------------------------------------------
-
-describe('token ledger', () => {
-  it('reserves against the remaining budget and reports what is left', async () => {
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer-1', 1000);
-
-    const result = await ledger.reserve({
-      agentInstanceId: agentId,
-      requestKey: 'call-1',
-      tokens: 300,
-      modelId: 'gemini-2.5-flash',
-    });
-
-    expect(result.reserved).toBe(true);
-    expect(result.budget.reservedTokens).toBe(300);
-    expect(result.budget.consumedTokens).toBe(0);
-    expect(result.remainingTokens).toBe(700);
-  });
-
-  it('refuses once the budget is spoken for', async () => {
-    // Section 9.3 step 4: "Stop before the call if insufficient allowance
-    // remains."
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer-1', 1000);
-
-    await ledger.reserve({ agentInstanceId: agentId, requestKey: 'a', tokens: 800, modelId: 'm' });
-    await expect(
-      ledger.reserve({ agentInstanceId: agentId, requestKey: 'b', tokens: 300, modelId: 'm' }),
-    ).rejects.toMatchObject({ code: 'AGENT_TOKEN_EXHAUSTED' });
-  });
-
-  it('never lets concurrent reservations exceed the budget', async () => {
-    /*
-     * The reason the check and the reservation are one statement. Ten calls of
-     * 200 against a budget of 1000: a read-then-write would let several of them
-     * all see enough headroom and all take it.
-     */
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer-1', 1000);
-
-    const results = await Promise.allSettled(
-      Array.from({ length: 10 }, (_, i) =>
-        ledger.reserve({
-          agentInstanceId: agentId,
-          requestKey: `concurrent-${i}`,
-          tokens: 200,
-          modelId: 'm',
-        }),
-      ),
-    );
-
-    const granted = results.filter((r) => r.status === 'fulfilled');
-    expect(granted).toHaveLength(5);
-
-    const budget = await ledger.read(taskId, 'writer-1');
-    expect(budget!.reservedTokens).toBe(1000);
-    expect(budget!.reservedTokens + budget!.consumedTokens).toBeLessThanOrEqual(
-      budget!.tokenBudget,
-    );
-  });
-
-  it('is idempotent on the request key', async () => {
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer-1', 1000);
-
-    await ledger.reserve({ agentInstanceId: agentId, requestKey: 'same', tokens: 100, modelId: 'm' });
-    const replay = await ledger.reserve({
-      agentInstanceId: agentId,
-      requestKey: 'same',
-      tokens: 100,
-      modelId: 'm',
-    });
-
-    expect(replay.reserved).toBe(false);
-    expect((await ledger.read(taskId, 'writer-1'))!.reservedTokens).toBe(100);
-  });
-
-  it('settles against reported usage and releases the reservation', async () => {
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer-1', 1000);
-
-    await ledger.reserve({ agentInstanceId: agentId, requestKey: 'c', tokens: 400, modelId: 'm' });
-    const after = await ledger.reconcile({
-      agentInstanceId: agentId,
-      requestKey: 'c',
-      usage: { status: 'reported', totalTokens: 250 },
-    });
-
-    expect(after.reservedTokens).toBe(0);
-    expect(after.consumedTokens).toBe(250);
-  });
-
-  it('charges the reservation when usage never arrives', async () => {
-    /*
-     * Section 9.3: "For missing usage after a failed request, retain its
-     * reservation as unknown rather than giving the agent that budget back."
-     * Refunding here would let an agent that keeps failing burn unbounded
-     * provider capacity while its recorded usage stayed at zero.
-     */
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer-1', 1000);
-
-    await ledger.reserve({ agentInstanceId: agentId, requestKey: 'lost', tokens: 400, modelId: 'm' });
-    const after = await ledger.abandon({ agentInstanceId: agentId, requestKey: 'lost' });
-
-    expect(after.consumedTokens).toBe(400);
-    expect(after.reservedTokens).toBe(0);
-
-    const call = await t.handle.db
-      .selectFrom('model_calls')
-      .select('status')
-      .where('agent_id', '=', agentId)
-      .where('request_key', '=', 'lost')
-      .executeTakeFirstOrThrow();
-    expect(call.status).toBe('unknown');
-  });
-
-  it('does not double-charge a settle that arrives twice', async () => {
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer-1', 1000);
-
-    await ledger.reserve({ agentInstanceId: agentId, requestKey: 'd', tokens: 300, modelId: 'm' });
-    await ledger.reconcile({
-      agentInstanceId: agentId,
-      requestKey: 'd',
-      usage: { status: 'reported', totalTokens: 300 },
-    });
-    const again = await ledger.reconcile({
-      agentInstanceId: agentId,
-      requestKey: 'd',
-      usage: { status: 'reported', totalTokens: 300 },
-    });
-
-    expect(again.consumedTokens).toBe(300);
-    expect(again.reservedTokens).toBe(0);
-  });
-
-  it('survives usage that overshoots its reservation', async () => {
-    // Section 9.2 records late usage, and 9.3 reconciles against
-    // provider-reported totals, either of which can exceed what was reserved.
-    // The budget row deliberately has no check that would make this fail.
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer-1', 1000);
-
-    await ledger.reserve({ agentInstanceId: agentId, requestKey: 'e', tokens: 100, modelId: 'm' });
-    const after = await ledger.reconcile({
-      agentInstanceId: agentId,
-      requestKey: 'e',
-      usage: { status: 'reported', totalTokens: 5000 },
-    });
-
-    expect(after.consumedTokens).toBe(5000);
-    // And the agent is now correctly unable to reserve anything more.
-    await expect(
-      ledger.reserve({ agentInstanceId: agentId, requestKey: 'f', tokens: 1, modelId: 'm' }),
-    ).rejects.toMatchObject({ code: 'AGENT_TOKEN_EXHAUSTED' });
-  });
-
-  it('keeps budgets independent across tasks for the same agent', async () => {
-    // Section 9.3: "The same agent working on another task receives an
-    // independent budget."
-    const taskA = await makeTask('A');
-    const taskB = await makeTask('B');
-    const runA = await makeRun(taskA);
-    const runB = await makeRun(taskB);
-    const agentA = await makeAgent(taskA, runA, 'writer', 1000);
-    await makeAgent(taskB, runB, 'writer', 1000);
-
-    await ledger.reserve({ agentInstanceId: agentA, requestKey: 'x', tokens: 900, modelId: 'm' });
-
-    expect((await ledger.read(taskB, 'writer'))!.reservedTokens).toBe(0);
-  });
-
-  it('keeps accumulated usage when a retry creates a new instance', async () => {
-    // Section 14.3: "An exhausted budget remains exhausted on retry."
-    const taskId = await makeTask();
-    const run1 = await makeRun(taskId, 1);
-    const agent1 = await makeAgent(taskId, run1, 'writer', 1000);
-    await ledger.reserve({ agentInstanceId: agent1, requestKey: 'g', tokens: 1000, modelId: 'm' });
-    await ledger.reconcile({
-      agentInstanceId: agent1,
-      requestKey: 'g',
-      usage: { status: 'reported', totalTokens: 1000 },
-    });
-
-    // A real retry settles the previous attempt first; runs_active_uq refuses
-    // a second active run, which is the invariant B03 relies on.
-    await runs.settle(run1, 'canceled');
-    const run2 = await makeRun(taskId, 2);
-    const agent2 = await makeAgent(taskId, run2, 'writer', 1000);
-
-    expect((await ledger.read(taskId, 'writer'))!.consumedTokens).toBe(1000);
-    await expect(
-      ledger.reserve({ agentInstanceId: agent2, requestKey: 'h', tokens: 1, modelId: 'm' }),
-    ).rejects.toMatchObject({ code: 'AGENT_TOKEN_EXHAUSTED' });
-  });
-});
-
-describe('billable tokens', () => {
-  it('uses the reported total and never adds components to it', () => {
-    // Section 9.3: "do not sum total plus its components." Summing both roughly
-    // doubles every charge.
-    expect(
-      billableTokens(
-        { status: 'reported', totalTokens: 500, inputTokens: 400, outputTokens: 100 },
-        999,
-      ),
-    ).toBe(500);
-  });
-
-  it('sums components only when no total was reported', () => {
-    expect(
-      billableTokens({ status: 'reported', inputTokens: 400, outputTokens: 100 }, 999),
-    ).toBe(500);
-  });
-
-  it('includes thinking tokens in the component sum', () => {
-    expect(
-      billableTokens(
-        { status: 'reported', inputTokens: 100, outputTokens: 50, thinkingTokens: 200 },
-        999,
-      ),
-    ).toBe(350);
-  });
-
-  it('never adds cached input on top of a total that already covers it', () => {
-    // "Cached input remains part of logical token usage; do not add it twice if
-    // already included in prompt/total counts."
-    expect(
-      billableTokens(
-        { status: 'reported', totalTokens: 500, cachedInputTokens: 300 },
-        999,
-      ),
-    ).toBe(500);
-  });
-
-  it('falls back to the reservation when nothing usable was reported', () => {
-    expect(billableTokens({ status: 'unknown' }, 750)).toBe(750);
-    expect(billableTokens({ status: 'reported' }, 750)).toBe(750);
-  });
-});
 
 describe('plan validation', () => {
   it('accepts the design section 8.3 example shape', () => {
@@ -367,6 +118,16 @@ describe('plan validation', () => {
     expect(() => assertAcyclic(cyclic)).toThrowError(/cycle/i);
   });
 
+  it('rejects a self-dependency', () => {
+    const selfDep: AgentPlan = {
+      summary: 'self',
+      assignments: [
+        { id: 'a', preset: 'writer', dependsOn: ['a'], writePaths: [], instruction: 'x' },
+      ],
+    };
+    expect(() => assertAcyclic(selfDep)).toThrowError(/cycle/i);
+  });
+
   it('rejects a dependency on an assignment that does not exist', () => {
     const dangling: AgentPlan = {
       summary: 'dangling',
@@ -378,112 +139,92 @@ describe('plan validation', () => {
   });
 });
 
-describe('agent instances', () => {
-  it('materialises a plan with its dependency edges', async () => {
+describe('the assignment graph', () => {
+  it('links dependencies between the instances of one run', async () => {
     const taskId = await makeTask();
     const runId = await makeRun(taskId);
-    for (const a of PLAN.assignments) await ledger.ensure(workspaceId, taskId, a.id);
+    await materialise(runId);
 
-    const created = await runs.createInstancesFromPlan({
-      workspaceId,
-      taskId,
-      runId,
-      plan: PLAN,
-      modelId: 'gemini-2.5-flash',
-    });
+    const instances = await runs.listInstances(runId);
+    const faq = instances.find((a) => a.assignmentKey === 'faq')!;
+    const facts = instances.find((a) => a.assignmentKey === 'facts')!;
+    const review = instances.find((a) => a.assignmentKey === 'review')!;
 
-    expect(created).toHaveLength(4);
-    const faq = created.find((a) => a.assignmentKey === 'faq')!;
-    const facts = created.find((a) => a.assignmentKey === 'facts')!;
-    expect(faq.dependsOn).toEqual([facts.id]);
     expect(facts.dependsOn).toEqual([]);
+    expect(faq.dependsOn).toEqual([facts.id]);
+    expect(review.dependsOn).toHaveLength(2);
+  });
+
+  it('refuses to link a plan whose instances were never created', async () => {
+    const taskId = await makeTask();
+    const runId = await makeRun(taskId);
+    await expect(runs.linkDependencies(runId, PLAN)).rejects.toMatchObject({
+      code: 'INVALID_STATE',
+    });
+  });
+
+  it('is idempotent, so a retried link does not duplicate edges', async () => {
+    const taskId = await makeTask();
+    const runId = await makeRun(taskId);
+    await materialise(runId);
+    await runs.linkDependencies(runId, PLAN);
+
+    const edges = await t.handle.db
+      .selectFrom('agent_dependencies')
+      .select('agent_id')
+      .where('run_id', '=', runId)
+      .execute();
+    expect(edges).toHaveLength(4);
   });
 
   it('reports only assignments whose prerequisites have completed', async () => {
     const taskId = await makeTask();
     const runId = await makeRun(taskId);
-    for (const a of PLAN.assignments) await ledger.ensure(workspaceId, taskId, a.id);
-    const created = await runs.createInstancesFromPlan({
-      workspaceId, taskId, runId, plan: PLAN, modelId: 'm',
-    });
+    const created = await materialise(runId);
 
     // Only the root is ready.
     let ready = await runs.readyInstances(runId);
     expect(ready.map((a) => a.assignmentKey)).toEqual(['facts']);
 
     // Completing it releases both writers at once — section 8.7's parallelism.
-    const facts = created.find((a) => a.assignmentKey === 'facts')!;
-    await runs.start(facts.id, AGENT_TIMEOUT_MS);
-    await runs.settleInstance(facts.id, 'completed');
+    const facts = created.find((a) => a.assignment_key === 'facts')!;
+    await t.handle.db
+      .updateTable('agent_instances')
+      .set({ status: 'completed', ended_at: new Date() })
+      .where('id', '=', facts.id)
+      .execute();
 
     ready = await runs.readyInstances(runId);
     expect(ready.map((a) => a.assignmentKey).sort()).toEqual(['announce', 'faq']);
-  });
-
-  it('derives the deadline rather than accepting one', async () => {
-    // Section 9.2: the ten-minute value is fixed, with no environment override.
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer');
-
-    const started = await runs.start(agentId, AGENT_TIMEOUT_MS);
-    const elapsed =
-      Date.parse(started.deadlineAt!) - Date.parse(started.startedAt!);
-    expect(elapsed).toBe(AGENT_TIMEOUT_MS);
-  });
-
-  it('does not restart the clock on a second start', async () => {
-    // "Replanning, provider retries, and repeated tool calls do not reset the
-    // same agent's deadline."
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer');
-
-    const first = await runs.start(agentId, AGENT_TIMEOUT_MS);
-    await new Promise((r) => setTimeout(r, 20));
-    const second = await runs.start(agentId, AGENT_TIMEOUT_MS);
-
-    expect(second.deadlineAt).toBe(first.deadlineAt);
-  });
-
-  it('refuses a write from an expired instance', async () => {
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer');
-    await runs.start(agentId, -1_000); // already past
-
-    await expect(runs.assertWritable(agentId)).rejects.toMatchObject({
-      code: 'AGENT_TIMED_OUT',
-    });
-  });
-
-  it('refuses a write from a terminal instance', async () => {
-    const taskId = await makeTask();
-    const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer');
-    await runs.start(agentId, AGENT_TIMEOUT_MS);
-    await runs.settleInstance(agentId, 'timed_out');
-
-    await expect(runs.assertWritable(agentId)).rejects.toMatchObject({
-      code: 'AGENT_TIMED_OUT',
-    });
   });
 });
 
 describe('the database refuses late writes from terminal instances', () => {
   /*
-   * Section 11.2 asks for this at the database level, and the asymmetry with
-   * task transitions is the point: an agent write can arrive from a detached
-   * async context with no request holding a lock to check it. Section 9.2:
+   * Migration 0006. Section 11.2 asks for this at the database level, and the
+   * asymmetry with task transitions is the point: an agent write can arrive
+   * from a detached async context with no request holding a lock. Section 9.2:
    * "canceling a local request does not guarantee the provider stopped."
+   *
+   * Driven through raw updates rather than a service, because the guarantee
+   * under test is that the database refuses regardless of which code path asks.
    */
   async function terminalAgent(): Promise<string> {
     const taskId = await makeTask();
     const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer');
-    await runs.start(agentId, AGENT_TIMEOUT_MS);
-    await runs.settleInstance(agentId, 'timed_out');
-    return agentId;
+    const agent = await ledger.createInstance({
+      runId,
+      agentKey: 'writer',
+      assignmentKey: 'writer',
+      preset: 'writer',
+      modelId: 'gemini-2.5-flash',
+    });
+    await t.handle.db
+      .updateTable('agent_instances')
+      .set({ status: 'timed_out', ended_at: new Date() })
+      .where('id', '=', agent.id)
+      .execute();
+    return agent.id;
   }
 
   it('rejects a result written after the agent timed out', async () => {
@@ -522,19 +263,53 @@ describe('the database refuses late writes from terminal instances', () => {
   it('still allows late usage to be recorded', async () => {
     // Section 9.2: "Late usage may still be recorded; late edits are still
     // rejected." The guard must not block the first half of that.
+    const agentId = await terminalAgent();
+    await expect(
+      t.handle.db
+        .updateTable('model_calls')
+        .set({ status: 'reported' })
+        .where('agent_id', '=', agentId)
+        .execute(),
+    ).resolves.toBeDefined();
+  });
+});
+
+describe('run records', () => {
+  it('records the captured snapshot and manifest', async () => {
     const taskId = await makeTask();
     const runId = await makeRun(taskId);
-    const agentId = await makeAgent(taskId, runId, 'writer', 1000);
-    await ledger.reserve({ agentInstanceId: agentId, requestKey: 'late', tokens: 200, modelId: 'm' });
-    await runs.start(agentId, AGENT_TIMEOUT_MS);
-    await runs.settleInstance(agentId, 'timed_out');
 
-    const after = await ledger.reconcile({
-      agentInstanceId: agentId,
-      requestKey: 'late',
-      usage: { status: 'reported', totalTokens: 180 },
+    await runs.recordCapture(runId, {
+      inputSnapshotSha: fakeSha('snap'),
+      contextManifest: {
+        taskVersion: 1, guidanceVersion: 1, discussionCutoffSeq: 0, materials: [],
+        approvedPaths: [], approvedCommitSha: null, draftCheckpointSha: null,
+        draftFileHashes: {},
+      },
     });
-    expect(after.consumedTokens).toBe(180);
+
+    const run = await runs.read(runId);
+    expect(run!.input_snapshot_sha).toBe(fakeSha('snap'));
+    expect(run!.context_manifest).toMatchObject({ taskVersion: 1 });
+  });
+
+  it('frees the task when the run settles', async () => {
+    const taskId = await makeTask();
+    const runId = await makeRun(taskId);
+    await runs.settle(runId, 'incomplete', 'an agent timed out');
+
+    const task = await t.handle.db
+      .selectFrom('tasks').selectAll().where('id', '=', taskId).executeTakeFirstOrThrow();
+    expect(task.active_run_id).toBeNull();
+    expect((await runs.read(runId))!.status).toBe('incomplete');
+  });
+
+  it('is idempotent when the run has already settled', async () => {
+    const taskId = await makeTask();
+    const runId = await makeRun(taskId);
+    await runs.settle(runId, 'canceled');
+    await runs.settle(runId, 'completed');
+    expect((await runs.read(runId))!.status).toBe('canceled');
   });
 });
 
@@ -557,7 +332,10 @@ describe('startup reconciliation', () => {
       .set({ status: 'working', active_run_id: run.id })
       .where('id', '=', taskId)
       .execute();
-    await ledger.ensure(workspaceId, taskId, 'stranded');
+    await t.handle.db
+      .insertInto('task_agent_budgets')
+      .values({ workspace_id: workspaceId, task_id: taskId, agent_key: 'stranded', token_budget: 64_000 })
+      .execute();
     await t.handle.db
       .insertInto('agent_instances')
       .values({
@@ -583,9 +361,7 @@ describe('startup reconciliation', () => {
     const runId = await makeRun(taskId);
     await runs.markInterruptedFromPreviousBoots();
 
-    const run = await t.handle.db
-      .selectFrom('runs').selectAll().where('id', '=', runId).executeTakeFirstOrThrow();
-    expect(run.status).toBe('working');
+    expect((await runs.read(runId))!.status).toBe('working');
   });
 
   it('refuses a capture from a previous boot', async () => {
@@ -674,24 +450,18 @@ describe('reviews', () => {
     const review = await buildingReview(taskId);
     await reviews.markReady(review.id, fakeSha('cand'));
 
-    const results = await Promise.allSettled([
+    const begin = () =>
       reviews
         .claimForApply(review.id, fakeSha('cand'))
-        .then(() => reviews.begin({
-          workspaceId, reviewId: review.id,
-          expectedMainSha: fakeSha('main'), candidateSha: fakeSha('cand'), bootId: BOOT_ID,
-        })),
-      reviews
-        .claimForApply(review.id, fakeSha('cand'))
-        .then(() => reviews.begin({
-          workspaceId, reviewId: review.id,
-          expectedMainSha: fakeSha('main'), candidateSha: fakeSha('cand'), bootId: BOOT_ID,
-        })),
-    ]);
+        .then(() =>
+          reviews.begin({
+            workspaceId, reviewId: review.id,
+            expectedMainSha: fakeSha('main'), candidateSha: fakeSha('cand'), bootId: BOOT_ID,
+          }),
+        );
 
-    const created = results.filter(
-      (r) => r.status === 'fulfilled' && r.value.created,
-    );
+    const results = await Promise.allSettled([begin(), begin()]);
+    const created = results.filter((r) => r.status === 'fulfilled' && r.value.created);
     expect(created).toHaveLength(1);
   });
 

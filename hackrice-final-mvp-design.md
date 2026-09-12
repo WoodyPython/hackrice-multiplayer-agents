@@ -487,6 +487,8 @@ The agent cannot choose repository roots, branch names, shell arguments, or serv
 
 Use process-local per-workspace locks for Git mutation and task snapshot/apply barriers. A consistent lock order prevents deadlock: workspace operation lock, then task document gate.
 
+Database row locks follow the same discipline and the same order: task, then run, then agent instance, then budget or model call. Every path that touches more than one of these takes them in that sequence. This is not a style preference. Answering an agent question and enforcing a deadline touch the same two rows from different directions, and taking them in opposite orders deadlocks under concurrency while each path reads as perfectly reasonable on its own.
+
 Do not hold these locks during Gemini calls or while waiting for humans. Parallel model work continues while short checkpoints and integrations are serialized.
 
 All room update handlers respect the task gate. This matters when taking a snapshot or applying a result while people are typing.
@@ -806,6 +808,10 @@ Use reported total usage when it covers the required categories; do not sum tota
 That makes the accounting a ledger rather than a counter, with three states per call: reserved while the call is in flight, reported once the provider says what it cost, and unknown when it failed without usable usage. Only the first two ever release a reservation. Returning budget on a failed call would let an agent that keeps failing consume unbounded provider capacity while its recorded usage stayed at zero, which is precisely the case the limit exists to bound.
 
 The check and the reservation are one operation, not a read followed by a write. Several of an agent's calls can be prepared at once, and a separate check lets two of them both observe enough headroom and both take it.
+
+A reservation covers the prepared input plus the output allowance derived from what remains, so the two are taken together and step 3 is not a separate estimate anyone can skip. When the remainder cannot fund the model's minimum useful output, the agent reaches token_exhausted rather than making a call that cannot finish.
+
+One component owns this ledger. Reservation, reconciliation, instance lifecycle, and the deadline sweep are a single surface, because they share the same locks and the same notion of whether an instance is still current; splitting them across two components produces two writers to one budget with no way to order them. Run-level records, the assignment graph, and review metadata are separate and stay with the data layer.
 
 An abandoned reservation is charged rather than left outstanding. The charge is retained either way, but an accumulating pile of holds that never clear would make the remaining-budget arithmetic unable to distinguish a live in-flight call from a dead one.
 
@@ -1210,6 +1216,8 @@ Yjs snapshots and task status are not published deliverable content. The file vi
 | Lost apply response | Reconcile the recorded candidate against Git main |
 | Failed checkpoint | Keep document in saving/error state; do not claim checkpoint success |
 
+A handler that repairs state and then reports a failure must commit the repair before raising. Returning from a transaction commits and throwing rolls back, so a repair written immediately before a throw is discarded along with it, and the caller still sees the correct error. Verify such a path by asserting the repaired state, not the reported error: an assertion on the error alone passes against a complete rollback.
+
 No transparent agent continuation, failover, distributed recovery, or ownership recovery is implemented.
 
 ### 14.3 Manual retry
@@ -1259,6 +1267,7 @@ This allocation has no time estimates. Dependencies identify the order in which 
 | apps/server/src/runs | B |
 | apps/server/src/http and config | B |
 | apps/server/src/models, orchestration, agents | C |
+| apps/server/src/agents (instance lifecycle, budgets, deadlines) | C |
 | apps/server/src/git, collaboration, reviews, recovery | D |
 | apps/server/src/index.ts | D |
 | packages/contracts | B, consumed by all roles |

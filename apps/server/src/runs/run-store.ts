@@ -1,22 +1,29 @@
 import {
   ApiError,
-  TERMINAL_AGENT_STATUSES,
   type AgentInstance,
   type AgentPlan,
   type ContextManifest,
   type RunStatus,
-  eventKeys,
 } from '@app/contracts';
-import { isUniqueViolation, type Db } from '../db/client.js';
+import type { Db } from '../db/client.js';
 import type { AgentInstanceRow, RunRow } from '../db/types.js';
 import { appendEvent } from '../events/service.js';
-import { toIso, toIsoOrNull } from '../http/serialize.js';
+import { toIsoOrNull } from '../http/serialize.js';
 
 /**
- * B07: run and agent instance metadata (design sections 8.3, 9.2, 14.4).
+ * B07: run-level metadata and scheduling shape (design sections 8.3, 14.4).
  *
- * B03 creates the run row inside the Start transaction; everything here happens
- * afterwards, driven by Role C's orchestration through the hook.
+ * Scope boundary with Role C, settled after C02 and B07 both shipped ledgers:
+ *
+ *   Agent instance lifecycle and token budgets belong to PgAgentLedger in
+ *   src/agents. Section 15.1 assigns that directory to Role C, its reserve
+ *   derives the output allowance from the remaining budget as section 9.3 step 3
+ *   requires, and it owns the deadline sweep. There is one writer to
+ *   task_agent_budgets and one path that creates an instance.
+ *
+ *   What stays here is the run: what it captured, when it ended, the dependency
+ *   graph between its assignments, which of them are ready, and what a restart
+ *   must clean up. None of that is per-agent execution.
  */
 
 export interface RunStoreDeps {
@@ -28,15 +35,15 @@ export class PgRunStore {
   constructor(private readonly deps: RunStoreDeps) {}
 
   // -------------------------------------------------------------------------
-  // Runs
+  // Run records
   // -------------------------------------------------------------------------
 
   /**
    * Records what the run captured (section 2.2 steps 4 to 6).
    *
    * Guarded on boot: a run from a previous process was marked interrupted at
-   * startup, and a late capture from it must not resurrect it (section 14.4,
-   * "every active write checks its run/boot identity").
+   * startup, and a late capture must not resurrect it (section 14.4, "every
+   * active write checks its run/boot identity").
    */
   async recordCapture(
     runId: string,
@@ -83,14 +90,28 @@ export class PgRunStore {
     reason?: string,
   ): Promise<void> {
     await this.deps.db.transaction().execute(async (trx) => {
+      // Lock order is task, then run, matching src/agents and section 6.3.
       const run = await trx
         .selectFrom('runs')
         .selectAll()
         .where('id', '=', runId)
-        .forUpdate()
         .executeTakeFirst();
       if (!run) throw new ApiError('RUN_NOT_FOUND', 'No such run.');
-      if (!isActiveRun(run.status)) return;
+
+      await trx
+        .selectFrom('tasks')
+        .select('id')
+        .where('id', '=', run.task_id)
+        .forUpdate()
+        .executeTakeFirst();
+
+      const locked = await trx
+        .selectFrom('runs')
+        .selectAll()
+        .where('id', '=', runId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      if (!isActiveRun(locked.status)) return;
 
       const now = new Date();
       await trx
@@ -135,254 +156,111 @@ export class PgRunStore {
   }
 
   // -------------------------------------------------------------------------
-  // Agent instances
+  // The assignment graph (section 8.3)
   // -------------------------------------------------------------------------
 
   /**
-   * Materialises a validated plan into instances and dependency edges.
+   * Writes the dependency edges for a plan whose instances already exist.
    *
-   * Role C validates the plan first (design §16.3, C03) because it can ask the
-   * model for a corrected one. This re-checks acyclicity anyway: the cost is a
-   * topological sort over a handful of nodes, and the consequence of storing a
-   * cycle is a scheduler that waits forever on prerequisites that can never
-   * complete, which is far harder to diagnose than a rejected plan.
+   * Instances are created one at a time through the agent ledger, which is what
+   * keeps budget creation and instance creation on a single path. The edges
+   * between them are run metadata and belong here: both foreign keys carry
+   * `run_id`, so a dependency can never cross runs.
    *
-   * Budget rows must already exist; `agent_instances_budget_fk` enforces it, so
-   * a missing one is a programming error rather than a user-facing case.
+   * Re-validates acyclicity even though Role C validates the plan first (C03,
+   * where it can ask the model for a correction). The cost is a topological
+   * sort over a handful of nodes; the cost of storing a cycle is a scheduler
+   * that waits forever on prerequisites that can never complete, which is far
+   * harder to diagnose than a rejected plan.
    */
-  async createInstancesFromPlan(input: {
-    workspaceId: string;
-    taskId: string;
-    runId: string;
-    plan: AgentPlan;
-    modelId: string;
-    agentKeyFor?: (assignmentId: string) => string;
-  }): Promise<AgentInstance[]> {
-    assertAcyclic(input.plan);
+  async linkDependencies(runId: string, plan: AgentPlan): Promise<void> {
+    assertAcyclic(plan);
 
-    const agentKeyFor = input.agentKeyFor ?? ((id: string) => id);
+    const instances = await this.deps.db
+      .selectFrom('agent_instances')
+      .select(['id', 'assignment_key'])
+      .where('run_id', '=', runId)
+      .execute();
 
-    return this.deps.db.transaction().execute(async (trx) => {
-      const byAssignment = new Map<string, string>();
-
-      for (const assignment of input.plan.assignments) {
-        try {
-          const row = await trx
-            .insertInto('agent_instances')
-            .values({
-              workspace_id: input.workspaceId,
-              task_id: input.taskId,
-              run_id: input.runId,
-              agent_key: agentKeyFor(assignment.id),
-              assignment_key: assignment.id,
-              preset: assignment.preset,
-              model_id: input.modelId,
-              instruction: assignment.instruction,
-              write_paths: assignment.writePaths,
-              boot_id: this.deps.bootId,
-              status: 'pending',
-            })
-            .returning('id')
-            .executeTakeFirstOrThrow();
-          byAssignment.set(assignment.id, row.id);
-        } catch (error) {
-          if (isUniqueViolation(error)) {
-            throw new ApiError(
-              'INVALID_STATE',
-              `This run already has an assignment named "${assignment.id}".`,
-              { assignmentKey: assignment.id },
-            );
-          }
-          throw error;
-        }
-      }
-
-      const edges = input.plan.assignments.flatMap((assignment) =>
-        assignment.dependsOn.map((prerequisite) => ({
-          run_id: input.runId,
-          agent_id: byAssignment.get(assignment.id)!,
-          prerequisite_agent_id: byAssignment.get(prerequisite)!,
-        })),
+    const byAssignment = new Map(instances.map((i) => [i.assignment_key, i.id]));
+    const missing = plan.assignments
+      .map((a) => a.id)
+      .filter((id) => !byAssignment.has(id));
+    if (missing.length > 0) {
+      throw new ApiError(
+        'INVALID_STATE',
+        `These assignments have no instance in this run: ${missing.join(', ')}`,
+        { assignmentKeys: missing },
       );
-      if (edges.length > 0) {
-        await trx.insertInto('agent_dependencies').values(edges).execute();
-      }
+    }
 
-      const rows = await trx
+    const edges = plan.assignments.flatMap((assignment) =>
+      assignment.dependsOn.map((prerequisite) => ({
+        run_id: runId,
+        agent_id: byAssignment.get(assignment.id)!,
+        prerequisite_agent_id: byAssignment.get(prerequisite)!,
+      })),
+    );
+    if (edges.length === 0) return;
+
+    await this.deps.db
+      .insertInto('agent_dependencies')
+      .values(edges)
+      .onConflict((oc) => oc.doNothing())
+      .execute();
+  }
+
+  /**
+   * Assignments whose prerequisites have all completed (section 8.7).
+   *
+   * "Eligible independent assignments are scheduled without a fixed global
+   * active-task cap", so this returns the whole ready set rather than one.
+   */
+  async readyInstances(runId: string): Promise<AgentInstance[]> {
+    const [pending, deps, completed] = await Promise.all([
+      this.deps.db
         .selectFrom('agent_instances')
         .selectAll()
-        .where('run_id', '=', input.runId)
-        .orderBy('created_at')
-        .execute();
-      const deps = await trx
+        .where('run_id', '=', runId)
+        .where('status', '=', 'pending')
+        .execute(),
+      this.deps.db
         .selectFrom('agent_dependencies')
         .selectAll()
-        .where('run_id', '=', input.runId)
-        .execute();
+        .where('run_id', '=', runId)
+        .execute(),
+      this.deps.db
+        .selectFrom('agent_instances')
+        .select('id')
+        .where('run_id', '=', runId)
+        .where('status', '=', 'completed')
+        .execute(),
+    ]);
 
-      return rows.map((row) => toAgentInstance(row, deps));
-    });
-  }
-
-  /**
-   * Starts an agent's clock (section 9.2).
-   *
-   * "Set started_at when that agent begins its first execution activity and
-   * deadline_at = started_at + 600 seconds." The deadline is derived here, not
-   * supplied, so no caller can extend it. Replanning, provider retries, and
-   * repeated tool calls all reuse the same instance and therefore the same
-   * deadline.
-   *
-   * Idempotent: a second call returns the existing deadline rather than
-   * restarting the clock.
-   */
-  async start(agentInstanceId: string, timeoutMs: number): Promise<AgentInstance> {
-    const now = new Date();
-    const started = await this.deps.db
-      .updateTable('agent_instances')
-      .set({
-        status: 'running',
-        started_at: now,
-        deadline_at: new Date(now.getTime() + timeoutMs),
-      })
-      .where('id', '=', agentInstanceId)
-      .where('boot_id', '=', this.deps.bootId)
-      .where('status', '=', 'pending')
-      .returningAll()
-      .executeTakeFirst();
-
-    if (started) return toAgentInstance(started, []);
-
-    const current = await this.readInstance(agentInstanceId);
-    if (current.status === 'running' || current.status === 'needs_input') {
-      return toAgentInstance(current, []);
-    }
-    throw new ApiError(
-      'INVALID_STATE',
-      `Agent is ${current.status} and cannot be started.`,
-      { currentStatus: current.status },
-    );
-  }
-
-  /**
-   * Whether this instance may still write.
-   *
-   * Section 9.2: at the deadline, "refuse subsequent file writes or checkpoints
-   * from late results". Both conditions matter — a terminal status and an
-   * expired clock are different reasons for the same answer, and an instance
-   * can be past its deadline before anything has swept it.
-   */
-  async assertWritable(agentInstanceId: string): Promise<AgentInstanceRow> {
-    const row = await this.readInstance(agentInstanceId);
-
-    if ((TERMINAL_AGENT_STATUSES as readonly string[]).includes(row.status)) {
-      throw new ApiError(
-        row.status === 'timed_out' ? 'AGENT_TIMED_OUT' : 'INVALID_STATE',
-        `Agent is ${row.status} and can no longer write.`,
-        { currentStatus: row.status },
-      );
-    }
-    if (row.boot_id !== this.deps.bootId) {
-      throw new ApiError('RUN_INTERRUPTED', 'This agent belongs to a previous run.');
-    }
-    if (row.deadline_at && new Date(row.deadline_at).getTime() <= Date.now()) {
-      throw new ApiError('AGENT_TIMED_OUT', 'This agent passed its deadline.', {
-        deadlineAt: toIso(row.deadline_at),
-      });
-    }
-    return row;
-  }
-
-  /**
-   * Moves an instance to a terminal status.
-   *
-   * The database trigger refuses a transition out of a terminal status, so a
-   * late settle after a timeout is rejected there rather than silently
-   * overwriting the recorded outcome.
-   */
-  async settleInstance(
-    agentInstanceId: string,
-    status: (typeof TERMINAL_AGENT_STATUSES)[number],
-    input?: { resultSha?: string | null },
-  ): Promise<void> {
-    const row = await this.readInstance(agentInstanceId);
-    if ((TERMINAL_AGENT_STATUSES as readonly string[]).includes(row.status)) return;
-
-    await this.deps.db.transaction().execute(async (trx) => {
-      await trx
-        .updateTable('agent_instances')
-        .set({
-          status,
-          ended_at: new Date(),
-          ...(input?.resultSha !== undefined ? { result_sha: input.resultSha } : {}),
-        })
-        .where('id', '=', agentInstanceId)
-        .where('status', 'not in', TERMINAL_AGENT_STATUSES)
-        .execute();
-
-      await appendEvent(trx, {
-        workspaceId: row.workspace_id,
-        taskId: row.task_id,
-        runId: row.run_id,
-        eventKey: eventKeys.agentSettled(agentInstanceId, status),
-        type:
-          status === 'completed'
-            ? 'agent.completed'
-            : status === 'timed_out'
-              ? 'agent.timed_out'
-              : status === 'token_exhausted'
-                ? 'agent.token_exhausted'
-                : 'agent.completed',
-        payload: { status },
-      });
-    });
-  }
-
-  /** Instances whose prerequisites have all completed (design §8.7). */
-  async readyInstances(runId: string): Promise<AgentInstance[]> {
-    const rows = await this.deps.db
-      .selectFrom('agent_instances')
-      .selectAll()
-      .where('run_id', '=', runId)
-      .where('status', '=', 'pending')
-      .execute();
-    const deps = await this.deps.db
-      .selectFrom('agent_dependencies')
-      .selectAll()
-      .where('run_id', '=', runId)
-      .execute();
-    const completed = new Set(
-      (
-        await this.deps.db
-          .selectFrom('agent_instances')
-          .select('id')
-          .where('run_id', '=', runId)
-          .where('status', '=', 'completed')
-          .execute()
-      ).map((r) => r.id),
-    );
-
-    return rows
+    const done = new Set(completed.map((r) => r.id));
+    return pending
       .filter((row) =>
         deps
           .filter((d) => d.agent_id === row.id)
-          .every((d) => completed.has(d.prerequisite_agent_id)),
+          .every((d) => done.has(d.prerequisite_agent_id)),
       )
       .map((row) => toAgentInstance(row, deps));
   }
 
   async listInstances(runId: string): Promise<AgentInstance[]> {
-    const rows = await this.deps.db
-      .selectFrom('agent_instances')
-      .selectAll()
-      .where('run_id', '=', runId)
-      .orderBy('created_at')
-      .execute();
-    const deps = await this.deps.db
-      .selectFrom('agent_dependencies')
-      .selectAll()
-      .where('run_id', '=', runId)
-      .execute();
+    const [rows, deps] = await Promise.all([
+      this.deps.db
+        .selectFrom('agent_instances')
+        .selectAll()
+        .where('run_id', '=', runId)
+        .orderBy('created_at')
+        .execute(),
+      this.deps.db
+        .selectFrom('agent_dependencies')
+        .selectAll()
+        .where('run_id', '=', runId)
+        .execute(),
+    ]);
     return rows.map((row) => toAgentInstance(row, deps));
   }
 
@@ -398,12 +276,10 @@ export class PgRunStore {
    * no process behind it.
    *
    * Clearing the task's active-run pointer is what lets a human retry; without
-   * it the task would be permanently unstartable after any restart.
+   * it the unique active-run rule would leave every interrupted task
+   * permanently unstartable after a restart.
    */
-  async markInterruptedFromPreviousBoots(): Promise<{
-    runs: number;
-    agents: number;
-  }> {
+  async markInterruptedFromPreviousBoots(): Promise<{ runs: number; agents: number }> {
     return this.deps.db.transaction().execute(async (trx) => {
       const now = new Date();
 
@@ -453,16 +329,6 @@ export class PgRunStore {
   }
 
   // -------------------------------------------------------------------------
-
-  private async readInstance(agentInstanceId: string): Promise<AgentInstanceRow> {
-    const row = await this.deps.db
-      .selectFrom('agent_instances')
-      .selectAll()
-      .where('id', '=', agentInstanceId)
-      .executeTakeFirst();
-    if (!row) throw new ApiError('RUN_NOT_FOUND', 'No such agent instance.');
-    return row;
-  }
 
   private staleRunError(runId: string): ApiError {
     return new ApiError(
