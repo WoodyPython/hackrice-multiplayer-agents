@@ -11,10 +11,11 @@ export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '
 export function loadRuntimeConfig(source: NodeJS.ProcessEnv = process.env) {
   const env = { ...source };
   // .env.example intentionally leaves these optional integrations blank.
-  for (const key of ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_PUBLISHABLE_KEY', 'GEMINI_API_KEY']) {
+  for (const key of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_PUBLISHABLE_KEY', 'GEMINI_API_KEY']) {
     if (env[key]?.trim() === '') delete env[key];
   }
   env.GIT_DATA_ROOT = resolve(repositoryRoot, env.GIT_DATA_ROOT ?? './data');
+  if (!env.PUBLIC_APP_URL?.trim()) env.PUBLIC_APP_URL = env.RENDER_EXTERNAL_URL;
   return loadConfig(env);
 }
 

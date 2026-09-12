@@ -62,17 +62,25 @@ describe('migrations', () => {
       '0005_task_idempotency.sql',
       '0006_agent_write_guard.sql',
       '0007_stale_building_reviews.sql',
+      '0008_security_hardening.sql',
     ]);
   });
 
   it('enables row level security on every application table', async () => {
     const { rows } = await handle.pool.query<{ tablename: string; rowsecurity: boolean }>(
       `select tablename, rowsecurity from pg_tables
-       where schemaname = 'public' and tablename <> 'schema_migrations'`,
+       where schemaname = 'public'`,
     );
     const unprotected = rows.filter((r) => !r.rowsecurity).map((r) => r.tablename);
     expect(unprotected).toEqual([]);
-    expect(rows.length).toBe(17);
+    expect(rows.length).toBe(18);
+  });
+
+  it('pins the agent write guard search path', async () => {
+    const { rows } = await handle.pool.query(
+      "select proconfig from pg_proc where oid = 'public.agent_instances_guard_writes()'::regprocedure",
+    );
+    expect(rows[0].proconfig).toContain('search_path=public, pg_temp');
   });
 
   it('defines no RLS policies, so PostgREST denies everything', async () => {

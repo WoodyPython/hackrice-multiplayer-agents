@@ -65,7 +65,7 @@ export function registerErrorHandler(app: {
   setNotFoundHandler(
     handler: (request: FastifyRequest, reply: FastifyReply) => void,
   ): unknown;
-}): void {
+}, registerNotFound = true): void {
   app.setErrorHandler((error, request, reply) => {
     if (ApiError.is(error)) {
       void reply.status(error.httpStatus).send(error.toBody());
@@ -114,11 +114,13 @@ export function registerErrorHandler(app: {
     void reply.status(api.httpStatus).send(api.toBody());
   });
 
-  app.setNotFoundHandler((request, reply) => {
-    const api = new ApiError(
-      'VALIDATION_FAILED',
-      `No route for ${request.method} ${request.url}`,
-    );
-    void reply.status(404).send(api.toBody());
-  });
+  if (registerNotFound) app.setNotFoundHandler(sendNotFound);
+}
+
+export function sendNotFound(request: FastifyRequest, reply: FastifyReply): void {
+  const api = new ApiError(
+    'VALIDATION_FAILED',
+    `No route for ${request.method} ${request.url}`,
+  );
+  void reply.status(404).send(api.toBody());
 }

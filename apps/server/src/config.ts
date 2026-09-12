@@ -38,6 +38,7 @@ const envSchema = z.object({
   // Optional until B04 (Storage) and B06 (Realtime). Absent values are not an
   // error: local development works fully without a Supabase project.
   SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_SECRET_KEY: z.string().min(1).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   /** The one Supabase value that reaches the browser, for refresh channels. */
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1).optional(),
@@ -45,7 +46,7 @@ const envSchema = z.object({
    * Storage bucket for material bytes. Must be PRIVATE: access goes through the
    * API, which scopes by workspace (section 11.4).
    *
-   * Only consulted when SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are both
+   * Only consulted when SUPABASE_URL and a server key (modern or legacy) are
    * present; without them, materials live on local disk under GIT_DATA_ROOT.
    */
   SUPABASE_STORAGE_BUCKET: z.string().min(1).default('materials'),

@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
+import { supabaseHeaders } from '../supabase-auth.js';
 
 /**
  * Object storage for material bytes.
@@ -155,10 +156,7 @@ export class SupabaseBlobStore implements BlobStore {
   }
 
   private headers(): Record<string, string> {
-    return {
-      authorization: `Bearer ${this.config.serviceRoleKey}`,
-      apikey: this.config.serviceRoleKey,
-    };
+    return supabaseHeaders(this.config.serviceRoleKey);
   }
 
   async put(key: string, bytes: Uint8Array, contentType: string): Promise<void> {

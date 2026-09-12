@@ -1,5 +1,7 @@
 # Team setup
 
+For production deployment, see [Render hosting](docs/hosting.md).
+
 Get to the exact same state as everyone else, verify it, and start your first
 ticket. Budget 10 minutes.
 

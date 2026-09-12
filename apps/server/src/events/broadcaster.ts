@@ -1,4 +1,5 @@
 import type { RefreshHint } from '@app/contracts';
+import { supabaseHeaders } from '../supabase-auth.js';
 
 /**
  * Refresh-hint transport (design section 5.1).
@@ -65,8 +66,7 @@ export class SupabaseBroadcaster implements Broadcaster {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          apikey: this.config.serviceRoleKey,
-          authorization: `Bearer ${this.config.serviceRoleKey}`,
+          ...supabaseHeaders(this.config.serviceRoleKey),
         },
         body: JSON.stringify({
           messages: [

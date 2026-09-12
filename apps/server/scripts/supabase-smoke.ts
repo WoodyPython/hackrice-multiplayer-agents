@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { SupabaseBlobStore, materialObjectKey } from '../src/materials/blob-store.js';
 import { SupabaseBroadcaster } from '../src/events/broadcaster.js';
+import { supabaseServerKey } from '../src/supabase-auth.js';
 
 /**
  * Proves the two Supabase integrations actually work against a live project.
@@ -22,7 +23,7 @@ loadDotenv({ path: resolve(process.cwd(), '../../.env'), quiet: true });
 loadDotenv({ quiet: true });
 
 const url = process.env.SUPABASE_URL;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const serviceRoleKey = supabaseServerKey(process.env);
 const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? 'materials';
 
 function fail(message: string): never {
@@ -32,7 +33,7 @@ function fail(message: string): never {
 
 if (!url || !serviceRoleKey) {
   fail(
-    'SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env at the repository root.',
+    'SUPABASE_URL and SUPABASE_SECRET_KEY (or legacy SUPABASE_SERVICE_ROLE_KEY) must be set.',
   );
 }
 

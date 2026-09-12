@@ -30,6 +30,8 @@ import { TaskEventPump } from '../events/pump.js';
 import type { BlobStore } from '../materials/blob-store.js';
 import { LocalDiskBlobStore, SupabaseBlobStore } from '../materials/blob-store.js';
 import { registerErrorHandler } from './errors.js';
+import { registerFrontend } from './frontend.js';
+import { supabaseServerKey } from '../supabase-auth.js';
 
 /**
  * The application factory (design section 15.1).
@@ -78,10 +80,11 @@ export interface AppDeps {
  * for Git and has no replication.
  */
 export function defaultBlobStore(config: AppConfig): BlobStore {
-  if (config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY) {
+  const serverKey = supabaseServerKey(config);
+  if (config.SUPABASE_URL && serverKey) {
     return new SupabaseBlobStore({
       url: config.SUPABASE_URL,
-      serviceRoleKey: config.SUPABASE_SERVICE_ROLE_KEY,
+      serviceRoleKey: serverKey,
       bucket: config.SUPABASE_STORAGE_BUCKET,
     });
   }
@@ -90,6 +93,7 @@ export function defaultBlobStore(config: AppConfig): BlobStore {
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { config } = deps;
+  const serverKey = supabaseServerKey(config);
 
   const app = Fastify({
     logger: {
@@ -163,7 +167,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     limits: { fileSize: 1024 * 1024, files: 1, fields: 8 },
   });
 
-  registerErrorHandler(app);
+  registerErrorHandler(app, !config.isProduction);
 
   app.get('/health', async () => ({
     status: 'ok',
@@ -224,9 +228,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const broadcaster =
     deps.broadcaster ??
-    (config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY
+    (config.SUPABASE_URL && serverKey
       ? new SupabaseBroadcaster(
-          { url: config.SUPABASE_URL, serviceRoleKey: config.SUPABASE_SERVICE_ROLE_KEY },
+          { url: config.SUPABASE_URL, serviceRoleKey: serverKey },
           (error) => app.log.warn({ err: error }, 'refresh hint broadcast failed'),
         )
       : new RecordingBroadcaster());
@@ -245,5 +249,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate('eventPump', pump);
   app.addHook('onClose', async () => { await pump.stop(); });
 
+  if (config.isProduction) await registerFrontend(app);
   return app;
 }

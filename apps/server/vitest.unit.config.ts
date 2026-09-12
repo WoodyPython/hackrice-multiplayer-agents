@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitest/config';
 
-/** Pure model adapters and graph validation need neither PostgreSQL nor Git. */
+/** These suites need neither PostgreSQL nor Git. */
 export default defineConfig({
-  test: { include: ['test/models.test.ts', 'test/plan-validation.test.ts'], testTimeout: 5000 },
+  test: { include: ['test/models.test.ts', 'test/plan-validation.test.ts', 'test/hosting.test.ts'], testTimeout: 5000 },
 });

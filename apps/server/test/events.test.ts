@@ -350,6 +350,7 @@ describe('realtime configuration for the browser', () => {
       config: {
         SUPABASE_URL: 'https://example.supabase.co',
         SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
+        SUPABASE_SECRET_KEY: 'sb_secret_modern_must_not_leak',
         SUPABASE_SERVICE_ROLE_KEY: 'sb_secret_must_not_leak',
       },
     });
@@ -367,6 +368,7 @@ describe('realtime configuration for the browser', () => {
       });
       // The service-role key is never on the wire.
       expect(res.body).not.toContain('sb_secret_must_not_leak');
+      expect(res.body).not.toContain('sb_secret_modern_must_not_leak');
     } finally {
       await configured.close();
     }
