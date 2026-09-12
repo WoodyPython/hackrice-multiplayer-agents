@@ -5,6 +5,7 @@ import {
   type CandidateResolution,
   type Review,
   type ReviewDetail,
+  type ReviewPreview,
   type TaskDetail,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
@@ -35,10 +36,21 @@ export function Changes({
   task,
   isOwner,
   onApplied,
+  staleSignal,
 }: {
   task: TaskDetail;
   isOwner: boolean;
   onApplied: () => void;
+  /**
+   * Identifies the most recent `review.stale` event on this task (§7.6).
+   *
+   * The task page already polls the durable event record, so this screen learns
+   * that someone kept typing without opening a second polling loop of its own.
+   * Before this it only found out by failing an Apply, which §4.7 rules out:
+   * the button is supposed to be *disabled* with Refresh offered, which means
+   * knowing before the click rather than after.
+   */
+  staleSignal?: string;
 }) {
   const { api } = useBrowser();
   const [reviews, setReviews] = useState<Review[] | null>(null);
@@ -82,7 +94,7 @@ export function Changes({
       }
     })();
     return () => controller.abort();
-  }, [api, task.workspaceId, task.id, nonce]);
+  }, [api, task.workspaceId, task.id, nonce, staleSignal]);
 
   async function act(run: () => Promise<unknown>) {
     setBusy(true);
@@ -216,15 +228,12 @@ export function Changes({
               </p>
             ) : (
               detail.changedFiles.map((file) => (
-                <details className="file-diff" key={file.path}>
-                  <summary>
-                    <code className="path">{file.path}</code>
-                    <span className={`change-kind ${file.changeKind}`}>
-                      {file.changeKind}
-                    </span>
-                  </summary>
-                  <pre className="diff">{file.diff}</pre>
-                </details>
+                <ChangedFile
+                  key={file.path}
+                  file={file}
+                  workspaceId={task.workspaceId}
+                  reviewId={current.id}
+                />
               ))
             )}
           </section>
@@ -352,5 +361,75 @@ function Conflicts({
         <small className="muted">Choose a version for every file above.</small>
       )}
     </section>
+  );
+}
+
+/**
+ * One changed file: its diff, and for Markdown its rendered result (§4.6).
+ *
+ * The preview is fetched only when opened and only for Markdown, which is what
+ * §4.6 asks for. It matters most in exactly the case A08 names — a multi-file
+ * result — because a diff of prose is hard to judge and a rendered version is
+ * not.
+ *
+ * The text is rendered as text. §13.2 keeps generated content inert and §13.3
+ * never lets stored content become markup on this origin, so this deliberately
+ * does not run a Markdown-to-HTML pass: headings and emphasis are shown as the
+ * source that produced them, which is honest and cannot execute.
+ */
+function ChangedFile({
+  file,
+  workspaceId,
+  reviewId,
+}: {
+  file: ReviewDetail["changedFiles"][number];
+  workspaceId: string;
+  reviewId: string;
+}) {
+  const { api } = useBrowser();
+  const [preview, setPreview] = useState<ReviewPreview | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const markdown = /\.(md|markdown)$/i.test(file.path);
+
+  useEffect(() => {
+    if (!open || !markdown || preview || file.changeKind === "deleted") return;
+    const controller = new AbortController();
+    void api
+      .previewReview(workspaceId, reviewId, file.path, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) setPreview(result);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setFailure(apiMessage(error));
+      });
+    return () => controller.abort();
+  }, [api, open, markdown, preview, workspaceId, reviewId, file.path, file.changeKind]);
+
+  return (
+    <details
+      className="file-diff"
+      onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}
+    >
+      <summary>
+        <code className="path">{file.path}</code>
+        <span className={`change-kind ${file.changeKind}`}>{file.changeKind}</span>
+      </summary>
+      <pre className="diff">{file.diff}</pre>
+      {markdown && file.changeKind !== "deleted" && (
+        <div className="preview">
+          <h4>How this file would read</h4>
+          {failure ? (
+            <p role="alert" className="error">
+              {failure}
+            </p>
+          ) : preview ? (
+            <pre className="preview-text">{preview.text}</pre>
+          ) : (
+            <p role="status">Loading preview…</p>
+          )}
+        </div>
+      )}
+    </details>
   );
 }

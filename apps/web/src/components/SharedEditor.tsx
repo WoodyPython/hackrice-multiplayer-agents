@@ -33,7 +33,7 @@ function language(path: string) {
     json: 'json', sql: 'sql', yaml: 'yaml', yml: 'yaml' } as Record<string, string>)[extension ?? ''] ?? 'plaintext';
 }
 
-function BoundEditor({ live, draft, onSaved }: { live: LiveDocument; draft: DraftFile; onSaved: (saved: boolean) => void }) {
+function BoundEditor({ live, draft, onSaved, onClosed }: { live: LiveDocument; draft: DraftFile; onSaved: (saved: boolean) => void; onClosed?: () => void }) {
   const { session } = useBrowser();
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -74,6 +74,7 @@ function BoundEditor({ live, draft, onSaved }: { live: LiveDocument; draft: Draf
   }, [live, draft.path, session]);
   useEffect(() => {
     onSaved(state === 'saved');
+    if (state === 'closed') onClosed?.();
     editorRef.current?.updateOptions({ readOnly: state === 'connecting' || state === 'closed' || state === 'rejected' });
     const warn = (event: BeforeUnloadEvent) => {
       if (state !== 'saved') { event.preventDefault(); event.returnValue = ''; }
@@ -87,7 +88,7 @@ function BoundEditor({ live, draft, onSaved }: { live: LiveDocument; draft: Draf
     };
     document.addEventListener('click', navigate, true);
     return () => { window.removeEventListener('beforeunload', warn); document.removeEventListener('click', navigate, true); };
-  }, [state, onSaved]);
+  }, [state, onSaved, onClosed]);
   return <section className="shared-editor panel">
     <div className="editor-toolbar"><h2>{draft.path}</h2><span role="status">{labels[state]}</span>
       {language(draft.path) === 'markdown' && <button aria-pressed={preview} onClick={() => setPreview(!preview)}>Markdown preview</button>}
@@ -100,12 +101,15 @@ function BoundEditor({ live, draft, onSaved }: { live: LiveDocument; draft: Draf
   </section>;
 }
 
-export function SharedEditor({ room, draft, onSaved }: { room: LiveRoomId; draft: DraftFile; onSaved: (saved: boolean) => void }) {
+export function SharedEditor({ room, draft, onSaved, onClosed }: { room: LiveRoomId; draft: DraftFile;
+  onSaved: (saved: boolean) => void;
+  /** Fires when this epoch closes, so the page can offer the current draft (§4.7). */
+  onClosed?: () => void }) {
   const [live, setLive] = useState<LiveDocument | null>(null);
   useEffect(() => {
     const document = new LiveDocument(room);
     setLive(document);
     return () => document.destroy();
   }, [room.workspaceId, room.taskId, room.draftFileId, room.epoch]);
-  return live ? <BoundEditor live={live} draft={draft} onSaved={onSaved} /> : <p role="status">Opening editor…</p>;
+  return live ? <BoundEditor live={live} draft={draft} onSaved={onSaved} onClosed={onClosed} /> : <p role="status">Opening editor…</p>;
 }

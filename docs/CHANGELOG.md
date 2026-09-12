@@ -2,6 +2,49 @@
 
 Newest first. One entry per landed ticket.
 
+## A08 — Cross-flow UI integration
+**Landed:** 2026-09-12 · Role A
+**Affects:** Role A. Frontend only — no route, migration, or dependency.
+**Action required:** None.
+
+Integration and hardening, per the ticket's own constraint: no new feature
+surfaces. Of A08's five items, one was already done and one turned out to be
+already covered — the other three were real gaps.
+
+- **Late-edit handling** (§7.6). The Changes tab never learned a review had gone
+  stale; it loaded once and kept offering Apply until a click failed with
+  `REVIEW_STALE`. §4.7 asks for the opposite — Apply *disabled* and Refresh
+  offered — which means knowing before the click. It now takes the latest
+  `review.stale` event from the record the task page already polls, so this
+  needed no second polling loop and no new endpoint.
+- **Closed-document epochs.** The editor already showed the recovery text A03
+  built; what was missing was any way forward from it. Applying a review closes
+  the epoch, and the page now says so and offers to open the current draft,
+  which is §4.7's "keep local text visible, open the current draft".
+- **Multi-file approved results**, and the rendered preview §4.6 asks for. This
+  was A06 residue rather than A08 work: `GET /reviews/:id/preview` existed and
+  was unused. Markdown files now show how they would read beside the diff —
+  which matters most in exactly the multi-file case A08 names, because a diff of
+  prose is hard to judge. **Rendered as text, not HTML:** §13.2 keeps generated
+  content inert and §13.3 never lets stored content become markup on this
+  origin, so headings appear as the source that produced them. Design §4.6 is
+  amended to say this.
+- **Saved-work retries** were done in the residue pass and are unchanged.
+- **Owner-key loss** needed nothing. A02 already states it where the decision
+  lives: workspace settings says owner controls are unavailable, participation
+  continues, and "if browser storage was cleared, owner access cannot be
+  recovered" — exactly §1.2. A second copy of that warning elsewhere would make
+  a normal contributor's ordinary state look like a problem. Covered by a test
+  now so it cannot quietly disappear.
+
+Verified: `npm run build` and the web suite (**74**, up from 70). Frontend only,
+so no backend suite is affected. Mutation-checked by cutting the stale signal
+and watching the Apply button stay live.
+
+**A08 was the last Role A ticket, and the last ticket on the board.**
+
+---
+
 ## B08 — Data integration and focused checks
 **Landed:** 2026-09-12 · Role B
 **Affects:** everyone. Three status-code fixes; no migration, no dependency.

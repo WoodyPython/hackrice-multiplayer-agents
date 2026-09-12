@@ -37,6 +37,7 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
   const [retry, setRetry] = useState(0);
   const [saved, setSaved] = useState(false);
   const [checkpoint, setCheckpoint] = useState<string | null>(null);
+  const [closed, setClosed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const valid = uuidSchema.safeParse(taskId).success;
@@ -180,6 +181,28 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
             </div>
           </div>
 
+          {closed && (
+            <div className="notice" role="alert">
+              <h3>This document was closed</h3>
+              <p>
+                Applying a review closes the version everyone was editing and
+                opens a fresh one from the approved text. Your unsent words are
+                still below — copy anything you want to keep, then open the
+                current draft.
+              </p>
+              <button
+                className="primary"
+                onClick={() => {
+                  setClosed(false);
+                  setSaved(false);
+                  reload();
+                }}
+              >
+                Open the current draft
+              </button>
+            </div>
+          )}
+
           <p className="editor-state" aria-live="polite">
             {!saved && (
               <span className="unsaved">
@@ -217,6 +240,7 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
               }}
               draft={draft}
               onSaved={setSaved}
+              onClosed={() => setClosed(true)}
             />
           </Suspense>
         </>

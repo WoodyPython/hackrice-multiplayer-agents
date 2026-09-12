@@ -350,6 +350,14 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
           <Changes
             task={task}
             isOwner={isOwner}
+            staleSignal={
+              // §7.6: continued typing invalidates a review. The event record
+              // is already polled here, so the Changes tab learns it without a
+              // second loop of its own.
+              [...events]
+                .reverse()
+                .find((event) => event.type === "review.stale")?.id
+            }
             onApplied={() => {
               reload();
               thread.refresh();

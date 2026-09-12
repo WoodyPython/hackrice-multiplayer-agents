@@ -244,6 +244,7 @@ export type CandidateResolution = z.infer<typeof candidateResolutionSchema>;
 export type ResolveCandidateRequest = z.infer<typeof resolveCandidateRequestSchema>;
 export type ReviewCandidateData = z.infer<typeof reviewCandidateDataSchema>;
 export type ReviewDetail = z.infer<typeof reviewDetailSchema>;
+export type ReviewPreview = z.infer<typeof reviewPreviewSchema>;
 
 /**
  * C07: one fresh reviewer-preset pass against the exact candidate a review

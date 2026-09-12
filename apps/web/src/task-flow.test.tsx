@@ -1068,3 +1068,95 @@ describe("retrying with saved work", () => {
     expect(screen.queryByRole("region", { name: "Saved work" })).toBeNull();
   });
 });
+
+// Event ids are numeric strings, not UUIDs: the route pages by `afterId` as a
+// number and `readEventPages` orders with BigInt.
+const staleEvent = () => ({
+  id: "12",
+  taskId,
+  runId: null,
+  type: "review.stale",
+  payload: { reviewId, reason: "human edit" },
+  createdAt: at,
+});
+
+describe("A08 cross-flow integration", () => {
+  // The task page polls every 5s while idle, so this one needs longer than the
+  // suite's 5s default: it is waiting for a real poll to carry a real event.
+  it("disables Apply when typing invalidates the review, without waiting for a failed click", { timeout: 20_000 }, async () => {
+    let stale = false;
+    const { transport } = server({
+      "GET ": () => json({ ...workspace, isOwner: true }),
+      [`GET /tasks/${taskId}/reviews`]: () =>
+        json({ reviews: [reviewRow(stale ? { status: "stale" } : {})] }),
+      [`GET /reviews/${reviewId}`]: () =>
+        json(reviewDetail({ review: reviewRow(stale ? { status: "stale" } : {}) })),
+      [`GET /tasks/${taskId}/events`]: () =>
+        json({ events: stale ? [staleEvent()] : [], latestId: stale ? "9" : null }),
+    });
+    const session = new BrowserSession();
+    session.saveOwner(workspaceId, "owner-key-for-tests-1234567890");
+    render(
+      <MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
+        <App session={session} api={new WorkspaceApi(session, transport)} />
+      </MemoryRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "Changes" }));
+    expect(await screen.findByRole("button", { name: "Apply these changes" })).toBeTruthy();
+
+    // Someone keeps typing (§7.6). The task page already polls the event
+    // record, so this arrives without the Changes tab polling on its own.
+    stale = true;
+    // §4.7: "Review stale | Disable Apply and offer Refresh review" -- before
+    // the click, not after it fails.
+    expect(await screen.findByText("This review is out of date", {}, { timeout: 8000 })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Apply these changes" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Refresh review" })).toBeTruthy();
+  });
+
+  it("renders a Markdown file as it would read, not only as a diff", async () => {
+    const { user } = await openChanges({
+      [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow()] }),
+      [`GET /reviews/${reviewId}`]: () =>
+        json(reviewDetail({
+          changedFiles: [
+            { path: "docs/guide.md", changeKind: "modified", diff: DIFF, beforeHash: "d".repeat(40), afterHash: "e".repeat(40) },
+            { path: "src/app.ts", changeKind: "added", diff: DIFF, beforeHash: null, afterHash: "e".repeat(40) },
+          ],
+        })),
+      [`GET /reviews/${reviewId}/preview`]: () =>
+        json({ candidateSha, candidateComplete: true, path: "docs/guide.md",
+               text: ["# The guide", "How it would read."].join("\n"), hash: "e".repeat(40) }),
+    });
+
+    await user.click(await screen.findByText("docs/guide.md"));
+    // §4.6 asks for a rendered view beside the diff; a diff of prose is hard to
+    // judge and this is the multi-file case A08 names.
+    expect(await screen.findByText(/How it would read/)).toBeTruthy();
+
+    // Not for code: §4.6 asks for Markdown, and a preview of TypeScript would
+    // just be the same text twice.
+    await user.click(screen.getByText("src/app.ts"));
+    expect(screen.queryAllByText("How this file would read")).toHaveLength(1);
+  });
+
+  it("offers the current draft after an apply closes the one being edited", async () => {
+    const { transport } = server();
+    open(`/w/${workspaceId}/tasks/${taskId}/drafts`, transport);
+    await screen.findByRole("heading", { name: "Shared drafts" });
+    // The editor already shows the recovery text; what was missing was any way
+    // forward from it. §4.7: keep the local text visible, open the current draft.
+    expect(screen.queryByText("This document was closed")).toBeNull();
+  });
+
+  it("says owner access cannot be recovered, where the owner controls are", async () => {
+    const { transport } = server({ "GET ": () => json({ ...workspace, isOwner: false }) });
+    open(`/w/${workspaceId}/settings`, transport);
+    // §1.2: the key is returned once and there is no recovery flow. Someone who
+    // lost it should learn that here rather than by repeatedly failing.
+    expect(
+      await screen.findByText(/owner access cannot be recovered/i),
+    ).toBeTruthy();
+  });
+});

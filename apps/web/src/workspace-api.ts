@@ -17,6 +17,7 @@ import {
   listTaskReviewsResponseSchema,
   materialSchema,
   reviewDetailSchema,
+  reviewPreviewSchema,
   taskEventSchema,
   openDraftResponseSchema,
   postTaskRequestSchema,
@@ -42,6 +43,7 @@ import {
   type ResolveCandidateRequest,
   type Review,
   type ReviewDetail,
+  type ReviewPreview,
   type TaskAttempt,
   type TaskEvent,
   type OpenDraftResponse,
@@ -467,6 +469,33 @@ export class WorkspaceApi {
     return reviewDetailSchema.parse(
       await this.request(
         `/${workspaceId}/reviews/${reviewId}`,
+        "GET",
+        undefined,
+        workspaceId,
+        signal,
+      ),
+    );
+  }
+
+  /**
+   * One file's text as the candidate would leave it (§4.6).
+   *
+   * Separate from the diff on purpose: a diff of prose is hard to judge, and
+   * §4.6 asks for a rendered view alongside it. The text is returned as text
+   * and rendered here — §13.3 never serves stored content as markup from the
+   * API origin.
+   */
+  async previewReview(
+    workspaceId: string,
+    reviewId: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewPreview> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(reviewId);
+    return reviewPreviewSchema.parse(
+      await this.request(
+        `/${workspaceId}/reviews/${reviewId}/preview?path=${encodeURIComponent(path)}`,
         "GET",
         undefined,
         workspaceId,

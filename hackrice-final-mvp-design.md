@@ -414,6 +414,13 @@ Default to readable content. Put Git commit IDs and operation metadata in Detail
 
 All contributors can discuss changes. Only the owner key enables application. The server performs the same check; hiding a button is insufficient.
 
+**The Markdown preview is rendered as text.** Section 4.6 asks for a rendered
+view beside the diff, and this shows the file as the candidate would leave it
+without running a Markdown-to-HTML pass. Sections 13.2 and 13.3 are the reason:
+generated content stays inert, and stored content never becomes markup on this
+origin. Headings and emphasis appear as the source that produced them, which is
+honest about what was written and cannot execute.
+
 **A review is requested, never automatic.** A task reaches `ready_for_review`
 when its assignments integrate, and no review row exists at that point —
 nothing calls prepare on its behalf. So the review screen for such a task shows
