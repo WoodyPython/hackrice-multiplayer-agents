@@ -165,6 +165,23 @@ A change to task requirements or selected inputs increments the task version. Ex
 | canceled | A contributor stopped execution | Inspect saved work, manual retry |
 | completed | Reviewed changes were applied, or no changes were needed | Read result/history, create another task |
 
+Legal task transitions, enforced in the service layer under the task row lock:
+
+| From | May become |
+|---|---|
+| posted | planning, canceled |
+| planning | working, needs_input, conflict, incomplete, interrupted, canceled |
+| working | needs_input, ready_for_review, conflict, incomplete, interrupted, canceled, completed |
+| needs_input | working, ready_for_review, conflict, incomplete, interrupted, canceled |
+| ready_for_review | conflict, completed, planning, incomplete, canceled |
+| conflict | ready_for_review, planning, completed, canceled |
+| incomplete | planning, canceled, completed |
+| interrupted | planning, canceled, completed |
+| canceled | planning |
+| completed | nothing; the task is read-only |
+
+Transitions are checked in application code rather than by a database trigger, because a task transition always runs under a held row. Agent instances are the opposite case and do need database-level checks: a late write from an expired instance is a correctness problem, not a sequencing one.
+
 Agent states are separate: pending, running, needs_input, completed, failed, timed_out, token_exhausted, canceled, interrupted.
 
 Task completion is not inferred from a model saying “done.” Required assignments, validated output, and the publication state determine it.
@@ -212,6 +229,12 @@ Materials are immutable uploaded inputs in Supabase Storage. Store a hash, origi
 
 All entry points use the same upload implementation. Reattaching an existing material reuses its ID and bytes.
 
+Upload is multipart/form-data with one file part named file, plus a guestLabel field and optional taskId and discussionEntryId fields that select which of the three locations above applies. Materials are deduplicated by content hash within a workspace, so uploading bytes that already exist returns the existing material rather than storing a second copy; the response status distinguishes the two cases, 201 for a new material and 200 for a reused one.
+
+Materials are UTF-8 text. Section 3.4's validation rules make that a hard constraint rather than a convention: there is no binary path through this system, because agents read materials through a scoped text tool, previews render them as inert text, and "use as editable document" turns one into a collaborative draft.
+
+A material is never served back under its recorded content type. Section 13.3 requires uploaded HTML to render as text, and returning it as text/html from the API origin would be stored cross-site scripting against every workspace sharing that host, so reads respond as plain text with content sniffing disabled and an attachment disposition.
+
 Uploading does not invoke an agent or modify approved files. “Use as editable document” creates a task draft from the text; publication still requires review.
 
 Location affects context selection, not privacy. Everyone with the workspace link can access its materials.
@@ -219,6 +242,8 @@ Location affects context selection, not privacy. Everyone with the workspace lin
 ### 3.3 Selected context
 
 Before Start, show the materials and drafts the task will use. Direct task attachments are selected by default. Workspace references are available for explicit selection.
+
+"Selected by default" is a property of the context manifest, not a hidden row. A material attached directly to a task is in that task's context without any explicit selection record, so building the manifest means taking the union of the task's explicit selected inputs and the materials linked to that task. Writing a selection record at attach time would be the obvious alternative and is wrong: a later wholesale replacement of the selected inputs would silently drop the attachment.
 
 The context manifest records:
 - Task version and requirements.
@@ -987,8 +1012,11 @@ Task discussion entries persist independently of event delivery. A browser recon
 | GET/POST /api/workspaces/:w/tasks/:t/discussion | Read/add task-local entries |
 | POST /api/workspaces/:w/tasks/:t/answer | Answer an open agent question; records the answering discussion entry and resolves the question |
 | POST /api/workspaces/:w/materials | Upload workspace reference |
+| GET /api/workspaces/:w/materials | List this workspace's references |
 | POST /api/workspaces/:w/tasks/:t/material-links | Attach existing reference to task or its discussion |
+| GET /api/workspaces/:w/tasks/:t/materials | References attached to this task, selected by default at Start |
 | GET /api/workspaces/:w/materials/:m | Read/download linked material |
+| GET /api/workspaces/:w/materials/:m/meta | Read reference metadata without its bytes |
 | POST /api/workspaces/:w/drafts/open | Create/find manual-edit task and document |
 | POST /api/workspaces/:w/tasks/:t/checkpoint | Flush live documents to a Git checkpoint |
 | POST /api/workspaces/:w/tasks/:t/review | Prepare combined candidate |
@@ -1003,7 +1031,11 @@ The same workspace/object checks apply to WebSocket room resolution. A caller ca
 
 ### 12.2 Owner key
 
-Send the owner key in a request header for owner operations. The server compares its hash against the workspace record. Do not accept an isOwner flag, guest label, or claimed creator ID instead.
+Send the owner key in the x-owner-key request header for owner operations. The server compares its SHA-256 against the workspace record in constant time. Do not accept an isOwner flag, guest label, or claimed creator ID instead.
+
+A missing key and a wrong key produce byte-identical responses, so neither can be used to probe the other. Because x-owner-key is not a simple header, it must appear in the cross-origin allowed-headers list or every owner operation fails preflight with an opaque error.
+
+The key is redacted from logs. It is never returned by any endpoint after creation, and no recovery flow exists.
 
 The normal contribution URL contains no owner secret. A browser with an owner key still uses the ordinary link for navigation.
 
@@ -1092,6 +1124,16 @@ Use predictable API errors:
 - AGENT_TIMED_OUT
 - AGENT_TOKEN_EXHAUSTED
 - RUN_INTERRUPTED
+
+Every non-2xx response carries the same envelope, so a client has one shape to parse:
+
+```json
+{ "error": { "code": "TASK_VERSION_CHANGED", "message": "...", "details": { "currentVersion": 3 } } }
+```
+
+`details` is machine-readable context the interface acts on rather than displays: the current version behind a version conflict, the conflicting path behind a manual-edit collision, the field errors behind a validation failure.
+
+The list above is the set with specific meanings. A small supplementary set carries the cases those would otherwise absorb: per-resource not-found codes, VALIDATION_FAILED for a request that fails schema validation, INVALID_STATE for an operation that is legal but not from the current state, QUESTION_NOT_OPEN, CONFLICT, RATE_LIMITED, and INTERNAL_ERROR. The authoritative list lives in the contracts package; add to it there rather than inventing a code at a call site.
 
 These map to actionable UI states, not generic failure banners.
 
@@ -1215,9 +1257,31 @@ apps/server/src/index.ts is the process entrypoint. It loads configuration, assi
 
 The boot ID is generated once per process by the configuration layer, because run and agent records reference it from the moment they exist. Section 14.4's startup routine consumes that value; it does not define it.
 
+### 15.2 Conventions for implementers
+
+These hold across every role. They are not style preferences; each one exists because its absence produced a bug or a silent divergence.
+
+**The contracts package is the source of truth for shapes.** Request and response schemas, status vocabularies, error codes, the section 12.3 interfaces, and the fixed execution limits all live there. Import them rather than redeclaring a matching type, which is what keeps the editor, the API, and the Git service agreeing on the freshness tuple. Treat it as additive-only until integration: adding fields and codes is free, renaming one breaks three branches at once.
+
+**Uniqueness rules belong to the database.** Partial unique indexes and composite foreign keys enforce the section 11.2 constraints, so a service method that forgets to check one still cannot corrupt the invariant. Application code translates the resulting violation into the matching section 12.5 error by inspecting the constraint name, instead of doing a select-then-insert that races. Constraint names are therefore part of the interface; renaming one silently breaks an error mapping.
+
+**Anything expressed in both SQL and TypeScript needs a test that compares them.** A status set written into an index predicate and also into a constant will diverge, and the failure is invisible: a run status added to the enum but missing from the active-run index would let two attempts run at once. A test that reads the live index definition and compares it to the constant is the only thing that catches this.
+
+**Cross-role work goes through an injected hook with a null implementation.** When a ticket needs behavior another role owns, define the interface in the contracts package, ship a recorder that does nothing, and let the owning role supply the real one later. This is how workspace creation reaches the Git service and how Start reaches orchestration, and it is why neither side blocks the other. A hook never throws into its caller: the response has already been shaped, so failure is the hook's to record and recover from.
+
+**Identifiers are validated at the boundary.** Workspace, task, and document IDs end up in filesystem paths and live-document room names, so every route parses them as UUIDs before anything else runs. That check is what makes section 12.1's promise about arbitrary room names true rather than aspirational.
+
+**Idempotency is a client-supplied key, checked inside the same transaction as the write.** Posting a task, adding a discussion entry, and starting a run each accept one. For Start it is not sufficient on its own: a replayed request resolves through the key, while a genuinely concurrent one is refused by the unique active-run index. Both guards are required, because the key cannot see a request still in flight and the index cannot tell a retry from a new intent.
+
+**Secrets never reach a log, a document, or model context.** That includes the owner key, provider keys, storage credentials, and internal filesystem locations. Assert it rather than assume it: a redaction rule covering a shape the logger never emits passes every test while protecting nothing.
+
+Local setup, the verification command, and the per-role starting points are in SETUP.md at the repository root.
+
 ## 16. Individually scoped implementation tasks
 
 Every row is a single-owner work package. “Expected behavior” defines what that component must do and can be checked in isolation or against the listed prerequisites. It is not a separate release checklist.
+
+Completed so far: B01 through B04. The schema and its migrations, the contracts package, the application factory and configuration, anonymous workspaces with owner-key checks, posted tasks with discussion and the Start transaction, and reference materials behind a storage interface. Everything else is open.
 
 ### 16.1 Role B — Supabase and application data
 

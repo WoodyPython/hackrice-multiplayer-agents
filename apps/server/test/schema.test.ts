@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TERMINAL_TASK_STATUSES, TASK_STATUSES, AGENT_STATUSES } from '@app/contracts';
+import {
+  ACTIVE_RUN_STATUSES,
+  AGENT_STATUSES,
+  RUN_STATUSES,
+  TASK_STATUSES,
+  TERMINAL_TASK_STATUSES,
+} from '@app/contracts';
 import type { Db, DbHandle } from '../src/db/client.js';
 import {
   BOOT_ID,
@@ -96,6 +102,47 @@ describe('enum parity with @app/contracts', () => {
     );
     return rows.map((r) => r.label);
   }
+});
+
+describe('partial index predicates match the contracts package', () => {
+  /*
+   * These sets exist twice by necessity: once in a SQL index predicate, once as
+   * a TypeScript constant queries are built from. SQL cannot import the
+   * constant, so divergence is silent and dangerous — a status added to the
+   * enum but missing from runs_active_uq would let two runs be active at once,
+   * which is the single invariant the duplicate-Start guard rests on.
+   */
+  async function indexPredicate(indexName: string): Promise<string> {
+    const { rows } = await handle.pool.query<{ indexdef: string }>(
+      `select indexdef from pg_indexes
+        where schemaname = 'public' and indexname = $1`,
+      [indexName],
+    );
+    const def = rows[0]?.indexdef;
+    if (!def) throw new Error(`no index named ${indexName}`);
+    return def;
+  }
+
+  it('runs_active_uq covers exactly ACTIVE_RUN_STATUSES', async () => {
+    const def = await indexPredicate('runs_active_uq');
+    for (const status of ACTIVE_RUN_STATUSES) {
+      expect(def, `runs_active_uq is missing ${status}`).toContain(status);
+    }
+    // And nothing beyond them: every other run status must be absent.
+    const extra = RUN_STATUSES.filter(
+      (s) => !(ACTIVE_RUN_STATUSES as readonly string[]).includes(s),
+    );
+    for (const status of extra) {
+      expect(def, `runs_active_uq unexpectedly covers ${status}`).not.toContain(status);
+    }
+  });
+
+  it('tasks_manual_active_uq excludes exactly TERMINAL_TASK_STATUSES', async () => {
+    const def = await indexPredicate('tasks_manual_active_uq');
+    for (const status of TERMINAL_TASK_STATUSES) {
+      expect(def, `tasks_manual_active_uq is missing ${status}`).toContain(status);
+    }
+  });
 });
 
 describe('workspace scoping', () => {

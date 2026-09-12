@@ -1,5 +1,6 @@
 import type { Transaction } from 'kysely';
 import {
+  ACTIVE_RUN_STATUSES,
   ApiError,
   type AgentQuestion,
   type AnswerQuestionRequest,
@@ -13,6 +14,7 @@ import {
 import { isPgError, isUniqueViolation, type Db } from '../db/client.js';
 import type { Database } from '../db/types.js';
 import { appendEvent } from '../events/service.js';
+import { toIso } from '../http/serialize.js';
 
 /**
  * B03: task-local discussion and agent questions (sections 2.3, 2.6).
@@ -51,7 +53,7 @@ export class PgDiscussionService {
       .selectFrom('runs')
       .select('discussion_cutoff_seq')
       .where('task_id', '=', taskId)
-      .where('status', 'in', ['planning', 'working', 'needs_input'])
+      .where('status', 'in', ACTIVE_RUN_STATUSES)
       .executeTakeFirst();
     const cutoff = activeRun?.discussion_cutoff_seq ?? null;
 
@@ -495,7 +497,7 @@ export class PgDiscussionService {
         .selectFrom('runs')
         .select('discussion_cutoff_seq')
         .where('task_id', '=', taskId)
-        .where('status', 'in', ['planning', 'working', 'needs_input'])
+        .where('status', 'in', ACTIVE_RUN_STATUSES)
         .executeTakeFirst(),
     ]);
 
@@ -547,8 +549,4 @@ function toQuestion(row: {
     expiresAt: toIso(row.expires_at),
     resolvedAt: row.resolved_at === null ? null : toIso(row.resolved_at),
   };
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }

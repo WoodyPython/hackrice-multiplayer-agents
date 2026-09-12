@@ -1,5 +1,6 @@
 import type { Transaction } from 'kysely';
 import {
+  ACTIVE_RUN_STATUSES,
   ApiError,
   type OrchestrationHook,
   type PostTaskRequest,
@@ -14,6 +15,7 @@ import { isPgError, isUniqueViolation, type Db } from '../db/client.js';
 import type { Database, TaskRow } from '../db/types.js';
 import { appendEvent } from '../events/service.js';
 import { assertCancelable, assertRevisable, assertTransition } from './transitions.js';
+import { toIso } from '../http/serialize.js';
 
 /**
  * B03: posted tasks and the Start transaction (design sections 2.1 to 2.4).
@@ -307,7 +309,7 @@ export class PgTaskService {
         .selectFrom('runs')
         .selectAll()
         .where('task_id', '=', taskId)
-        .where('status', 'in', ['planning', 'working', 'needs_input'])
+        .where('status', 'in', ACTIVE_RUN_STATUSES)
         .executeTakeFirst();
 
       const now = new Date();
@@ -582,8 +584,4 @@ function toRun(row: {
     createdAt: toIso(row.created_at),
     endedAt: row.ended_at === null ? null : toIso(row.ended_at),
   };
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }

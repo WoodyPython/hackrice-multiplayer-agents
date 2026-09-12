@@ -10,6 +10,7 @@ import type { Db } from '../db/client.js';
 import type { Workspace as WorkspaceRow } from '../db/types.js';
 import { contributionUrl } from '../config.js';
 import { generateOwnerKey, hashOwnerKey, ownerKeyMatches } from './owner-key.js';
+import { toIso } from '../http/serialize.js';
 
 /**
  * B02: anonymous workspaces (design sections 1.2, 12.1, 12.2).
@@ -152,8 +153,4 @@ function toPublicWorkspace(row: WorkspaceRow, isOwner: boolean): Workspace {
     updatedAt: toIso(row.updated_at),
     isOwner,
   };
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }

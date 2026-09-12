@@ -4,6 +4,7 @@ import { isPgError, isUniqueViolation, type Db } from '../db/client.js';
 import type { MaterialRow } from '../db/types.js';
 import { type BlobStore, materialObjectKey } from './blob-store.js';
 import { validateUpload } from './validation.js';
+import { toIso } from '../http/serialize.js';
 
 /**
  * B04: reference materials (design section 3.2).
@@ -254,8 +255,4 @@ function toMaterial(row: MaterialRow): Material {
     createdAt: toIso(row.created_at),
     deletedAt: row.deleted_at === null ? null : toIso(row.deleted_at),
   };
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
