@@ -1071,3 +1071,15 @@ textarea::placeholder {
     width: 100%;
   }
 }
+
+.shared-editor { margin-top: 20px; overflow: hidden; }
+.editor-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 16px; }
+.editor-toolbar h2 { margin: 0; overflow-wrap: anywhere; }
+.editor-toolbar [role=status] { flex: 1; font-size: 13px; }
+.editor-panes { display: grid; min-width: 0; }
+.editor-panes.with-preview { grid-template-columns: 1fr 1fr; }
+.monaco-host { height: 60vh; min-height: 320px; min-width: 0; }
+.markdown-preview { padding: 20px; height: 60vh; overflow: auto; overflow-wrap: anywhere; border-left: 1px solid #ddd; }
+.markdown-preview pre { white-space: pre-wrap; }
+.shared-editor textarea { width: 100%; min-height: 160px; }
+@media (max-width: 800px) { .editor-panes.with-preview { grid-template-columns: 1fr; } }

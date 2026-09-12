@@ -44,3 +44,22 @@ The sample lives at `/demo/w/*`. Real `/w/*` routes never substitute fixture
 data for missing or unavailable resources. Workspace IDs are normalized to
 lowercase at route entry. Sharing constructs `/w/:id` on the current frontend
 origin without copying query strings or fragments.
+
+## A03 shared draft editor
+
+**Reflects:** A03 - **Owner:** Role A
+
+A04/A07 can link to `/w/:workspaceId/tasks/:taskId/drafts`. This reads active
+B05 documents and selects their exact ID/epoch; it does not create a task or draft.
+`SharedEditor` accepts a `LiveRoomId`, `DraftFile`, and an `onSaved` callback.
+`LiveDocument` owns Yjs sync, awareness, reconnect, and ACK accounting. It never
+sends the owner key. The room initializes text; clients never seed initial text.
+
+The browser retains offline edits in memory and resends the state difference on
+reconnect. It distinguishes accepted revisions from persisted revisions and
+counts outstanding sync writes so an older save cannot mark new typing saved.
+Closed epochs (4409) and rejected updates (1008/1009) stop reconnecting and retain
+copyable text. A08 owns opening replacement epochs across the full apply flow.
+
+Monaco is lazy-loaded on the editor route. Vite and preview proxy `/live` with
+WebSocket support; production requires that route to reach the Node runtime.
