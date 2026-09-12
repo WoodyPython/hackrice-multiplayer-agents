@@ -108,14 +108,16 @@ The form contains:
 - Selected approved files or shared drafts.
 - Optional intended output paths.
 
-**Approved files are not selectable yet.** Nothing in the system can enumerate
-them: the Git service exposes `readText(path)` for one known path and has no
-tree or list operation, so there is no way to populate that part of the picker.
-The form offers reference materials and shared drafts, and says plainly that
-approved files are unavailable rather than showing an empty category, which
-would read as "this workspace has approved nothing". A path can still be typed
-as an intended output. Closing this needs a listing operation in the Git service
-and a route in front of it.
+**Approved files are not selectable yet.** `GitService` exposes `readText(path)`
+for one known path and no listing, so nothing the API can call will say what is
+on the approved branch. The form offers reference materials and shared drafts,
+and says plainly that approved files are unavailable rather than showing an
+empty category, which would read as "this workspace has approved nothing". A
+path can still be typed as an intended output.
+
+The remaining work is smaller than it first appears: `ManagedWorktrees.tree(sha)`
+already enumerates a commit as path → blob, for review building. Closing this is
+a `GitService` wrapper over it plus a route, not a new Git capability.
 
 The primary form action is Post task. It creates a posted task and opens its discussion. It makes no Gemini request and creates no agent execution.
 

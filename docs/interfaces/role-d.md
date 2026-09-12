@@ -209,15 +209,20 @@ without mutating anything**. Today the only path to a review ID is
 `POST /tasks/:t/review`, which prepares a candidate — a page cannot call that on
 load. A `reviewId` on `TaskDetail` would do; that part is Role B's.
 
-**A listing operation for approved files.** `GitService.readText(path)` reads one
-file at a known path, and there is no tree or list operation anywhere, so nothing
-in the system can answer "what is on main". That blocks the Files screen's
-approved section (§4.1) and the approved-file category in the task input picker
-(§2.1) — both currently say the data is unavailable rather than showing an empty
-list, because "no approved files" is a claim we cannot support.
+**A `GitService` wrapper over the tree listing you already have.** This is
+smaller than it was when first written here. `ManagedWorktrees.tree(sha)`
+already enumerates a commit as path → blob for review building; what is missing
+is only a `GitService` method exposing it, since `GitService` offers
+`readText(path)` for one known path and nothing that lists.
 
-A path list at a commit is enough; content comes from `readText` per file as
-it is opened.
+Without it nothing the API can call will say what is on the approved branch,
+which blocks the Files screen's approved section (§4.1) and the approved-file
+category in the task input picker (§2.1). Both currently say the data is
+unavailable rather than showing an empty list, because "no approved files" is a
+claim we cannot support.
+
+A path list at a commit is enough — content comes from `readText` per file as it
+is opened. Role B adds the route once the method exists.
 
 ---
 

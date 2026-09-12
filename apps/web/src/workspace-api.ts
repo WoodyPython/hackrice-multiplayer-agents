@@ -6,6 +6,7 @@ import {
   createWorkspaceRequestSchema,
   createWorkspaceResponseSchema,
   discussionEntrySchema,
+  draftCaptureSchema,
   draftFileSchema,
   isSupportedTextExtension,
   listDiscussionResponseSchema,
@@ -29,6 +30,7 @@ import {
   type AnswerQuestionResponse,
   type CreateWorkspaceRequest,
   type DiscussionEntry,
+  type DraftCapture,
   type DraftFile,
   type ListDiscussionResponse,
   type Material,
@@ -330,6 +332,33 @@ export class WorkspaceApi {
       );
   }
 
+  /**
+   * Capture the task's live drafts into a Git checkpoint (§7.4, D04).
+   *
+   * Captures **every** active document in the task, not one file, so it belongs
+   * to the task rather than to whichever document is open.
+   *
+   * "Saved" has to be true first. Capture takes the text the server has
+   * acknowledged, so checkpointing with unsent edits in the buffer would commit
+   * a version the author never saw — §4.4 is precise that Saved means persisted
+   * to Supabase, and this is the thing that depends on it.
+   */
+  async checkpointDrafts(
+    workspaceId: string,
+    taskId: string,
+  ): Promise<DraftCapture> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(taskId);
+    return draftCaptureSchema.parse(
+      await this.request(
+        `/${workspaceId}/tasks/${taskId}/checkpoint`,
+        "POST",
+        {},
+        workspaceId,
+      ),
+    );
+  }
+
   // --- reviews -------------------------------------------------------------
 
   /**
@@ -620,6 +649,24 @@ export class WorkspaceApi {
     uuidSchema.parse(workspaceId);
     const data = await this.request(
       `/${workspaceId}/drafts`,
+      "GET",
+      undefined,
+      workspaceId,
+      signal,
+    );
+    return z.object({ drafts: z.array(draftFileSchema) }).parse(data).drafts;
+  }
+
+  /** Active documents in one task — the editor's file selector (§4.4). */
+  async listTaskDrafts(
+    workspaceId: string,
+    taskId: string,
+    signal?: AbortSignal,
+  ): Promise<DraftFile[]> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(taskId);
+    const data = await this.request(
+      `/${workspaceId}/tasks/${taskId}/drafts`,
       "GET",
       undefined,
       workspaceId,

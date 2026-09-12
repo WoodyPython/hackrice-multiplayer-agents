@@ -28,6 +28,7 @@ export function TaskDetail({
   banner,
   renderTab,
   onEditRequirements,
+  initialTab,
 }: {
   task: Task;
   base: string;
@@ -37,8 +38,14 @@ export function TaskDetail({
   banner?: ReactNode;
   renderTab: (tab: TaskTab) => ReactNode;
   onEditRequirements?: () => void;
+  /**
+   * Opens on a specific tab. §4.2 makes Discussion the default; this exists so
+   * an action that says it will show you the review actually does, rather than
+   * landing on the task and leaving the reader to find it.
+   */
+  initialTab?: TaskTab;
 }) {
-  const [tab, setTab] = useState<TaskTab>("Discussion");
+  const [tab, setTab] = useState<TaskTab>(initialTab ?? "Discussion");
   return (
     <>
       <Link className="back-link" to={base}>

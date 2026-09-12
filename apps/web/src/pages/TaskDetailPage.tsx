@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ApiError,
   isStartableTaskStatus,
@@ -19,7 +19,7 @@ import { Discussion, useDiscussion } from "../components/Discussion";
 import { RunOutcome } from "../components/RunOutcome";
 import { EmptyState } from "../components/EmptyState";
 import { RequirementForm, type TaskFields } from "../components/RequirementForm";
-import { TaskDetail, type TaskTab } from "./TaskDetail";
+import { TaskDetail, tabs, type TaskTab } from "./TaskDetail";
 
 const ACTIVE = ["planning", "working", "needs_input"];
 const RETRYABLE = ["incomplete", "interrupted", "canceled"];
@@ -59,6 +59,7 @@ export function TaskDetailPage({
   isOwner: boolean;
 }) {
   const { taskId } = useParams();
+  const [params] = useSearchParams();
   const { api, session } = useBrowser();
   const [task, setTask] = useState<Task | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -374,6 +375,13 @@ export function TaskDetailPage({
       banner={<RunOutcome events={events} status={task.status} />}
       action={action}
       renderTab={renderTab}
+      initialTab={
+        // Only a tab name we actually have; a hand-edited query must not
+        // produce a panel with nothing in it.
+        (tabs as readonly string[]).includes(params.get("tab") ?? "")
+          ? (params.get("tab") as TaskTab)
+          : undefined
+      }
       onEditRequirements={
         task.status === "completed" ? undefined : () => setEditing(true)
       }

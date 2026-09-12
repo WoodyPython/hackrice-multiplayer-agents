@@ -2,6 +2,44 @@
 
 Newest first. One entry per landed ticket.
 
+## A07 — Files and manual collaborative drafts (completed)
+**Landed:** 2026-09-12 · Role A
+**Affects:** Role A. Frontend only — no route, migration, or dependency.
+**Action required:** None.
+
+A04 shipped the half of A07 that was unblocked — reference materials, active
+shared drafts, Edit together — and said so. This finishes the rest.
+
+- **Checkpoint** (§7.4, D04) from the editor. It captures every active document
+  in the task, not the open file, so the control belongs to the page.
+- **Request review** from the editor, which is what makes §2.5's "human-only
+  edits can be reviewed without starting agents" reachable without going hunting
+  for the Changes tab.
+- **Both wait for Saved.** Capture takes the text the server has acknowledged,
+  so acting on unsent edits would checkpoint a version nobody has seen. §4.4 is
+  precise that Saved means persisted, and this is the thing that depends on it.
+- **Saved / Checkpointed / approved are three different states** and the copy
+  says so. "Checkpointed in Git … Captured, not approved."
+- **Link back to the task**, per §4.4 — it previously went to the workspace,
+  which is not where this text is discussed or reviewed.
+- `?tab=` deep links, so an action that says it will show you the review does.
+  An unrecognised tab name falls back to Discussion rather than rendering an
+  empty panel.
+- `TaskDrafts` now goes through `WorkspaceApi` instead of raw `fetch`, so it
+  shares the error mapping and the transport seam the tests inject through.
+
+**Still blocked: the approved-files view.** `GitService` has `readText(path)` and
+no listing. The ask to Role D is narrower than it was, though — see
+[their interface](interfaces/role-d.md): `ManagedWorktrees.tree(sha)` already
+enumerates a commit for review building, so this is a wrapper rather than a new
+Git capability. §2.1 in the design document is corrected to say that.
+
+Verified: `npm run build` and the web suite (**56**, up from 51). Frontend only,
+so no backend suite is affected. Mutation-checked: allowing Checkpoint and
+Request review with unsent edits fails the test that should catch it.
+
+---
+
 ## A06 — Review and conflict UI
 **Landed:** 2026-09-12 · Role A
 **Affects:** everyone. One additive Role B route; no migration, no dependency.

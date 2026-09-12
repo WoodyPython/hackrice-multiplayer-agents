@@ -158,6 +158,8 @@ function server(overrides: Record<string, (call: Call) => Response> = {}) {
         return json({ attempts: [] });
       case `GET /tasks/${taskId}/reviews`:
         return json({ reviews: [] });
+      case `GET /tasks/${taskId}/drafts`:
+        return json({ drafts: [draft] });
       case `GET /tasks/${taskId}/events`:
         return json({ events: [], latestId: null });
       default:
@@ -823,5 +825,66 @@ describe("review", () => {
     // Reading it means reading a Git artifact that does not exist yet, which
     // the server answers with INVALID_STATE.
     expect(calls.some((c) => c.url.endsWith(`/reviews/${reviewId}`))).toBe(false);
+  });
+});
+
+describe("the shared editor", () => {
+  async function openEditor(overrides: Parameters<typeof server>[0] = {}) {
+    const user = userEvent.setup();
+    const { transport, calls } = server(overrides);
+    open(`/w/${workspaceId}/tasks/${taskId}/drafts`, transport);
+    await screen.findByRole("heading", { name: "Shared drafts" });
+    return { user, calls };
+  }
+
+  it("holds Checkpoint and Request review until the text is saved", async () => {
+    await openEditor();
+    // §4.4: Saved means persisted, and capture takes the acknowledged text.
+    // Checkpointing before then would commit a version nobody has seen.
+    expect(
+      (await screen.findByRole("button", { name: "Checkpoint" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Request review" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.getByText(/Unsaved/)).toBeTruthy();
+  });
+
+  it("links back to the task, not the workspace", async () => {
+    await openEditor();
+    // §4.4 asks for a link back to the task: that is where this text is
+    // discussed and reviewed.
+    const back = await screen.findByRole("link", { name: /Back to the task/ });
+    expect(back.getAttribute("href")).toBe(`/w/${workspaceId}/tasks/${taskId}`);
+  });
+
+  it("distinguishes checkpointed from approved", async () => {
+    await openEditor();
+    // "Checkpointed" means captured in Git. §4.4: neither Saved nor
+    // Checkpointed means approved, and the copy has to carry that.
+    expect(await screen.findByText(/Not checkpointed yet/)).toBeTruthy();
+  });
+});
+
+describe("deep links", () => {
+  it("opens the tab a link names, and ignores one that does not exist", async () => {
+    const { transport } = server({
+      [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [] }),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}?tab=Changes`, transport);
+
+    // Request review says it will show you the review; this is what makes that
+    // true rather than landing on the task and leaving the reader to hunt.
+    expect(
+      (await screen.findByRole("tab", { name: "Changes" })).getAttribute("aria-selected"),
+    ).toBe("true");
+  });
+
+  it("falls back to Discussion for a tab name that is not real", async () => {
+    const { transport } = server();
+    open(`/w/${workspaceId}/tasks/${taskId}?tab=Nonsense`, transport);
+    expect(
+      (await screen.findByRole("tab", { name: "Discussion" })).getAttribute("aria-selected"),
+    ).toBe("true");
   });
 });
