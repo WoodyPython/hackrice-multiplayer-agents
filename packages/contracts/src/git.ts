@@ -11,6 +11,15 @@ export const gitReadTargetSchema = z.discriminatedUnion('kind', [
 ]);
 export type GitReadTarget = z.infer<typeof gitReadTargetSchema>;
 
+/** Public approved-file reads always resolve main on the server. */
+export const approvedFileSchema = z.object({ path: repoPathSchema, hash: shaSchema });
+export const approvedFilesSchema = z.object({ mainSha: shaSchema, files: z.array(approvedFileSchema) });
+export const approvedFileContentSchema = z.object({
+  mainSha: shaSchema, path: repoPathSchema, hash: shaSchema.nullable(), text: z.string().nullable(),
+});
+export type ApprovedFile = z.infer<typeof approvedFileSchema>;
+export type ApprovedFileContent = z.infer<typeof approvedFileContentSchema>;
+
 // Path strings are checked by the Git service's canonical filesystem validator.
 // Keeping that check there preserves INVALID_PATH instead of a generic Zod error.
 export const createDraftRequestSchema = z.object({ workspaceId: workspaceIdSchema, taskId: taskIdSchema });

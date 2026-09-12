@@ -24,6 +24,8 @@ export function NewTask({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [drafts, setDrafts] = useState<DraftFile[]>([]);
+  const [approved, setApproved] = useState<import('@app/contracts').ApprovedFile[]>([]);
+  const [inputError, setInputError] = useState<string>();
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const requestId = useRef(crypto.randomUUID());
@@ -33,13 +35,16 @@ export function NewTask({ workspaceId }: { workspaceId: string }) {
     void Promise.all([
       api.listMaterials(workspaceId, controller.signal),
       api.listWorkspaceDrafts(workspaceId, controller.signal),
+      api.listApprovedFiles(workspaceId, controller.signal),
     ])
-      .then(([mats, drafted]) => {
+      .then(([mats, drafted, files]) => {
         if (controller.signal.aborted) return;
         setMaterials(mats);
         setDrafts(drafted);
+        setApproved(files.files);
       })
       .catch(() => {
+        if (!controller.signal.aborted) setInputError('Inputs could not be loaded. Reload to select existing files, or attach them after posting.');
         // A picker that cannot load its options is not a reason to block
         // posting: title and outcome are the required fields, and inputs can be
         // attached afterwards from the task itself.
@@ -71,8 +76,8 @@ export function NewTask({ workspaceId }: { workspaceId: string }) {
         ← All tasks
       </Link>
       <RequirementForm
-        options={inputOptionsFrom(materials, drafts)}
-        optionsNote="Approved files cannot be selected yet — nothing in the system can list them."
+        options={inputOptionsFrom(materials, drafts, approved)}
+        optionsNote={inputError}
         guestLabel={session.getGuest().name}
         pending={pending}
         error={failure}

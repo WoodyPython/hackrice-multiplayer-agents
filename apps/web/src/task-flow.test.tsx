@@ -44,7 +44,7 @@ const task = {
   status: "posted",
   manualSourcePath: null,
   creatorGuestLabel: "Guest Maple",
-  outputPaths: ["docs/contributing.md"],
+  outputPaths: ["documents/contributing.md"],
   activeRunId: null,
   discussionSeq: 1,
   inputs: [
@@ -81,7 +81,7 @@ const material = {
 const draft = {
   id: draftFileId,
   taskId,
-  path: "docs/contributing.md",
+  path: "documents/contributing.md",
   epoch: 1,
   baseBlobSha: null,
   persistedRevision: 4,
@@ -153,6 +153,8 @@ function server(overrides: Record<string, (call: Call) => Response> = {}) {
         return json({ materials: [material] });
       case "GET /drafts":
         return json({ drafts: [draft] });
+      case "GET /files":
+        return json({ mainSha: 'a'.repeat(40), files: [] });
       case `GET /tasks/${taskId}/discussion`:
         return json({ entries: [entry()], latestSeq: 1, activeRunCutoffSeq: null });
       case `GET /tasks/${taskId}/agents`:
@@ -227,7 +229,7 @@ describe("posting a task", () => {
 
     // Real names from the API, not the three invented IDs fixtures.ts carried.
     expect(await screen.findByText("brief.md")).toBeTruthy();
-    expect(screen.getByText("docs/contributing.md")).toBeTruthy();
+    expect(screen.getByText("documents/contributing.md")).toBeTruthy();
 
     await user.type(screen.getByLabelText(/Task title/), "Add a README");
     await user.click(screen.getByRole("checkbox", { name: /brief\.md/ }));
@@ -484,7 +486,7 @@ describe("files", () => {
     });
     open(`/w/${workspaceId}/files`, transport);
 
-    await user.type(await screen.findByLabelText("File path"), "docs/guide.md");
+    await user.type(await screen.findByLabelText("File path"), "documents/guide.md");
     await user.click(screen.getByRole("button", { name: "Edit together" }));
 
     await waitFor(() =>
@@ -493,15 +495,13 @@ describe("files", () => {
     expect(await screen.findByRole("heading", { name: "Shared drafts" })).toBeTruthy();
   });
 
-  it("says approved files are unavailable rather than showing an empty list", async () => {
+  it("reports an empty approved branch from the actual listing", async () => {
     const { transport } = server();
     open(`/w/${workspaceId}/files`, transport);
 
     const approved = await screen.findByRole("heading", { name: "Approved files" });
     expect(approved).toBeTruthy();
-    // Nothing can enumerate main. "No approved files" would be a claim we
-    // cannot support; "not available yet" is the one we can.
-    expect(screen.getByText("Not available yet")).toBeTruthy();
+    expect(await screen.findByText("No approved files yet")).toBeTruthy();
   });
 });
 
@@ -686,7 +686,7 @@ const reviewDetail = (over: Record<string, unknown> = {}) => ({
   candidateComplete: true,
   conflicts: [],
   changedFiles: [
-    { path: "docs/contributing.md", changeKind: "modified", diff: DIFF, beforeHash: "d".repeat(40), afterHash: "e".repeat(40) },
+    { path: "documents/contributing.md", changeKind: "modified", diff: DIFF, beforeHash: "d".repeat(40), afterHash: "e".repeat(40) },
   ],
   generatedCodeWasNotExecuted: true,
   review: reviewRow(),
@@ -737,7 +737,7 @@ describe("review", () => {
     });
 
     const panel = await screen.findByRole("tabpanel");
-    expect(within(panel).getByText("docs/contributing.md")).toBeTruthy();
+    expect(within(panel).getByText("documents/contributing.md")).toBeTruthy();
     expect(within(panel).getByText("modified")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Apply these changes" }));
 
@@ -760,7 +760,7 @@ describe("review", () => {
     );
 
     const panel = await screen.findByRole("tabpanel");
-    expect(within(panel).getByText("docs/contributing.md")).toBeTruthy();
+    expect(within(panel).getByText("documents/contributing.md")).toBeTruthy();
     // Presentation only -- the server checks the key on every apply. §4.6:
     // "hiding a button is insufficient."
     expect(screen.queryByRole("button", { name: "Apply these changes" })).toBeNull();
@@ -784,7 +784,7 @@ describe("review", () => {
       review: reviewRow({ status: "ready" }),
       conflicts: [
         {
-          path: "docs/contributing.md",
+          path: "documents/contributing.md",
           stage: "human_agent",
           sides: [
             { side: "human_draft", text: "what people wrote", sha: "f".repeat(40) },
@@ -818,7 +818,7 @@ describe("review", () => {
     // Resolving builds a NEW candidate, so the one being replaced is named.
     expect(body.expectedCandidateSha).toBe(candidateSha);
     expect(body.resolutions).toEqual([
-      { path: "docs/contributing.md", choice: "human_draft" },
+      { path: "documents/contributing.md", choice: "human_draft" },
     ]);
   });
 
@@ -1121,16 +1121,16 @@ describe("A08 cross-flow integration", () => {
       [`GET /reviews/${reviewId}`]: () =>
         json(reviewDetail({
           changedFiles: [
-            { path: "docs/guide.md", changeKind: "modified", diff: DIFF, beforeHash: "d".repeat(40), afterHash: "e".repeat(40) },
+            { path: "documents/guide.md", changeKind: "modified", diff: DIFF, beforeHash: "d".repeat(40), afterHash: "e".repeat(40) },
             { path: "src/app.ts", changeKind: "added", diff: DIFF, beforeHash: null, afterHash: "e".repeat(40) },
           ],
         })),
       [`GET /reviews/${reviewId}/preview`]: () =>
-        json({ candidateSha, candidateComplete: true, path: "docs/guide.md",
+        json({ candidateSha, candidateComplete: true, path: "documents/guide.md",
                text: ["# The guide", "How it would read."].join("\n"), hash: "e".repeat(40) }),
     });
 
-    await user.click(await screen.findByText("docs/guide.md"));
+    await user.click(await screen.findByText("documents/guide.md"));
     // §4.6 asks for a rendered view beside the diff; a diff of prose is hard to
     // judge and this is the multi-file case A08 names.
     expect(await screen.findByText(/How it would read/)).toBeTruthy();

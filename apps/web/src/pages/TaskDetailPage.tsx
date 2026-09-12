@@ -70,6 +70,8 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
   const [task, setTask] = useState<Task | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [drafts, setDrafts] = useState<DraftFile[]>([]);
+  const [approved, setApproved] = useState<import('@app/contracts').ApprovedFile[]>([]);
+  const [inputError, setInputError] = useState<string>();
   const [status, setStatus] = useState<"loading" | "ready" | "missing" | "error">(
     "loading",
   );
@@ -86,12 +88,21 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
   const retryId = useRef(crypto.randomUUID());
   const eventCache = useRef<TaskEvent[]>([]);
   const actionLock = useRef(false);
+  const knownOutputs = useRef(new Set<string>());
   // Read inside the polling loop, which must not restart every time the task
   // status changes — a restarting interval is how a poll ends up firing twice.
   const live = useRef(false);
 
   const valid = uuidSchema.safeParse(taskId).success;
   const reload = useCallback(() => setNonce((value) => value + 1), []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void api.listApprovedFiles(workspaceId, controller.signal).then((result) => {
+      if (!controller.signal.aborted) { setApproved(result.files); setInputError(undefined); }
+    }).catch(() => { if (!controller.signal.aborted) setInputError('Approved files could not be loaded. Reload to try again.'); });
+    return () => controller.abort();
+  }, [api, workspaceId, nonce]);
 
   // Task detail is refetched whole rather than patched: status is derived
   // server-side from run and question records, so the authoritative answer to
@@ -125,11 +136,10 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
         // Default to keeping everything that survived: §2.4's `incomplete`
         // state exists so saved work is reusable, and making someone re-tick
         // it every time invites discarding work by accident.
-        setKeep((current) =>
-          current.length === 0
-            ? saved.map((output) => `${output.agentInstanceId}:${output.path}`)
-            : current,
-        );
+        const newOutputs = saved.map((output) => `${output.agentInstanceId}:${output.path}`)
+          .filter((key) => !knownOutputs.current.has(key));
+        newOutputs.forEach((key) => knownOutputs.current.add(key));
+        setKeep((current) => [...current, ...newOutputs]);
         live.current = detail.activeRunId !== null;
         setStatus("ready");
         setPollError(null);
@@ -158,7 +168,7 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
   }, [api, workspaceId, taskId, nonce, valid]);
 
   const thread = useDiscussion(workspaceId, valid ? taskId : undefined);
-  const options = inputOptionsFrom(materials, drafts);
+  const options = inputOptionsFrom(materials, drafts, approved);
   const base = `/w/${workspaceId}`;
 
   if (!valid || status === "missing")
@@ -375,7 +385,7 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
         </Link>
         <RequirementForm
           options={options}
-          optionsNote="Approved files cannot be selected yet — nothing in the system can list them."
+          optionsNote={inputError}
           guestLabel={session.getGuest().name}
           initial={{
             title: editing.title,

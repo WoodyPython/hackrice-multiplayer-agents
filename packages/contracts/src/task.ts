@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { workspaceFilePathSchema } from './paths.js';
 import {
   clientRequestIdSchema,
   draftFileIdSchema,
@@ -67,7 +68,7 @@ const taskInputSelectionSchema = z
   .object({
     materialId: materialIdSchema.optional(),
     draftFileId: draftFileIdSchema.optional(),
-    approvedPath: repoPathSchema.optional(),
+    approvedPath: workspaceFilePathSchema.optional(),
     sourceVersion: z.string().max(200).optional(),
   })
   .refine(
@@ -87,11 +88,11 @@ const taskInputSelectionSchema = z
 export const postTaskRequestSchema = z.object({
   kind: taskKindSchema.default('agent_task'),
   /** Required when kind is manual_edit; forbidden otherwise. */
-  manualSourcePath: repoPathSchema.optional(),
+  manualSourcePath: workspaceFilePathSchema.optional(),
   title: z.string().trim().min(1).max(200),
   outcome: z.string().max(10000).default(''),
   criteria: z.array(z.string().trim().min(1).max(1000)).max(50).default([]),
-  outputPaths: z.array(repoPathSchema).max(50).default([]),
+  outputPaths: z.array(workspaceFilePathSchema).max(50).default([]),
   inputs: z.array(taskInputSelectionSchema).max(100).default([]),
   creatorGuestLabel: guestLabelSchema,
   clientRequestId: clientRequestIdSchema.optional(),
@@ -116,7 +117,7 @@ export const updateTaskRequestSchema = z
     title: z.string().trim().min(1).max(200).optional(),
     outcome: z.string().max(10000).optional(),
     criteria: z.array(z.string().trim().min(1).max(1000)).max(50).optional(),
-    outputPaths: z.array(repoPathSchema).max(50).optional(),
+    outputPaths: z.array(workspaceFilePathSchema).max(50).optional(),
     /** When present, replaces the selected-input set wholesale. */
     inputs: z.array(taskInputSelectionSchema).max(100).optional(),
   })

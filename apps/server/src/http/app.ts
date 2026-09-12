@@ -30,7 +30,6 @@ import { TaskEventPump } from '../events/pump.js';
 import type { BlobStore } from '../materials/blob-store.js';
 import { LocalDiskBlobStore, SupabaseBlobStore } from '../materials/blob-store.js';
 import { registerErrorHandler } from './errors.js';
-import { registerFrontend } from './frontend.js';
 import { supabaseServerKey } from '../supabase-auth.js';
 
 /**
@@ -167,7 +166,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     limits: { fileSize: 1024 * 1024, files: 1, fields: 8 },
   });
 
-  registerErrorHandler(app, !config.isProduction);
+  registerErrorHandler(app);
 
   app.get('/health', async () => ({
     status: 'ok',
@@ -247,8 +246,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     onError: (error) => app.log.warn({ err: error }, 'event pump sweep failed'),
   });
   app.decorate('eventPump', pump);
+  app.addHook('onListen', async () => { await pump.start(); });
   app.addHook('onClose', async () => { await pump.stop(); });
 
-  if (config.isProduction) await registerFrontend(app);
   return app;
 }

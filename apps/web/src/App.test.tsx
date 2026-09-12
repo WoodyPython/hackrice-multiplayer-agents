@@ -103,7 +103,7 @@ describe("A01 workspace shell", () => {
     await user.clear(screen.getByLabelText(/Intended output paths/));
     await user.type(
       screen.getByLabelText(/Intended output paths/),
-      "docs/contributing.md",
+      "documents/contributing.md",
     );
     await user.click(screen.getByRole("button", { name: "Post task" }));
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
@@ -112,7 +112,7 @@ describe("A01 workspace shell", () => {
     expect(screen.getByText("Posted", { exact: true })).toBeTruthy();
     expect(screen.getByText("Include examples")).toBeTruthy();
     expect(screen.getByText(/▤ README.md/)).toBeTruthy();
-    expect(screen.getByText("docs/contributing.md")).toBeTruthy();
+    expect(screen.getByText("documents/contributing.md")).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Start task" }) as HTMLButtonElement)
         .disabled,

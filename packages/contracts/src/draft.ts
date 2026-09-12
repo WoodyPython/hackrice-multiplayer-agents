@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { workspaceFilePathSchema } from './paths.js';
 import {
   draftFileIdSchema,
   repoPathSchema,
@@ -92,7 +93,7 @@ export type PersistSnapshotResult = z.infer<typeof persistSnapshotResultSchema>;
  * single task rather than forking the draft.
  */
 export const openDraftRequestSchema = z.object({
-  path: repoPathSchema,
+  path: workspaceFilePathSchema,
   guestLabel: z.string().trim().min(1).max(80),
 });
 export type OpenDraftRequest = z.infer<typeof openDraftRequestSchema>;

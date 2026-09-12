@@ -196,7 +196,7 @@ export function RequirementForm({
         name="outputPaths"
         rows={2}
         defaultValue={(initial?.outputPaths ?? []).join("\n")}
-        placeholder="docs/launch.md"
+        placeholder="documents/launch.md"
         aria-invalid={!!errors.outputPaths}
         aria-describedby="paths-hint"
       />

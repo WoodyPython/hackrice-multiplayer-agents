@@ -46,6 +46,7 @@ export class TaskEventPump {
   private watermark = 0;
   private timer: NodeJS.Timeout | undefined;
   private running = false;
+  private inFlight: Promise<number> | undefined;
   private readonly intervalMs: number;
   private readonly batchSize: number;
 
@@ -76,13 +77,21 @@ export class TaskEventPump {
     this.running = false;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    await this.inFlight;
   }
 
   /**
    * Sweeps once. Exposed so tests do not wait on a timer, and so a caller that
    * knows it just produced an event can shorten the delay.
    */
-  async flush(): Promise<number> {
+  flush(): Promise<number> {
+    if (!this.inFlight) {
+      this.inFlight = this.sweep().finally(() => { this.inFlight = undefined; });
+    }
+    return this.inFlight;
+  }
+
+  private async sweep(): Promise<number> {
     try {
       const rows = await this.deps.db
         .selectFrom('task_events')

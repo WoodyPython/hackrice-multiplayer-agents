@@ -14,6 +14,7 @@ export const WORKER_TOOLS: ToolDefinition[] = [
     parameters: { type: 'object', required: ['path', 'source'], additionalProperties: false, properties: {
       path, source: { type: 'string', enum: ['worker', 'approved', 'draft', 'saved'] },
       savedOutputId: { type: 'string', description: 'Required only for saved: an ID from selectedSources.savedOutputs.' },
+      draftFileId: { type: 'string', description: 'For a draft selected from another task: its ID from selectedSources.selectedDrafts.' },
     } } },
   { name: 'read_material', description: 'Read a selected immutable material. Returns a source reference.',
     parameters: object({ materialId: { type: 'string' } }) },
@@ -60,6 +61,16 @@ export class WorkerTools {
     switch (call.name) {
       case 'read_file': {
         const args = workerToolArguments.read_file.parse(call.arguments);
+        if (args.source === 'draft' && args.draftFileId) {
+          const selected = manifest.selectedDrafts?.find((draft) => draft.draftFileId === args.draftFileId && draft.path === args.path);
+          if (!selected) throw new WorkerToolError('scope_violation');
+          const file = await git.readText({ workspaceId: agent.workspace_id,
+            target: { kind: 'commit', commitSha: selected.checkpointSha }, path: selected.path, allowedPaths: [selected.path] });
+          signal.throwIfAborted(); await store.ledger.assertActive(agent.id);
+          if (file.hash !== selected.hash) throw new WorkerToolError('source_changed');
+          return { ...file, reference: this.reference({ kind: 'draft', path: selected.path, hash: selected.hash,
+            draftFileId: selected.draftFileId, commitSha: selected.checkpointSha }) };
+        }
         if (args.source === 'saved') {
           const selected = manifest.savedOutputs?.find((s) => s.id === args.savedOutputId && s.path === args.path);
           if (!selected) throw new WorkerToolError('scope_violation');

@@ -32,7 +32,7 @@ export const inputOptions = [
   {
     label: "README.md",
     category: "Approved file",
-    value: { approvedPath: "README.md" },
+    value: { approvedPath: "documents/README.md" },
   },
   {
     label: "Landing copy.md",
@@ -74,7 +74,7 @@ export const initialTasks: TaskDetail[] = TASK_STATUSES.map((status, index) =>
     status,
     creatorGuestLabel: ["Guest Maple", "Guest River", "Guest Finch"][index % 3],
     manualSourcePath: null,
-    outputPaths: ["docs/launch.md"],
+    outputPaths: ["documents/launch.md"],
     activeRunId: ["planning", "working", "needs_input"].includes(status)
       ? `50000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`
       : null,

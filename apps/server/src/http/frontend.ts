@@ -1,32 +1,33 @@
 import staticFiles from '@fastify/static';
 import { access } from 'node:fs/promises';
-import { dirname, extname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { sendNotFound } from './errors.js';
 
-const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../web/dist');
-
-/** Only the built public directory is exposed; missing assets remain 404s. */
-export async function registerFrontend(app: FastifyInstance, root = webRoot): Promise<void> {
-  await access(resolve(root, 'index.html'));
+/** Expose only the SPA entry point and built assets, never neighboring files. */
+export async function registerFrontend(app: FastifyInstance, root: string, required = false): Promise<void> {
+  try { await access(resolve(root, 'index.html')); }
+  catch (error) {
+    if (!required && (error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw new Error('Frontend build unavailable. Run npm run build before npm start.');
+  }
   await app.register(staticFiles, {
     root,
-    index: ['index.html'],
+    serve: false,
     dotfiles: 'ignore',
-    setHeaders(response, path) {
-      response.header('Cache-Control', path.endsWith('.html')
-        ? 'no-cache' : 'public, max-age=0, must-revalidate');
+    setHeaders(reply, path) {
+      reply.header('x-content-type-options', 'nosniff');
+      reply.header('cache-control', path.endsWith('.html')
+        ? 'no-cache' : 'public, max-age=31536000, immutable');
     },
   });
-  app.setNotFoundHandler((request, reply) => {
-    const path = request.url.split('?')[0]!;
-    const reserved = /^\/(api|health|live|assets)(\/|$)/.test(path);
-    if ((request.method === 'GET' || request.method === 'HEAD') &&
-        request.headers.accept?.includes('text/html') &&
-        !reserved && !extname(path) && !path.includes('/.') && !path.includes('%')) {
-      return reply.sendFile('index.html');
+  for (const url of ['/', '/w/*', '/demo/*']) {
+    app.get(url, async (_request, reply) => reply.sendFile('index.html'));
+  }
+  app.get<{ Params: { '*': string } }>('/assets/*', async (request, reply) => {
+    const name = request.params['*'];
+    if (!/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*\.[a-zA-Z0-9]+$/.test(name)) {
+      return reply.callNotFound();
     }
-    return sendNotFound(request, reply);
+    return reply.sendFile(`assets/${name}`);
   });
 }

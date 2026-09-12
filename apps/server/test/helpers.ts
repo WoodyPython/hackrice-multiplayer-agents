@@ -17,17 +17,11 @@ config({ quiet: true });
  * future service method forgets to check them.
  */
 
-const DEFAULT_LOCAL = 'postgresql://app:app@localhost:54322/app';
-
-function baseUrl(): string {
-  return process.env.DATABASE_URL ?? DEFAULT_LOCAL;
-}
-
-/** Derives the test database URL, defaulting to `<db>_test`. */
+/** Tests default to local Docker regardless of the development/hosted database. */
 export function testDatabaseUrl(): string {
-  if (process.env.TEST_DATABASE_URL) return process.env.TEST_DATABASE_URL;
-  const url = new URL(baseUrl());
-  url.pathname = `${url.pathname.replace(/^\//, '')}_test`;
+  const url = new URL(process.env.TEST_DATABASE_URL ?? 'postgresql://app:app@localhost:54322/app_test');
+  const name = decodeURIComponent(url.pathname.slice(1));
+  if (!/^[a-zA-Z0-9_]+_test$/.test(name)) throw new Error('TEST_DATABASE_URL must name a dedicated database ending in _test.');
   return url.toString();
 }
 

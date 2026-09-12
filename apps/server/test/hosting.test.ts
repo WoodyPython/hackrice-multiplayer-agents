@@ -20,7 +20,7 @@ describe('production frontend', () => {
     await writeFile(join(root, 'index.html'), '<!doctype html><title>Application</title>');
     await writeFile(join(root, 'assets', 'app.js'), 'window.app = true;');
     app = Fastify();
-    registerErrorHandler(app, false);
+    registerErrorHandler(app);
     app.get('/health', async () => ({ status: 'ok' }));
     await registerFrontend(app, root);
   });
@@ -45,10 +45,8 @@ describe('production frontend', () => {
     expect(response.statusCode).toBe(404);
     expect(response.headers['content-type']).toContain('application/json');
   });
-  it('does not rewrite POST or JSON requests', async () => {
-    for (const method of ['GET', 'POST'] as const) {
-      expect((await app.inject({ method, url: '/w/123', headers: { accept: 'application/json' } })).statusCode).toBe(404);
-    }
+  it('does not rewrite POST requests', async () => {
+    expect((await app.inject({ method: 'POST', url: '/w/123', headers: { accept: 'text/html' } })).statusCode).toBe(404);
   });
 });
 

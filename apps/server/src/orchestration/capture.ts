@@ -1,5 +1,5 @@
 import {
-  isActiveRunStatus, planningContextSchema, repoPathSchema,
+  isActiveRunStatus, planningContextSchema, workspaceFilePathSchema,
   type CollaborationService, type ContextManifest, type GitService,
   type MaterialService, type PlanningContext, type StartSnapshotService,
 } from '@app/contracts';
@@ -71,12 +71,14 @@ export class StartCapture {
     const approvedPaths = await this.approved(workspaceId, metadata.inputs, mainSha, sources, omitted);
     const draft = await this.deps.collaboration.capture({ workspaceId, taskId });
     const draftFileHashes = await this.draftFiles(workspaceId, metadata.activeDrafts, metadata.inputs, draft.checkpointSha, sources, omitted);
+    const selectedDrafts = await this.selectedDrafts(workspaceId, taskId, metadata.inputs, sources, omitted);
 
     const manifest: ContextManifest = {
       taskVersion: run.task_version, guidanceVersion: run.guidance_version,
       discussionCutoffSeq: run.discussion_cutoff_seq,
       materials, approvedPaths, approvedCommitSha: mainSha,
       draftCheckpointSha: draft.checkpointSha, draftFileHashes,
+      ...(selectedDrafts.length ? { selectedDrafts } : {}),
       ...(retry ? { savedOutputs: savedOutputs.map(({ text: _text, ...source }) => source) } : {}),
     };
     const snapshot = await this.deps.git.combineStartSnapshot({ workspaceId, taskId, mainSha, draftSha: draft.checkpointSha });
@@ -185,12 +187,6 @@ export class StartCapture {
   private async draftFiles(workspaceId: string, active: Array<{ id: string; path: string }>,
     inputs: Array<{ draft_file_id: string | null }>, checkpointSha: string,
     sources: PlanningContext['sources'], omitted: string[]): Promise<Record<string, string>> {
-    const links = inputs.filter((row) => row.draft_file_id !== null);
-    // A draft selected from another task lives on that task's own branch and is
-    // not in this checkpoint. Report it instead of reading the wrong file.
-    for (const row of links) {
-      if (!active.some((file) => file.id === row.draft_file_id)) omitted.push(`draft:${row.draft_file_id!}`);
-    }
     const hashes: Record<string, string> = {};
     for (const path of [...new Set(active.map((file) => file.path))].sort()) {
       if (!keep(path, omitted, 'draft')) continue;
@@ -203,11 +199,35 @@ export class StartCapture {
     }
     return hashes;
   }
+
+  private async selectedDrafts(workspaceId: string, taskId: string, inputs: Array<{ draft_file_id: string | null }>,
+    sources: PlanningContext['sources'], omitted: string[]) {
+    const selected: NonNullable<ContextManifest['selectedDrafts']> = [];
+    const captures = new Map<string, string>();
+    for (const id of new Set(inputs.flatMap((input) => input.draft_file_id ? [input.draft_file_id] : []))) {
+      const file = await this.deps.db.selectFrom('draft_files').select(['id', 'task_id', 'path'])
+        .where('id', '=', id).where('workspace_id', '=', workspaceId).where('status', '=', 'active').executeTakeFirst();
+      if (!file) { omitted.push(`draft:${id}`); continue; }
+      if (file.task_id === taskId) continue;
+      let checkpointSha = captures.get(file.task_id);
+      if (!checkpointSha) {
+        checkpointSha = (await this.deps.collaboration.capture({ workspaceId, taskId: file.task_id })).checkpointSha;
+        captures.set(file.task_id, checkpointSha);
+      }
+      const captured = await this.deps.git.readText({ workspaceId, target: { kind: 'commit', commitSha: checkpointSha },
+        path: file.path, allowedPaths: [file.path] });
+      if (captured.text === null || captured.hash === null) { omitted.push(`draft:${id}`); continue; }
+      selected.push({ draftFileId: id, taskId: file.task_id, path: file.path, checkpointSha, hash: captured.hash });
+      sources.push({ kind: 'draft', draftFileId: id, path: file.path, text: captured.text });
+    }
+    return selected;
+  }
 }
 
 /** Paths reach the model and the Git layer; an unusable one is dropped here. */
 function keep(path: string, omitted: string[], kind: string): boolean {
-  if (repoPathSchema.safeParse(path).success) return true;
+  const parsed = workspaceFilePathSchema.safeParse(path);
+  if (parsed.success && parsed.data === path) return true;
   omitted.push(`${kind}:${path}`);
   return false;
 }

@@ -40,6 +40,7 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
   const [closed, setClosed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [newPath, setNewPath] = useState('');
   const valid = uuidSchema.safeParse(taskId).success;
   const reload = useCallback(() => setRetry((value) => value + 1), []);
 
@@ -106,6 +107,19 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
         </div>
       </header>
 
+      {valid && <form className="panel edit-together" onSubmit={(event) => {
+        event.preventDefault();
+        void act(async () => {
+          const opened = await api.openTaskDraft(workspaceId, taskId!, newPath.trim());
+          setSelected(opened.id); setSaved(false); setClosed(false); setNewPath(''); reload();
+        });
+      }}>
+        <label htmlFor="task-draft-path">Draft file path</label>
+        <input id="task-draft-path" placeholder="documents/notes.md" value={newPath} onChange={(event) => setNewPath(event.target.value)} />
+        <button disabled={busy || !newPath.trim() || (!!draft && !saved)}>Open task draft</button>
+      </form>}
+      {failure && !draft && <p className="error" role="alert">{failure}</p>}
+
       {status === "loading" ? (
         <p role="status">Loading drafts…</p>
       ) : status !== "ready" ? (
@@ -119,8 +133,7 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
         </EmptyState>
       ) : !draft ? (
         <EmptyState title="No shared drafts yet">
-          This task has no open documents. Open one from Files with Edit
-          together.
+          Open a text file above to edit it with collaborators on this task.
         </EmptyState>
       ) : (
         <>

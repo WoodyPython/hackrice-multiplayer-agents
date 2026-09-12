@@ -5,33 +5,21 @@ import {
   SUPPORTED_TEXT_EXTENSIONS,
   type DraftFile,
   type Material,
+  type ApprovedFile,
+  type ApprovedFileContent,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
 import { EmptyState } from "../components/EmptyState";
 
-/**
- * The Files screen (design §4.1, §3.2, §2.5).
- *
- * §4.1 asks for three sections: approved files, reference materials, and active
- * shared drafts. Two are built.
- *
- * **Approved files are absent, and the page says so rather than showing an
- * empty list.** Nothing in the system can enumerate what is on main: the Git
- * service exposes `readText(path)` for one known path and has no tree or list
- * operation, so there is no route to call and no contract to call it with. An
- * empty "Approved files" heading would read as "this workspace has approved
- * nothing", which is a different and unfounded claim.
- *
- * **Edit together** (§2.5) is find-or-create: concurrent opens of the same path
- * converge on one manual-edit task rather than forking the draft, so a reused
- * task is the normal outcome and is not reported as a collision.
- */
+/** Approved main, immutable references, and active collaborative drafts. */
 export function Files({ workspaceId }: { workspaceId: string }) {
   const { api, session } = useBrowser();
   const navigate = useNavigate();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [drafts, setDrafts] = useState<DraftFile[]>([]);
+  const [approved, setApproved] = useState<ApprovedFile[]>([]);
+  const [preview, setPreview] = useState<ApprovedFileContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -48,11 +36,13 @@ export function Files({ workspaceId }: { workspaceId: string }) {
     void Promise.all([
       api.listMaterials(workspaceId, controller.signal),
       api.listWorkspaceDrafts(workspaceId, controller.signal),
+      api.listApprovedFiles(workspaceId, controller.signal),
     ])
-      .then(([mats, drafted]) => {
+      .then(([mats, drafted, files]) => {
         if (controller.signal.aborted) return;
         setMaterials(mats);
         setDrafts(drafted);
+        setApproved(files.files);
         setFailure(null);
       })
       .catch((error: unknown) => {
@@ -97,6 +87,14 @@ export function Files({ workspaceId }: { workspaceId: string }) {
 
   const live = materials.filter((material) => material.deletedAt === null);
 
+  async function viewFile(target: string) {
+    setBusy(true);
+    setOpenError(null);
+    try { setPreview(await api.readApprovedFile(workspaceId, target)); }
+    catch (error) { setOpenError(apiMessage(error)); }
+    finally { setBusy(false); }
+  }
+
   return (
     <>
       <header className="page-heading">
@@ -131,7 +129,7 @@ export function Files({ workspaceId }: { workspaceId: string }) {
           <input
             id="edit-path"
             value={path}
-            placeholder="docs/launch.md"
+            placeholder="documents/launch.md"
             onChange={(event) => setPath(event.target.value)}
           />
           <button className="primary" type="submit" disabled={busy || !path.trim()}>
@@ -202,7 +200,7 @@ export function Files({ workspaceId }: { workspaceId: string }) {
           <ul className="file-list">
             {live.map((material) => (
               <li key={material.id}>
-                ▤ {material.filename}
+                ▤ <a href={`/api/workspaces/${workspaceId}/materials/${material.id}`} download>{material.filename}</a>
                 <small className="muted">
                   {" "}
                   · {Math.max(1, Math.round(material.byteSize / 1024))} KB
@@ -216,12 +214,18 @@ export function Files({ workspaceId }: { workspaceId: string }) {
 
       <section className="panel">
         <h2>Approved files</h2>
-        <EmptyState title="Not available yet">
-          Approved files live in Git, and nothing in the system can list them
-          yet — reading one requires knowing its exact path. This section will
-          fill in when a listing endpoint exists. It does not mean the workspace
-          has approved nothing.
-        </EmptyState>
+        {loading ? <p role="status">Loading approved files…</p> : approved.length === 0 ? (
+          <EmptyState title="No approved files yet">Apply a reviewed change to publish files here.</EmptyState>
+        ) : <ul className="file-list">{approved.map((file) => <li key={file.path}>
+          <button disabled={busy} onClick={() => void viewFile(file.path)}>{file.path}</button>{" "}
+          <button disabled={busy} onClick={() => void editTogether(file.path)}>Edit {file.path} together</button>
+        </li>)}</ul>}
+        {preview && <section aria-label="Approved file preview">
+          <h3>{preview.path}</h3>
+          <p className="muted">Approved version {preview.mainSha.slice(0, 8)}</p>
+          <pre className="file-preview">{preview.text ?? "This file is no longer on the approved version. Refresh the list."}</pre>
+          <button onClick={() => setPreview(null)}>Close preview</button>
+        </section>}
       </section>
     </>
   );

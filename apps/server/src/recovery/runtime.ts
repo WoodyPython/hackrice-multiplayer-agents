@@ -1,4 +1,5 @@
 import type { Server } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import type { AppConfig } from '../config.js';
 import { createDb, type DbHandle } from '../db/client.js';
@@ -22,6 +23,8 @@ import { LocalReviewService } from '../reviews/service.js';
 import { registerReviewRoutes } from '../reviews/routes.js';
 import { ApiError } from '@app/contracts';
 import { PgRunStore } from '../runs/run-store.js';
+import { registerFrontend } from '../http/frontend.js';
+import { registerApprovedFileRoutes } from '../git/routes.js';
 
 export interface LiveDocumentAttachment {
   close(): Promise<void>;
@@ -37,6 +40,9 @@ export interface RuntimeOptions {
   applicationFactory?: (deps: AppDeps) => Promise<FastifyInstance>;
   /** Allows tests to use port 0 and an ephemeral, loopback-only listener. */
   listen?: { host: string; port: number };
+  /** Dependency injection for deterministic tests of the complete runtime. */
+  modelAdapter?: ModelAdapter;
+  frontendRoot?: string;
 }
 
 export async function startRuntime(options: RuntimeOptions) {
@@ -93,12 +99,14 @@ export async function startRuntime(options: RuntimeOptions) {
     collaboration = new LiveDocumentCoordinator(liveDeps, {
       drafts, git, checkpoints: new PgCheckpointStore(db.db),
     });
-    const adapter = configuredAdapter(config);
+    const adapter = options.modelAdapter ?? configuredAdapter(config);
     orchestration = buildOrchestration({
       config, db: db.db, git, drafts, collaboration, adapter,
       onBackgroundError: (error) => app?.log.error({ err: error }, 'orchestration failed outside a request'),
     });
     app = await (options.applicationFactory ?? buildApp)({ db: db.db, config, lifecycle, orchestration });
+    await registerFrontend(app, options.frontendRoot ?? fileURLToPath(new URL('../../../web/dist/', import.meta.url)), config.isProduction);
+    await registerApprovedFileRoutes(app, { db: db.db, git });
     await registerCheckpointRoutes(app, collaboration);
     const database = db.db;
     collaboration.checkUnloaded = async (taskId, revisions) => {
@@ -133,7 +141,7 @@ export async function startRuntime(options: RuntimeOptions) {
       ? await options.attachLiveDocuments(app.server)
       : attachLiveDocuments(app.server, liveDeps, collaboration);
     // Persisted documents and Git worktree projections restore on demand.
-    if (!config.GEMINI_API_KEY?.trim()) {
+    if (!options.modelAdapter && !config.GEMINI_API_KEY?.trim()) {
       // Everything except agent execution still works; say so once, at boot,
       // rather than only per Start in a task event nobody is watching yet.
       app.log.warn('GEMINI_API_KEY is not configured; each Start will end its run as model_configuration');

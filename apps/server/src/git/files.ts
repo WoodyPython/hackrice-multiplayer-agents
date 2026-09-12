@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, open, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ApiError, MAX_TEXT_FILE_BYTES, isSupportedTextExtension, repoPathSchema } from '@app/contracts';
+import { ApiError, MAX_TEXT_FILE_BYTES, workspaceFilePathSchema } from '@app/contracts';
 
 export function invalidPath(): never {
   throw new ApiError('INVALID_PATH', 'Path is unsafe, unsupported, or outside the permitted files.');
@@ -9,18 +9,9 @@ export function invalidPath(): never {
 
 /** One portable namespace on both Windows development and Linux production. */
 export function filePath(raw: string): string {
-  const path = raw.replace(/\\/g, '/');
-  if (!repoPathSchema.safeParse(path).success || /[\u0000-\u001f\u007f<>:"|?*]/.test(path)) invalidPath();
-  const parts = path.split('/');
-  if (parts.length < 2 || !['documents', 'code'].includes(parts[0]!)) invalidPath();
-  for (const part of parts) {
-    if (!part || part === '.' || /[. ]$/.test(part) || part !== part.trim() ||
-        /^(\.git|\.gitattributes|\.gitmodules|hooks)$/i.test(part) ||
-        /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part) || /~\d/.test(part) ||
-        part !== part.normalize('NFC')) invalidPath();
-  }
-  if (!isSupportedTextExtension(path)) invalidPath();
-  return path;
+  const parsed = workspaceFilePathSchema.safeParse(raw);
+  if (!parsed.success) return invalidPath();
+  return parsed.data;
 }
 
 export function pathSet(paths: string[]): Set<string> {
