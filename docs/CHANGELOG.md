@@ -18,8 +18,8 @@ Newest first. One entry per landed ticket.
 - Handles blocked storage, a failed one-time key save, permission loss, missing
   workspaces, clipboard failure, and duplicate creation clicks. Failed settings
   saves preserve entered text. A01's fixtures now live under `/demo/w/*`.
-- Verified: the full backend/frontend suite (including 23 frontend tests),
-  production build, typecheck, and a local API smoke
+- Verified for A02: 23 frontend tests, frontend production build/typecheck,
+  and a local API smoke
   check through Vite covering creation, direct links, contributor rejection, and
   owner updates. Browser visual QA was unavailable in this session.
 
