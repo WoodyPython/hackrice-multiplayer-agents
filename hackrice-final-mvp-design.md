@@ -1,0 +1,1268 @@
+# Collaborative Task Workspace
+## MVP design blueprint
+
+Revised September 12, 2026.
+
+## Summary
+
+Build a web workspace where anonymous collaborators create tasks, discuss requirements, upload materials, and edit text documents together. Posting a task does not start agents. A separate Start task action captures the agreed requirements and current draft, then an internal orchestrator assigns work to parallel agents.
+
+The creator owns the workspace and shares a contribution link. No accounts, login flow, member directory, or Supabase identity service is involved. A browser-held owner key distinguishes the creator for owner-only actions; everyone with the contribution link can otherwise participate.
+
+The MVP supports Markdown, plain text, and code files. Git supplies checkpoints, isolated agent branches, differences, conflicts, and reviewed application to approved files. Yjs supplies simultaneous typing in shared drafts. Agents do not edit the live human document directly or execute generated code.
+
+Supabase is the primary managed backend for PostgreSQL, uploaded materials, collaborative-document snapshots, and task event delivery. A small Node service hosts the API, coordinator, Yjs connection server, and Git operations; Git repositories require a persistent filesystem outside Supabase's database and object-storage services.
+
+Gemini Pro handles orchestration and Gemini Flash handles worker assignments through the Google GenAI SDK. Models can be switched in backend configuration, without frontend settings. Every agent has its own cumulative token budget within each task and a fixed ten-minute execution deadline. Token usage on one task does not reduce its budget on another task. There is no fixed product cap on active tasks or agent count.
+
+| Area | MVP behavior |
+|---|---|
+| Entry | Guest creates a workspace; others open its contribution link |
+| Ownership | Creator's browser retains an owner key |
+| Task creation | Post title, outcome, acceptance criteria, and materials |
+| Before execution | Discuss, revise requirements, and edit shared drafts |
+| Agent start | Explicit Start task action |
+| Human collaboration | Simultaneous typing, visible cursors, task-local discussion |
+| Agent collaboration | Orchestrator creates a dependency graph; eligible workers run in parallel |
+| File isolation | Human draft, worker branches, and approved files remain distinct |
+| Publication | Owner reviews the exact combined candidate and applies it |
+| Materials | Upload to workspace or task; attach files to task discussion |
+| Model routing | Higher-capability Gemini for orchestration; lower-cost Gemini for workers |
+| Agent stopping rules | Per-task, per-agent token budget and fixed ten-minute timeout |
+| Recovery | Saved edits/checkpoints, explicit interrupted state, manual retry |
+| Included file behavior | Text/code editing, previews, diffs, version history, conflicts |
+| File execution | Generated code is not executed |
+
+The design below specifies the MVP's behavior, data ownership, component contracts, and individually assigned implementation tasks.
+
+## 1. Product structure
+
+### 1.1 Workspace
+
+A workspace contains:
+- Approved files.
+- Posted tasks and their discussions.
+- Collaborative drafts associated with tasks.
+- Shared reference materials.
+- Agent assignments and progress.
+- Review candidates and approved history.
+- Owner-controlled workspace guidance.
+
+A workspace is a shared collection of work, not a personal terminal or virtual machine. External messaging tools remain outside this application's flow.
+
+One workspace corresponds to one internally managed Git repository. Participants never need Git or GitHub accounts.
+
+### 1.2 Anonymous participation and creator ownership
+
+Creating a workspace returns:
+- A random workspace identifier.
+- A contribution URL containing that identifier.
+- A random owner key, returned once to the creating browser.
+
+The server stores only the owner-key hash. The creating browser stores the key locally and sends it only for owner operations. It never appears in the shared URL, document content, model context, or realtime event payload.
+
+Opening the contribution URL directly opens the workspace. There is no invitation acceptance, identity registration, membership record, or participant directory.
+
+The owner key is a minimal operation-level permission check needed to preserve creator-only approval. It is not an account system. Without such a check, the server could not distinguish the creator and owner-only controls would be visual only.
+
+Ownership belongs to possession of that browser key, not a verified person. Clearing browser storage loses owner control; copying the key transfers that control. No recovery flow for ownership is part of this MVP.
+
+The contribution URL is link access, not private identity-based access. Anyone who receives it can contribute. Do not list workspaces publicly or expose an endpoint returning everyone's workspaces.
+
+### 1.3 Contributor labels
+
+Assign a browser-local random contributor ID and a generated label such as “Guest Cedar” for task discussion and cursor attribution. Guests can edit their own display name through a small name control in the workspace header. Persist the edited name in browser-local storage without changing the contributor ID. Use the updated name for subsequent contributions and live cursor attribution; previously stored contribution labels remain unchanged. Trim names, reject blank values, and render them as plain text.
+
+These are unverified display labels. Never use them to enforce ownership, approve changes, or protect supposedly private tasks.
+
+Presence is limited to cursors/selections in the currently open document. There is no persistent participant list.
+
+### 1.4 Actions
+
+| Action | Contributor with workspace link | Creator with owner key | Agent |
+|---|---|---|---|
+| Read approved files and materials | Yes | Yes | Selected task context |
+| Post tasks and task discussion | Yes | Yes | Questions/results through assigned task only |
+| Upload references | Yes | Yes | No general upload operation |
+| Edit shared drafts | Yes | Yes | Never directly |
+| Revise posted task requirements | Yes | Yes | May propose clarification |
+| Start, stop, answer, or manually retry tasks | Yes | Yes | Cannot grant itself a fresh attempt |
+| Request changes or prepare a review | Yes | Yes | Can produce a result for review |
+| Apply reviewed changes | No | Yes | Never |
+| Change workspace guidance/name | No | Yes | Never |
+| Write approved Git main | No | Through the apply service | Never |
+
+Anonymous participation means there is no trustworthy “only the original task creator may retry” rule. Task actions are collaborative; owner publication remains the one privileged boundary.
+
+## 2. Task lifecycle
+
+### 2.1 Post a task
+
+The form contains:
+- Title.
+- Desired outcome.
+- Acceptance criteria.
+- Selected reference materials.
+- Selected approved files or shared drafts.
+- Optional intended output paths.
+
+The primary form action is Post task. It creates a posted task and opens its discussion. It makes no Gemini request and creates no agent execution.
+
+People can add comments, attach materials, adjust requirements, and edit drafts before deciding to start. Requirement updates use optimistic version checks so two form saves cannot silently overwrite each other.
+
+### 2.2 Start a posted task
+
+Start task is a separate action on the posted task.
+
+The server:
+1. Checks the submitted task version and confirms there is no active attempt.
+2. Captures the requirements, criteria, selected materials, and discussion cutoff.
+3. Flushes acknowledged live edits and creates a Git checkpoint of the human draft.
+4. Records approved main and the draft checkpoint as immutable inputs.
+5. Creates an orchestrator instance.
+6. Obtains and validates an assignment graph.
+7. Starts eligible worker agents.
+8. Returns a run ID immediately; browser connections are not required to remain open.
+
+Double-clicks or concurrent Start requests produce one active attempt. A unique active-run constraint and idempotency key enforce this.
+
+### 2.3 Discussion after start
+
+Task discussion remains available throughout execution.
+
+A new comment does not silently change an in-flight model request. Display “Added after this run started” when relevant. A contributor can:
+- Answer a pending agent question.
+- Stop the run and start a revised attempt.
+- Request a revision after the result is ready.
+
+A change to task requirements or selected inputs increments the task version. Existing execution may finish, but its result is labeled against the older version and cannot be applied without review against the updated requirements.
+
+### 2.4 State model
+
+| Task state | Meaning | Principal actions |
+|---|---|---|
+| posted | Available for discussion; agents have not started | Edit requirements, attach inputs, edit drafts, Start |
+| planning | Orchestrator is producing assignments | Discuss, cancel |
+| working | Worker assignments are executing | Edit human draft, discuss, cancel |
+| needs_input | Agent requires clarification | Answer, cancel, retry if deadline expired |
+| ready_for_review | Completed outputs and combined result available | Inspect, request changes, owner apply |
+| conflict | Changes need explicit resolution | Choose result, edit resolution, request revision |
+| incomplete | At least one required agent timed out, exhausted tokens, or failed | Inspect saved work, manual retry |
+| interrupted | Server restarted during execution | Inspect checkpoints, manual retry |
+| canceled | A contributor stopped execution | Inspect saved work, manual retry |
+| completed | Reviewed changes were applied, or no changes were needed | Read result/history, create another task |
+
+Agent states are separate: pending, running, needs_input, completed, failed, timed_out, token_exhausted, canceled, interrupted.
+
+Task completion is not inferred from a model saying “done.” Required assignments, validated output, and the publication state determine it.
+
+### 2.5 Human-only edits
+
+The Files view offers Edit together. This creates or opens a manual-edit task for the selected file. Its task draft is shared by everyone opening the same editing link.
+
+A manual-edit task does not need agent execution. Contributors can edit it and request review; the owner applies it through the same Git review path. Start agents remains available as a separate action if assistance is wanted.
+
+Use one active manual-edit task per workspace/file, enforced by a database uniqueness rule. Explicitly created tasks can still have separate drafts of that file.
+
+## 3. File and material model
+
+### 3.1 Approved files
+
+Approved files live on Git main. They can be read, previewed, downloaded, compared with previous versions, or opened in a task draft.
+
+Supported editable formats are UTF-8 Markdown, TXT, and selected code/text extensions, including JavaScript, TypeScript, Python, CSS, HTML, JSON, SQL, YAML, and CSV as text. CSV has no spreadsheet interface.
+
+Markdown uses a text editor with a rendered preview. HTML and code are displayed as inert text, not executed.
+
+### 3.2 Reference materials
+
+Materials are immutable uploaded inputs in Supabase Storage. Store a hash, original filename, byte size, uploader's guest label, and a stable material ID in PostgreSQL.
+
+| Upload location | Result |
+|---|---|
+| Workspace Files | Shared reference available in task material pickers |
+| Task Materials | Reference attached directly to that task |
+| Task discussion attachment | Reference linked to the discussion entry and available to that task |
+
+All entry points use the same upload implementation. Reattaching an existing material reuses its ID and bytes.
+
+Uploading does not invoke an agent or modify approved files. “Use as editable document” creates a task draft from the text; publication still requires review.
+
+Location affects context selection, not privacy. Everyone with the workspace link can access its materials.
+
+### 3.3 Selected context
+
+Before Start, show the materials and drafts the task will use. Direct task attachments are selected by default. Workspace references are available for explicit selection.
+
+The context manifest records:
+- Task version and requirements.
+- Workspace guidance version.
+- Discussion entries through a specific cutoff.
+- Material IDs and content hashes.
+- Approved file paths and commit.
+- Human draft checkpoint and file hashes.
+
+Agents can request more of the selected text through a scoped read tool. The entire workspace is not automatically repeated in every worker prompt.
+
+Newer material versions use new IDs. Existing running agents retain the captured version unless a human explicitly revises/restarts the task.
+
+### 3.4 Basic file validation
+
+Validate UTF-8, permitted file type, byte size, and path safety. Reject binary data, NUL content, archives, symlinks, and special files.
+
+Retain a simple 1 MiB per-text-file transport limit and a bounded WebSocket payload size to protect parsing and memory. These are file/protocol constraints, not extra agent task, retry, or concurrency limits.
+
+Excel editing, office-file conversion, external repository import, and generated-code execution are outside this MVP's implemented surface.
+
+## 4. Frontend and UX
+
+### 4.1 Screens
+
+| Route | Screen | Content |
+|---|---|---|
+| / | Create workspace | Name, purpose, create action |
+| /w/:workspaceId | Task board | Posted work, active work, attention, review, completed |
+| /w/:workspaceId/tasks/:taskId | Task detail | Requirements, discussion, materials, drafts, agent progress, review |
+| /w/:workspaceId/files | Files | Approved files, reference materials, active shared drafts |
+| /w/:workspaceId/tasks/:taskId/edit/:fileId | Collaborative editor | Shared text, cursors, preview, saved state |
+| /w/:workspaceId/history | History | Applied changes and associated tasks |
+| /w/:workspaceId/settings | Workspace settings | Guidance and owner-only configuration |
+
+The creator sees Copy workspace link. Opening that link requires no extra entry screen.
+
+### 4.2 Navigation and layout
+
+Sidebar: Tasks, Files, History. Workspace settings appear through the workspace menu.
+
+Task detail has:
+- Header: title, task state, primary action.
+- Requirements area: outcome, acceptance criteria, selected materials.
+- Tabs: Discussion, Drafts, Agents, Changes.
+- Contextual owner Apply action in review.
+- A visible Start task button only when starting is valid.
+
+Before start, Discussion is the default tab. While agents work, the page surfaces progress without moving people away from the document they are editing.
+
+### 4.3 Task board
+
+Columns:
+- Posted.
+- Working.
+- Needs attention.
+- Review.
+- Completed.
+
+Use state-derived placement. Dragging a card cannot mark work approved.
+
+Cards show title, anonymous creator label, current assignment summary, material count, and whether input or owner review is needed.
+
+### 4.4 Collaborative editor
+
+Use Monaco with a Yjs binding for Markdown, text, and code. Show other editors' colored cursors and selections, with guest labels.
+
+Required controls:
+- File selector.
+- Text editor.
+- Optional rendered Markdown preview.
+- Connected / reconnecting indicator.
+- Saving / Saved indicator based on server persistence acknowledgement.
+- Checkpoint indicator.
+- Request review action.
+- Link back to the task.
+
+“Saved” means persisted to Supabase, not merely sent to another browser. “Checkpointed” means captured in Git. Neither means approved.
+
+Undo should affect the local contributor's editing operations where the binding supports it, not blindly reset everyone else's text. Use Yjs undo behavior rather than whole-document replacement for normal typing.
+
+### 4.5 Agent progress
+
+Show assignments with preset, instruction summary, dependencies, state, and output files. Parallel workers are visibly distinct.
+
+Show token usage per task per agent as read-only information if useful. Do not expose model selection, provider settings, budget settings, or timeout controls.
+
+Time left may be displayed for a running agent; its deadline is always fixed by the backend.
+
+### 4.6 Review
+
+Review displays:
+- Human-written task criteria.
+- Generated explanation, labeled as such.
+- Sources and checkpoint identifiers.
+- Changed files and text diffs.
+- Rendered Markdown preview.
+- Recorded validation and AI reviewer findings.
+- Overlapping edits requiring resolution.
+- Whether live typing or another applied task made the review stale.
+
+Default to readable content. Put Git commit IDs and operation metadata in Details.
+
+All contributors can discuss changes. Only the owner key enables application. The server performs the same check; hiding a button is insufficient.
+
+### 4.7 Minimal error states
+
+| State | UI behavior |
+|---|---|
+| Agent timed out | Show incomplete status and preserved output/checkpoint; offer manual retry |
+| Token budget exhausted | Identify the affected agent and preserve its completed work |
+| Provider waiting | Show waiting status; avoid fake progress |
+| Live connection lost | Keep local text visible; show unsaved/reconnecting state |
+| Review stale | Disable Apply and offer Refresh review |
+| Text conflict | Show current/proposed content and explicit resolution |
+| Task interrupted | Offer retry from checkpoint |
+| Owner key absent | Apply unavailable; participation remains available |
+| No changes needed | Explain result without manufacturing a file change |
+
+## 5. Technology stack and hosting
+
+| Component | Choice | Responsibility |
+|---|---|---|
+| Frontend | React, TypeScript, Vite | Workspace/task interface |
+| Routing | React Router | Page navigation |
+| Components | Tailwind plus a small existing component set | Forms, tabs, dialogs, panels |
+| Client server-state | TanStack Query | API requests, refresh, fallback polling |
+| Text/code editor | Monaco | Editing and diff views |
+| Shared typing | Yjs + y-monaco | Concurrent text operations and editor binding |
+| Live document transport | y-websocket-compatible server | Document sync and cursor awareness |
+| Markdown preview | react-markdown + remark-gfm | Safe rendered text |
+| API/runtime | Node.js + Fastify | Task actions, file tools, model coordination |
+| Database | Supabase PostgreSQL | Workspace/task state, snapshots, results, reviews |
+| Object storage | Supabase Storage | Reference materials and larger immutable artifacts |
+| Task updates | Supabase Realtime Broadcast | Low-latency invalidation notifications |
+| Models | Google GenAI SDK, @google/genai | Gemini planning and workers |
+| Git | Git CLI in trusted backend | Branches, checkpoints, candidates, guarded apply |
+| Runtime hosting | One Render Node service with persistent disk | Web/API, Yjs server, coordinator, Git filesystem |
+| Verification | Vitest and focused browser checks | Component-specific behavior |
+
+Supabase is the primary managed data platform. Do not try to mount object storage as a Git working directory. The persistent runtime is still necessary for Git and live document coordination.
+
+The web bundle can be served by the same Node service. Keep one runtime instance; this design uses process-local room state and short Git-operation locks.
+
+### 5.1 Realtime division
+
+Use existing Yjs transport for editor operations rather than writing a CRDT or a new Supabase-to-Yjs synchronization protocol.
+
+Use Supabase Realtime for task status, discussion additions, and review invalidation notifications. A realtime event prompts the browser to fetch the authoritative API state. It does not itself grant owner privileges or change task status.
+
+With no participant identities, use public workspace-scoped realtime channels keyed by the workspace identifier. Assume channel messages can be forged by a link holder; carry only refresh hints, not executable commands or approval decisions.
+
+Yjs's WebSocket provider handles document updates and awareness, and its server can be extended for persistence. The Monaco binding connects Yjs text to editor content. [Yjs WebSocket provider](https://docs.yjs.dev/ecosystem/connection-provider/y-websocket), [y-monaco](https://github.com/yjs/y-monaco)
+
+Supabase Broadcast is the notification transport, not the authoritative document or task store. [Supabase Broadcast](https://supabase.com/docs/guides/realtime/broadcast)
+
+### 5.2 Backend-only model routing
+
+Initial model choices:
+- Orchestrator: gemini-2.5-pro.
+- Worker agents, including reviewers: gemini-2.5-flash.
+
+These are concrete starting defaults, not a claim that they are the newest models. Keep IDs in server configuration so the team can test another available Gemini Pro/Flash pair without changing task code. Google lists these model IDs and their capability tiers. [Gemini models](https://ai.google.dev/gemini-api/docs/models)
+
+Use Google's maintained @google/genai SDK. [Google GenAI libraries](https://ai.google.dev/gemini-api/docs/libraries)
+
+The browser receives agent preset/status/output, not provider credentials or a model-selection interface.
+
+### 5.3 Server configuration
+
+Server-only environment values are DATABASE_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY, ORCHESTRATOR_MODEL, WORKER_MODEL, GIT_DATA_ROOT, and PUBLIC_APP_URL. The browser receives only public service locations and the Supabase publishable key needed for public refresh channels.
+
+Serve the built frontend from the same Node service. Attach the Git data directory to its persistent disk and run one application instance. Supabase holds application records, document snapshots, and material bytes; the disk holds active Git repositories/worktrees. Runtime redeployment must preserve the disk. [Render persistent disks](https://render.com/docs/disks)
+
+## 6. System design
+
+```mermaid
+flowchart TD
+    UI["Browser workspace"]
+    subgraph RUNTIME["Single Node runtime"]
+        API["API and task coordinator"]
+        LIVE["Yjs room server"]
+        GIT["Git and file service"]
+        AGENTS["Gemini adapter and agents"]
+    end
+    subgraph SUPABASE["Supabase"]
+        DB["PostgreSQL"]
+        STORAGE["Object storage"]
+        EVENTS["Realtime Broadcast"]
+    end
+    DISK["Persistent Git disk"]
+    GEMINI["Gemini API"]
+    UI --> API
+    UI <--> LIVE
+    UI <-->|"Refresh notifications"| EVENTS
+    API --> DB
+    API --> STORAGE
+    API --> EVENTS
+    LIVE --> DB
+    API --> GIT
+    API --> AGENTS
+    GIT --> DISK
+    AGENTS --> GEMINI
+    AGENTS --> GIT
+```
+
+### 6.1 Source of truth
+
+| Data | Authority |
+|---|---|
+| Approved files | Git main |
+| Live human text | Server-held Yjs state, durably snapshotted in Supabase |
+| Human draft checkpoints | Git human-draft branch |
+| Worker code/text | Worker branch and worktree |
+| Integrated agent results | Task-run result branch |
+| Task requirements/discussion/state | PostgreSQL |
+| Reference bytes | Supabase Storage |
+| Review/approval metadata | PostgreSQL, bound to immutable Git source/candidate commits |
+| Model usage and deadline | Per-agent database record |
+| Guest name/cursor identity | Browser display state; unverified |
+| Creator privilege | Owner key hash |
+
+Yjs persistence and Git checkpoints are complementary. A Yjs snapshot preserves collaborative operations. A Git checkpoint is a reviewable plain-text version.
+
+### 6.2 Runtime layout
+
+Internally generated paths:
+- /data/repos/<workspace-id>.git
+- /data/worktrees/<workspace-id>/human/<task-id>/
+- /data/worktrees/<workspace-id>/agents/<agent-instance-id>/
+- /data/worktrees/<workspace-id>/results/<run-id>/
+- /data/worktrees/<workspace-id>/reviews/<review-id>/
+
+Use random IDs, not display names or uploaded filenames, in filesystem directory selection.
+
+The agent cannot choose repository roots, branch names, shell arguments, or server file paths.
+
+### 6.3 Short operation locks
+
+Use process-local per-workspace locks for Git mutation and task snapshot/apply barriers. A consistent lock order prevents deadlock: workspace operation lock, then task document gate.
+
+Do not hold these locks during Gemini calls or while waiting for humans. Parallel model work continues while short checkpoints and integrations are serialized.
+
+All room update handlers respect the task gate. This matters when taking a snapshot or applying a result while people are typing.
+
+This design assumes exactly one runtime process managing a workspace. There is no multi-replica coordination in the MVP.
+
+## 7. Simultaneous editing and Git checkpoints
+
+### 7.1 Editing unit
+
+Each editable file in a task has a stable document ID and a Yjs room:
+workspace ID + task ID + document ID + document epoch.
+
+Use a Y.Text value for file content and bind it to Monaco. Keep path metadata separate from the text so a rename does not become a document-content operation.
+
+Yjs resolves concurrent text operations; Git remains responsible for approved version history. Yjs convergence does not prove that jointly written prose is correct. [Yjs collaborative editing](https://docs.yjs.dev/getting-started/a-collaborative-editor)
+
+### 7.2 Initialize once
+
+When a shared draft is first opened:
+1. Resolve its task and file path.
+2. Load the existing persisted Yjs state if present.
+3. Otherwise create a server-owned Y.Doc from the task's initial file text.
+4. Persist its full binary state and metadata.
+5. Connect browsers to that same document.
+
+Never seed the same text independently in each browser; merging separately initialized copies can duplicate content.
+
+A document's schema and epoch are stored explicitly. Reopening it does not replace its contents with the current Git file on every connection.
+
+### 7.3 Persist edits
+
+The room server:
+- Applies valid Yjs updates to its authoritative in-memory document.
+- Increments an in-memory document revision and marks the task dirty immediately.
+- Serializes persistence per document.
+- Saves a full Yjs snapshot and state vector in Supabase PostgreSQL after a short debounce.
+- Emits a persistence acknowledgement covering the saved updates.
+
+A client shows Saved only once its updates are covered by the persisted acknowledgement. A socket-connected or provider-synced event alone is insufficient.
+
+Persisting full snapshots is adequate for small demo text documents. An edit does not create a Git commit for every keystroke.
+
+### 7.4 Checkpoint boundary
+
+Start task, Request review, and explicit Save checkpoint require a consistent capture:
+
+1. Wait for the initiating browser's submitted edits to be acknowledged.
+2. Gate the task's server-side update processing briefly.
+3. Persist all dirty documents already accepted by the server.
+4. Export their text into the human-draft worktree.
+5. Commit the complete draft and record its task/document revision map.
+6. Release the gate and resume live updates.
+
+Only updates received before the boundary are included. Remote unsent edits cannot be captured magically. The editor must distinguish local unsaved content from the saved checkpoint.
+
+Accepted updates arriving after the checkpoint belong to the next draft revision.
+
+### 7.5 People keep editing while agents work
+
+Agents start from a frozen snapshot. People can continue typing in the shared human draft while workers run in their own branches.
+
+The UI shows:
+- Human draft, editable by all contributors.
+- Agent result, a separate preview.
+- Combined review, when prepared.
+
+No worker writes directly into the Yjs document. This prevents a generated replacement from erasing concurrent typing.
+
+### 7.6 Reviews while typing continues
+
+A review records the exact human draft checkpoint and document revision map.
+
+Any new accepted human edit marks it stale immediately, even before the debounce has persisted the edit. Apply checks both persisted versions and in-memory dirty/revision state.
+
+The owner must refresh review after edits. The editor need not be locked for the entire review period.
+
+During the final short Apply operation, the server gates new updates and validates freshness. After application:
+- The task becomes completed.
+- Its editing rooms become read-only/closed for new writes.
+- The result view reads the approved candidate.
+- Further editing creates a new task/draft epoch.
+
+Do not overwrite an active Yjs document with agent output or reuse its old epoch for new approved content. If a browser has late unsent edits, keep them visible for copying into a new draft and show that they were not applied.
+
+### 7.7 Basic reconnect behavior
+
+Reconnect to the same active document epoch and synchronize Yjs updates against its stored state.
+
+If the task was completed or the epoch was closed while disconnected, reject old-epoch writes. Preserve the browser's unsent text for manual recovery instead of replaying it into approved content.
+
+An abrupt server crash can lose unacknowledged edits. The MVP promises recovery of persisted snapshots and checkpoints, not unlimited offline editing.
+
+## 8. Orchestrator and parallel workers
+
+### 8.1 Responsibilities
+
+The orchestrator is an agent that turns task input into assignments:
+- Identify necessary outputs.
+- Select worker presets.
+- Declare dependencies.
+- Assign write scopes.
+- Define what each worker must return.
+
+The scheduler is ordinary application code that starts eligible assignments and tracks results. It does not need to keep the orchestrator model active while workers are running.
+
+A planning assignment completes when its validated plan is stored. Its ten-minute deadline belongs to planning, not the entire task.
+
+### 8.2 Agent presets
+
+| Preset | Model tier | Work |
+|---|---|---|
+| Orchestrator | Gemini Pro | Plan, scope, and assign |
+| Analyst | Gemini Flash | Analyze selected sources and produce findings |
+| Writer | Gemini Flash | Create or revise text documents |
+| Coder | Gemini Flash | Create or revise code as text |
+| Reviewer | Gemini Flash | Compare results with criteria and sources; read-only |
+
+Only the coordinator can instantiate assignments from the validated plan. Workers cannot recursively spawn workers or create fresh budgets.
+
+### 8.3 Assignment graph
+
+Example structure:
+
+```json
+{
+  "summary": "Produce a launch FAQ and announcement from the supplied brief.",
+  "assignments": [
+    {
+      "id": "facts",
+      "preset": "analyst",
+      "depends_on": [],
+      "write_paths": [],
+      "instruction": "Extract confirmed facts and unresolved questions."
+    },
+    {
+      "id": "faq",
+      "preset": "writer",
+      "depends_on": ["facts"],
+      "write_paths": ["documents/faq.md"],
+      "instruction": "Draft the FAQ using confirmed facts."
+    },
+    {
+      "id": "announcement",
+      "preset": "writer",
+      "depends_on": ["facts"],
+      "write_paths": ["documents/announcement.md"],
+      "instruction": "Draft the announcement using confirmed facts."
+    },
+    {
+      "id": "review",
+      "preset": "reviewer",
+      "depends_on": ["faq", "announcement"],
+      "write_paths": [],
+      "instruction": "Check both documents for consistency and task coverage."
+    }
+  ]
+}
+```
+
+There is no fixed three-step maximum and no two-active-task product cap. The example is a shape, not a required assignment count.
+
+Validate:
+- Unique assignment IDs.
+- Known presets.
+- Existing dependency IDs.
+- Acyclic dependency graph.
+- Valid output paths.
+- Read-only reviewer permissions.
+- An ordering between workers whose declared write scopes overlap.
+
+If two workers need the same file, serialize them through a dependency or ask for a corrected plan. Read overlap is allowed. Independent write scopes can run concurrently.
+
+An agent can produce more text within its scope, but cannot silently broaden that scope. Return a structured scope error to the orchestrator/run rather than treating a proposed path as permission.
+
+### 8.4 Start snapshot
+
+At Start:
+- Let A be current approved main.
+- Let L be the latest human-draft checkpoint.
+- Prepare private starting snapshot S by combining A and L.
+
+If this combination conflicts, surface it before starting agents. No model calls are needed to conceal or override that conflict.
+
+Human Yjs content is not replaced by S; it continues on its own draft lineage. The run's input preview shows S so the captured material is inspectable.
+
+The task-run result branch starts at S. Each eligible worker starts from the current result branch after its prerequisites have integrated.
+
+### 8.5 Worker isolation and integration
+
+Each mutating worker gets a separate branch/worktree and records its base SHA. It reads the approved selected context and any completed prerequisite outputs.
+
+On worker completion:
+1. Validate its text changes and write scope.
+2. Commit the worker result.
+3. Integrate into the task-run result branch under the Git-operation lock.
+4. Record its integrated result SHA.
+5. Release dependent assignments.
+
+Independent worker model calls continue in parallel. Integration is serialized and does not modify approved main or the live human draft.
+
+If integration conflicts, mark the assignment blocked and surface the affected files. Declared scopes reduce conflicts but do not guarantee semantic compatibility.
+
+### 8.6 Worker tool interface
+
+| Tool | Behavior |
+|---|---|
+| read_file | Read a validated task/worker path |
+| read_material | Read a selected immutable reference |
+| propose_changes | Submit validated text replacements/deletions with expected file hashes |
+| ask_question | Persist a task-local question and wait within the agent's existing deadline |
+| finish_assignment | Return summary, references, limitations, and output artifacts |
+
+No shell, arbitrary SQL, general network tool, unrestricted filesystem, or Git command tool is exposed.
+
+Gemini function calls return structured requests for application code to handle. The backend validates them before execution. [Gemini function calling](https://ai.google.dev/gemini-api/docs/function-calling)
+
+### 8.7 Parallelism and provider throttling
+
+Eligible independent assignments are scheduled without a fixed global active-task cap.
+
+Provider rate limits and transport capacity can delay requests. Handle quota responses using backoff and visible waiting states. Do not translate a provider limit into a permanent “only two tasks” product rule.
+
+Each agent has one in-flight model request at a time, which makes its own usage accounting deterministic. This does not limit the number of separate agents running concurrently.
+
+Git mutation is briefly serialized per workspace; model execution remains parallel.
+
+## 9. Models, token usage, and the fixed deadline
+
+### 9.1 Backend model adapter
+
+Use a small internal interface rather than embedding Gemini calls in task routes.
+
+```typescript
+interface ModelAdapter {
+  countInput(request: AgentRequest): Promise<number>;
+  generate(
+    request: AgentRequest,
+    limits: RequestAllowance,
+    signal: AbortSignal
+  ): Promise<AgentResponse>;
+}
+
+interface AgentResponse {
+  text?: string;
+  toolCalls: ToolCall[];
+  usage: {
+    totalTokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    thinkingTokens?: number;
+    cachedInputTokens?: number;
+    status: "reported" | "unknown";
+  };
+  providerState?: unknown;
+}
+```
+
+The adapter preserves provider-specific conversation fields needed for valid follow-up calls, including applicable thought signatures. Normalization must not discard required protocol state. Keep the tool loop and retries application-controlled: disable or account for SDK behavior that makes additional model calls internally, so no requests bypass the agent ledger or deadline.
+
+Configure only model routing in the backend:
+- ORCHESTRATOR_MODEL
+- WORKER_MODEL
+
+The Gemini adapter is the implemented provider. Keep a test adapter behind the same interface. Adding a provider later should not require changing task state or Git code; no user-facing provider support is part of this MVP.
+
+### 9.2 Fixed ten-minute deadline
+
+For every orchestrator or worker instance:
+
+```typescript
+const AGENT_TIMEOUT_MS = 10 * 60 * 1000;
+const TASK_AGENT_TOKEN_BUDGET = 64_000;
+```
+
+The token amount is an initial implementation constant applied independently to each task-and-agent pair. Neither limit is a frontend setting. The ten-minute value is fixed, with no environment override.
+
+Set started_at when that agent begins its first execution activity and deadline_at = started_at + 600 seconds.
+
+Time spent in model requests, tool work, retry backoff, or waiting for a human after starting counts toward the deadline. An assignment waiting on prerequisites has not started and has no running clock yet.
+
+Replanning, provider retries, and repeated tool calls do not reset the same agent's deadline.
+
+At the deadline:
+- Abort in-flight work when supported.
+- Refuse subsequent file writes or checkpoints from late results.
+- Preserve already accepted work.
+- Mark the agent timed_out and its required task output incomplete.
+
+Canceling a local request does not guarantee the provider stopped computation or billing. Late usage may still be recorded; late edits are still rejected.
+
+### 9.3 Per-task, per-agent token accounting
+
+Each task-and-agent pair has its own cumulative budget. The orchestrator and each parallel worker have separate counters within a task; there is no shared task token bucket or lifetime agent budget across tasks. Key the budget by task_id and a stable agent_key (the orchestrator key or worker assignment key). Reuse that key for the same logical agent across execution attempts, retries, and model changes. The same agent working on another task receives an independent budget.
+
+Count all requests, retries, and repairs against that task-and-agent budget, including manual retries of the same logical agent. Repeated context consumes budget again. Include reasoning/thinking usage where reported. Cached input remains part of logical token usage; do not add it twice if already included in prompt/total counts.
+
+Before each request:
+1. Count the exact prepared input with the adapter.
+2. Subtract already consumed/reserved tokens from the task-and-agent budget.
+3. Derive a permissible output/thinking allowance from the remainder.
+4. Stop before the call if insufficient allowance remains.
+5. Reconcile against provider-reported usage afterward.
+
+Reserve conservatively for visible output and thinking according to the selected model's supported settings. Some APIs combine categories in their output bounds; the adapter must normalize this correctly rather than assuming all model families use identical settings.
+
+Gemini supplies token counting and usage metadata. Its thinking controls are model-specific. [Gemini token counting](https://ai.google.dev/gemini-api/docs/tokens), [Gemini thinking](https://ai.google.dev/gemini-api/docs/thinking)
+
+Use reported total usage when it covers the required categories; do not sum total plus its components. For missing usage after a failed request, retain its reservation as unknown rather than giving the agent that budget back.
+
+A model switch must verify token-counting and thinking/output-bound behavior before use. The limit is an execution accounting rule, not a guaranteed invoice cap.
+
+### 9.4 No other fixed agent quotas
+
+There are no fixed product limits for:
+- Two active tasks globally.
+- Three assignments per plan.
+- Ten model requests per task.
+- A fixed number of retry or repair attempts.
+
+An agent stops when it finishes, fails without a useful recovery path, is canceled, reaches its token budget, or reaches its deadline. Invalid model output never executes simply because retries remain possible.
+
+Manual retry is explicit. It creates a new attempt and fresh execution instances, while preserving each logical agent’s task-scoped token budget and accumulated usage. Neither manual nor automatic retry resets that budget.
+
+## 10. Review and Git publication
+
+### 10.1 Inputs to a review
+
+After required agents finish, capture:
+- A: current approved main.
+- L: current live human-draft checkpoint.
+- G: integrated agent result head.
+- V: task requirements version.
+- R: current document revision map.
+- C: source/context manifest.
+
+For a manual-edit task, G is absent.
+
+Prepare:
+1. A combined private draft H from human changes L and agent result G.
+2. A final candidate M combining H with current approved main A.
+
+All combination happens in temporary review worktrees. Neither main nor live Yjs state is modified.
+
+The review stores the exact source tuple and candidate M.
+
+### 10.2 Conflicts
+
+Handle both:
+- Human draft versus agent result.
+- Combined task result versus current approved files.
+
+Show which sources conflict. “Current” must identify whether it means the human draft or approved workspace; never label both simply “ours.”
+
+For each file:
+- Show each version.
+- Allow whole-file selection.
+- Optionally accept a manually edited resolution.
+- Permit requesting an agent revision.
+
+Validate that Git has no unresolved index entries before making the resolved candidate reviewable. A search for conflict-marker text is not sufficient.
+
+A conflict resolution creates a new candidate. It never changes the previously approved candidate in place.
+
+### 10.3 Owner apply
+
+Apply takes a review ID and the browser-held owner key.
+
+Under the short workspace/task gates:
+1. Validate the owner key.
+2. Confirm task version V and captured source/context revisions are still current.
+3. Confirm no human document has accepted newer edits or remains dirty relative to R.
+4. Confirm current approved main is A and agent result is G.
+5. Record a pending apply operation bound to candidate M.
+6. Update main only if it still equals A.
+7. Mark the operation/task applied and close the task's editing rooms.
+
+Use Git's guarded ref update:
+
+```text
+git update-ref refs/heads/main <candidate-M> <expected-main-A>
+```
+
+A changed main rejects the update. New human typing or new agent output also makes the review stale before application.
+
+One commit updates all task files together. Owner approval applies to a specific result, not future edits.
+
+Git supports old-value checks in ref updates; the source/version and live-document checks are application responsibilities. [Git update-ref](https://git-scm.com/docs/git-update-ref)
+
+### 10.4 Evidence
+
+The review includes:
+- Real changed-file and diff data.
+- Source material references and captured versions.
+- Agent summaries labeled as generated.
+- Structural/path checks actually performed.
+- AI review findings.
+- Explicit notice that generated code was not executed.
+
+Each AI finding identifies the snapshot it examined. If the combined candidate includes newer human edits or approved-workspace changes, label the earlier finding accordingly; do not imply the AI reviewed the new content. The owner reviews the exact combined candidate. A fresh AI assessment can be requested as an explicit assignment with its own recorded snapshot.
+
+Server-generated work logs use unique task/run paths. Agents cannot forge approval metadata or write a test-pass indicator by saying “tests passed.”
+
+Task discussion and live keystrokes are not committed one event at a time. Git stores meaningful file checkpoints and published results.
+
+### 10.5 Basic duplicate protection
+
+Git and PostgreSQL do not share a transaction.
+
+Store one pending apply operation per review before changing the ref. On a repeated request or restart, inspect main:
+- If candidate M is already applied, mark success without applying again.
+- If main is still A, require normal freshness/owner checks before retry.
+- If the situation is ambiguous, stop and show an interrupted operation.
+
+Once the Git update succeeds, close the task's editing rooms in memory before releasing the document gate, even if the subsequent database status write fails. A pending operation is reconciled before that task can become writable again.
+
+This small reconciliation check is retained because duplicate application would break the core review behavior. It is not a general recovery framework.
+
+## 11. Database and storage
+
+### 11.1 Minimal relational model
+
+Use PostgreSQL migrations and typed queries. Supabase hosts the data; all application mutations go through the Node API.
+
+| Table | Main fields | Purpose |
+|---|---|---|
+| workspaces | id, name, purpose, owner_key_hash, guidance, guidance_version, status | Anonymous workspace and creator control |
+| tasks | id, workspace_id, kind, manual_source_path nullable, creator_guest_label, title, outcome, criteria, version, status, active_run_id | Posted work and current lifecycle |
+| task_input_links | task_id, material_id or draft_file_id or approved_path, source_version | Explicit selected inputs |
+| discussion_entries | id, task_id, guest_label, actor_type, body, client_request_id, created_at | Discussion inside a task only |
+| materials | id, workspace_id, filename, object_key, sha256, byte_size, guest_label, deleted_at | Immutable reference metadata |
+| material_links | material_id, workspace_id, task_id nullable, discussion_entry_id nullable | Reuse references without copying |
+| draft_files | id, task_id, path, epoch, base_blob_sha, yjs_state, state_vector, persisted_revision, status | Live document persistence |
+| draft_checkpoints | id, task_id, commit_sha, document_revisions, created_at | Binding from persisted collaborative state to Git |
+| runs | id, task_id, attempt, task_version, input_snapshot_sha, context_manifest, result_head_sha, boot_id, status | Explicit execution attempt |
+| task_agent_budgets | task_id, agent_key, token_budget, consumed_tokens, reserved_tokens | One cumulative budget per task-and-agent pair; unique (task_id, agent_key), retained across attempts |
+| agent_instances | id, run_id, task_id, agent_key, assignment_key, preset, model_id, status, base_sha, result_sha, started_at, deadline_at | Per-attempt agent work and deadline; references its task_agent_budgets row |
+| agent_dependencies | agent_id, prerequisite_agent_id | Validated execution graph |
+| model_calls | id, agent_id, request_key, provider_request_id, reserved_tokens, reported_usage, status | Usage and retry accounting |
+| task_events | id, task_id, run_id nullable, event_key, type, payload, created_at | Durable progress and refresh source |
+| reviews | id, task_id, task_version, guidance_version, main_sha, human_sha, result_sha, document_revisions, context_hash, candidate_sha, status | Exact candidate and source tuple |
+| apply_operations | id, review_id unique, expected_main_sha, candidate_sha, status, created_at | Duplicate protection and minimal reconciliation |
+
+There are no user accounts, membership tables, invitation redemption records, or participant directories.
+
+Contributor IDs/labels may be stored on discussion records for display continuity. Guests edit their browser-local label; new records capture the current label, and live cursor awareness publishes it. They are not permission credentials.
+
+Reserve and reconcile model-call usage atomically against task_agent_budgets, resolving each call through its agent instance. Creating a retry instance reuses the existing budget row; it never zeroes usage or outstanding reservations.
+
+### 11.2 Constraints
+
+- Unique active run per task.
+- Unique assignment key per run.
+- Unique dependency pair; no self-dependency.
+- Unique task/path for active draft files.
+- Partial unique workspace/manual_source_path for manual-edit tasks that have not reached a terminal state.
+- Unique client request ID within the relevant task operation scope.
+- Unique review ID in apply_operations.
+- Scoped foreign keys or explicit checks preventing a material from workspace A being attached to workspace B.
+- Agent state transition checks: a terminal/expired instance cannot write.
+- Review status cannot become applied from stale/conflict/building.
+
+The dependency graph is validated before dispatch. Do not rely only on foreign keys to prevent cycles.
+
+### 11.3 Revisions and live state
+
+The server increments live document revisions as it accepts edits. PostgreSQL stores the last persisted revision. Prepare/Apply reads both the live state and persisted checkpoint, not just a stale database row.
+
+Use ordered per-document saves or a revision guard so an older snapshot cannot overwrite a newer one after an asynchronous write completes late.
+
+Persist full Yjs binary state and its state vector. Plain text alone cannot reconstruct the full collaborative operation history.
+
+### 11.4 Supabase access
+
+Keep database/storage service credentials on the server. Browser clients do not directly mutate tables or storage objects.
+
+Disable direct public table access with ordinary database policies. API routes resolve the random workspace ID and validate object ownership by workspace. There is no per-person access policy.
+
+Object keys are generated from workspace/material IDs. Do not expose a public bucket index. API retrieval requires the workspace link's ID and a material associated with that workspace; it does not require a login.
+
+Supabase Realtime can use the browser's publishable key for public refresh channels. Never expose the server's database or storage service key.
+
+### 11.5 Events
+
+Persist task events before broadcasting their IDs. Example event types:
+- task.posted
+- task.started
+- task.requirements_changed
+- agent.started
+- agent.waiting
+- agent.completed
+- agent.timed_out
+- agent.token_exhausted
+- draft.checkpointed
+- review.ready
+- review.stale
+- task.applied
+
+Use deterministic event keys where an operation may repeat. A broadcast is a hint to refetch; duplicate/missed broadcasts do not change authoritative state.
+
+Task discussion entries persist independently of event delivery. A browser reconnect fetches current task state and recent discussion. Workspace guidance changes and removal of selected materials invalidate affected pending reviews; compare the stored guidance version and material availability again at Apply.
+
+## 12. API and component contracts
+
+### 12.1 Public workspace/task routes
+
+| Route | Operation |
+|---|---|
+| POST /api/workspaces | Create workspace and return contribution URL plus owner key once |
+| GET /api/workspaces/:w | Read this linked workspace |
+| PATCH /api/workspaces/:w | Update name/guidance; owner key required |
+| POST /api/workspaces/:w/tasks | Post task only |
+| PATCH /api/workspaces/:w/tasks/:t | Update posted requirements using expected version |
+| POST /api/workspaces/:w/tasks/:t/start | Explicitly capture input and start agents |
+| POST /api/workspaces/:w/tasks/:t/cancel | Stop current execution |
+| POST /api/workspaces/:w/tasks/:t/retry | Explicit new attempt from saved context/checkpoints |
+| GET/POST /api/workspaces/:w/tasks/:t/discussion | Read/add task-local entries |
+| POST /api/workspaces/:w/tasks/:t/answer | Submit answer to a pending agent question |
+| POST /api/workspaces/:w/materials | Upload workspace reference |
+| POST /api/workspaces/:w/tasks/:t/material-links | Attach existing reference to task or its discussion |
+| GET /api/workspaces/:w/materials/:m | Read/download linked material |
+| POST /api/workspaces/:w/drafts/open | Create/find manual-edit task and document |
+| POST /api/workspaces/:w/tasks/:t/checkpoint | Flush live documents to a Git checkpoint |
+| POST /api/workspaces/:w/tasks/:t/review | Prepare combined candidate |
+| POST /api/workspaces/:w/reviews/:r/resolve | Create candidate with chosen conflict resolutions |
+| POST /api/workspaces/:w/reviews/:r/apply | Apply exact candidate; owner key required |
+| GET /api/workspaces/:w/files | Approved tree |
+| GET /api/workspaces/:w/history | Applied versions |
+
+There is no public endpoint returning a list of all workspaces.
+
+The same workspace/object checks apply to WebSocket room resolution. A caller cannot pass an arbitrary room name that opens a filesystem path.
+
+### 12.2 Owner key
+
+Send the owner key in a request header for owner operations. The server compares its hash against the workspace record. Do not accept an isOwner flag, guest label, or claimed creator ID instead.
+
+The normal contribution URL contains no owner secret. A browser with an owner key still uses the ordinary link for navigation.
+
+This is the only person-related privilege distinction in the MVP.
+
+### 12.3 Shared interfaces
+
+```typescript
+interface PostedTask {
+  id: string;
+  workspaceId: string;
+  kind: "agent_task" | "manual_edit";
+  title: string;
+  outcome: string;
+  criteria: string[];
+  version: number;
+  status: TaskStatus;
+}
+
+interface TextChange {
+  path: string;
+  expectedHash: string | null;
+  newText: string | null;
+}
+
+interface DraftCapture {
+  taskId: string;
+  checkpointSha: string;
+  documentRevisions: Record<string, number>;
+  contextHash: string;
+}
+
+interface AgentPlan {
+  summary: string;
+  assignments: Array<{
+    id: string;
+    preset: "analyst" | "writer" | "coder" | "reviewer";
+    dependsOn: string[];
+    writePaths: string[];
+    instruction: string;
+  }>;
+}
+
+interface ReviewSource {
+  taskVersion: number;
+  guidanceVersion: number;
+  mainSha: string;
+  humanSha: string;
+  resultSha: string | null;
+  documentRevisions: Record<string, number>;
+  contextHash: string;
+}
+```
+
+Validate external inputs and model outputs with Zod. TypeScript types alone do not validate runtime data.
+
+### 12.4 Internal services
+
+| Service | Public methods within backend |
+|---|---|
+| WorkspaceService | create, resolve, checkOwnerKey, updateGuidance |
+| TaskService | post, revise, start, answer, cancel, retry |
+| MaterialService | upload, link, readSelected |
+| CollaborationService | openRoom, persist, capture, isCurrent, closeEpoch |
+| GitService | initialize, createDraft, createWorker, checkpoint, integrate, buildReview, applyExpected |
+| AgentService | plan, dispatchReady, execute, recordUsage, enforceDeadline |
+| ReviewService | prepare, resolve, invalidate, apply |
+| EventService | append, broadcastHint |
+
+TaskService.start calls CollaborationService.capture before AgentService.plan. ReviewService.apply checks CollaborationService.isCurrent before GitService.applyExpected.
+
+### 12.5 Error codes
+
+Use predictable API errors:
+- WORKSPACE_NOT_FOUND
+- OWNER_KEY_REQUIRED
+- TASK_VERSION_CHANGED
+- TASK_ALREADY_RUNNING
+- INPUT_CONFLICT
+- INVALID_PATH
+- FILE_VERSION_CHANGED
+- DOCUMENT_EPOCH_CLOSED
+- DRAFT_NOT_SAVED
+- REVIEW_STALE
+- REVIEW_CONFLICT
+- AGENT_TIMED_OUT
+- AGENT_TOKEN_EXHAUSTED
+- RUN_INTERRUPTED
+
+These map to actionable UI states, not generic failure banners.
+
+## 13. File operations and publication boundaries
+
+### 13.1 Scoped writes
+
+Agents can propose changes only within their assignment's exact permitted paths. A path must resolve within that worker's worktree and permitted documents/ or code/ directory.
+
+The server rejects:
+- Parent traversal and absolute paths.
+- Symlinks and special files.
+- Git metadata, hooks, .gitattributes, .gitmodules, and server-owned logs.
+- Unsupported binary or invalid UTF-8 content.
+- A changed expected file hash.
+- Any write from an expired, canceled, or superseded instance.
+
+Batch validation occurs before applying edits. Keep the previous checkpoint until a full accepted batch is committed.
+
+### 13.2 Generated code remains inert
+
+The only processes launched by this system are its trusted infrastructure operations, including fixed Git commands. Agents have no program-execution tool.
+
+Invoke Git using argument arrays with shell execution disabled. Use server-controlled refs, controlled configuration, disabled hooks, and no external merge/diff drivers supplied by workspace files.
+
+Workspace owners cannot grant a terminal because no such feature exists in this MVP.
+
+### 13.3 Display safety
+
+Markdown preview uses raw HTML disabled and safe URL handling. Code and uploaded HTML render as text. Do not load remote images automatically.
+
+Owner keys, model keys, Supabase service credentials, and internal filesystem locations never enter document context or generated work logs.
+
+### 13.4 Multi-file consistency
+
+Git main is the publication unit. If a task changes a guide and sample code together, Apply updates their complete candidate commit at once.
+
+Yjs snapshots and task status are not published deliverable content. The file viewer resolves approved bytes from Git main or a requested immutable version.
+
+## 14. Minimal recovery
+
+### 14.1 What is preserved
+
+- Live edits acknowledged as saved in Supabase.
+- Git checkpoints already committed.
+- Posted requirements and task discussion.
+- Completed worker outputs.
+- Recorded model usage and agent terminal state.
+- The one pending apply record needed to avoid duplicate publication.
+
+### 14.2 Failure behavior
+
+| Failure | Behavior |
+|---|---|
+| Gemini error | Show failed/incomplete, retain accepted edits, offer manual retry |
+| Fixed timeout | Mark that agent timed_out; reject late writes; retain saved work |
+| Token exhaustion | Mark token_exhausted; keep checkpoint and usage |
+| Browser reconnect | Reload saved task state and synchronize active document epoch |
+| Server restart | Restore saved Yjs snapshots; mark active agents/runs interrupted |
+| Lost apply response | Reconcile the recorded candidate against Git main |
+| Failed checkpoint | Keep document in saving/error state; do not claim checkpoint success |
+
+No transparent agent continuation, failover, distributed recovery, or ownership recovery is implemented.
+
+### 14.3 Manual retry
+
+Retry creates a new explicit attempt:
+- Keep earlier attempts and checkpoints.
+- Use the current task version.
+- Capture the current shared draft.
+- Let the user select saved output as input if needed.
+- Create new execution instances with fresh ten-minute deadlines, reusing the same task-and-agent budget rows and accumulated usage. An exhausted budget remains exhausted on retry.
+
+Do not blindly rerun an old tool call after a crash. A new agent works from saved artifacts and proposes new validated changes.
+
+### 14.4 Startup
+
+A single startup routine:
+1. Assigns the process a new boot ID.
+2. Marks nonterminal agent instances from a previous boot interrupted.
+3. Loads document snapshots on demand.
+4. Reconciles pending apply operations.
+5. Accepts new task actions.
+
+Every active write checks its run/boot identity so a superseded attempt cannot apply a late result.
+
+## 15. Component ownership
+
+Four people own distinct implementation surfaces.
+
+| Role | Owns |
+|---|---|
+| A — Frontend and collaborative UX | Pages, task posting/discussion, editor binding, previews, review interaction |
+| B — Supabase and application data | Schema, anonymous workspaces, materials, task APIs, snapshot persistence, realtime events |
+| C — Gemini orchestration | Model adapter, per-task per-agent budgets and per-instance deadlines, planning graph, parallel dispatch, worker behavior |
+| D — Git and live-runtime integration | Git branches, Yjs room service, checkpoint bridge, worker integration, candidate/apply, runtime persistence |
+
+This allocation has no time estimates. Dependencies identify the order in which implementations can be connected.
+
+### 15.1 Source layout
+
+| Path | Owner |
+|---|---|
+| apps/web/src/pages and components | A |
+| apps/web/src/editor | A |
+| apps/server/src/workspaces, tasks, discussion, materials | B |
+| apps/server/src/db and events | B |
+| apps/server/src/models, orchestration, agents | C |
+| apps/server/src/git, collaboration, reviews, recovery | D |
+| packages/contracts | B, consumed by all roles |
+| db/migrations | B |
+| deployment/runtime configuration | D |
+
+## 16. Individually scoped implementation tasks
+
+Every row is a single-owner work package. “Expected behavior” defines what that component must do and can be checked in isolation or against the listed prerequisites. It is not a separate release checklist.
+
+### 16.1 Role B — Supabase and application data
+
+| ID | Task | Depends on | Deliverable and expected behavior |
+|---|---|---|---|
+| B01 | Shared schema and contracts | None | SQL tables, runtime schemas, error/status enums, and service interfaces. Posting, starting, live checkpointing, and review have distinct contracts |
+| B02 | Anonymous workspace creation | B01 | Create/resolve workspace API, generated contribution link, owner-key hashing, owner-only guidance updates. No account, membership, or invitation workflow |
+| B03 | Posted tasks and task discussion | B02 | Post/revise/start request storage, discussion entries/attachments, idempotency, expected-version checks. Posting invokes no model; duplicate Start cannot create two active attempts |
+| B04 | Workspace/task materials | B03 | Shared upload/read/link implementation backed by Supabase Storage. Immutable IDs/hashes; workspace and task entry points reuse bytes |
+| B05 | Collaborative snapshot persistence | B01, B03 | Store/load Yjs binary state, state vectors, document epochs, and guarded revisions. Older saves cannot overwrite newer snapshots |
+| B06 | Task events and realtime refresh | B03 | Durable task events and Supabase Broadcast hints. Browser refetch remains authoritative; repeated hints do not duplicate entries |
+| B07 | Review/run metadata operations | B03, B05 | Run snapshots, agent/usage records, source tuples, and unique pending apply records with transactional updates. No direct browser DB writes |
+| B08 | Data integration and focused checks | B04, B06, B07, C07, D07 | Verify workspace/object scoping, owner-key isolation, material reuse, version guards, and discussion persistence across refresh |
+
+### 16.2 Role D — Git and live runtime
+
+| ID | Task | Depends on | Deliverable and expected behavior |
+|---|---|---|---|
+| D01 | Persistent runtime and Git initialization | B01 | Node runtime with persistent Git path, one repository per workspace, server-created initial main. Existing repositories survive process restart |
+| D02 | Draft/worker branches and safe file API | D01, B02 | Human, worker, and result branch/worktree creation; scoped reads/writes; expected hashes; checkpoint commits. One worker cannot write another's files |
+| D03 | Yjs room server | D02, B05 | Reused WebSocket protocol, shared room initialization, awareness, persistence hooks, revision tracking, closed-epoch rejection. Two clients use one initialized document |
+| D04 | Live draft to Git capture | D03 | Short document gate, save acknowledgement boundary, text export, checkpoint and revision map. Start/review capture accepted edits without resetting editor state |
+| D05 | Parallel worker-result integration | D02, B07 | Serialized integration of completed worker branches into the result branch; conflict metadata; dependency-ready result SHAs. Live human text and main are unchanged |
+| D06 | Combined review candidates | D04, D05, B07 | Combine human, agent, and current approved versions; diff/preview endpoints; whole-file/manual resolution. Candidate retains exact source tuple |
+| D07 | Owner apply and stale-review handling | D06, B02 | Owner-key check, live revision guard, source-SHA checks, guarded Git main update, duplicate apply protection, room closure. New typing makes old review unusable |
+| D08 | Minimal restart/retry support | D07, C06 | Restore snapshots/checkpoints, mark previous attempts interrupted, reconcile pending applies, reject late run results. No automatic workflow replay |
+
+### 16.3 Role C — Gemini orchestration
+
+| ID | Task | Depends on | Deliverable and expected behavior |
+|---|---|---|---|
+| C01 | Gemini adapter and backend model routing | B01 | Google GenAI SDK integration, orchestrator/worker model IDs, normalized responses, preserved provider state, test adapter. No frontend model controls |
+| C02 | Per-task per-agent usage and fixed deadline | C01, B07 | Exact-input counting, atomic task-and-agent reservations, usage reconciliation, fixed 600-second deadline, late-result rejection. All retries retain the task-and-agent budget; automatic retries also retain the instance deadline. Verify independent budgets across tasks and retained usage across attempts |
+| C03 | Orchestrator plan and graph validation | C01, B03 | Structured assignments, dependencies, preset/write-scope validation, cycle checks, overlapping-write ordering. No fixed step-count limit |
+| C04 | Worker tools and checkpoints | C02, C03, D02, B04 | Scoped reads, source references, text proposals, questions, completion. Workers cannot invoke shell/Git directly or edit live Yjs content |
+| C05 | Parallel assignment scheduler | C04, D05 | Dispatch ready independent workers, wait on prerequisites, integrate results, expose provider backoff. No global two-task product cap |
+| C06 | Explicit Start and captured context | C05, D04, B03 | Capture current requirements/materials/discussion/draft; create run and planning instance; handle conflicting start snapshots. Posting alone remains inert |
+| C07 | Reviewer, evidence, and review handoff | C06, D06 | Reviewer assignment against combined outputs, factual event log, work-log generation, ready/incomplete results, request-revision handoff. Generated claims remain distinguishable |
+| C08 | Manual retries and agent failure cases | C07, D08 | Retry as explicit new attempt; saved inputs retained; failure/timeout/unknown usage/cancellation exercised with a test adapter and representative real calls |
+
+### 16.4 Role A — Frontend and collaborative UX
+
+| ID | Task | Depends on | Deliverable and expected behavior |
+|---|---|---|---|
+| A01 | Workspace/task UI shell | B01 | Navigation, task board, requirement form, empty/loading states using contract-shaped fixtures. No account pages or participant directory |
+| A02 | Guest workspace and owner controls | A01, B02 | Guest creation, direct contribution-link entry, local owner-key handling, owner-only controls, editable browser-local guest names, live cursor name updates. Shared URL contains no owner key |
+| A03 | Simultaneous editor binding | A02, D03 | Monaco/Yjs binding, shared cursors, persistence-aware saved state, Markdown preview, reconnect handling. Two browsers see each other's live edits |
+| A04 | Task posting, discussion, and materials | A02, B03, B04 | Post task form, editable criteria, task-local discussion and attachments, separate Start action. Requirements can be discussed before any agent call |
+| A05 | Execution and agent progress | A04, C06, B06 | Start/stop/answer/retry actions, assignment dependencies, parallel progress, token/deadline states. Model settings are absent |
+| A06 | Review and conflict UI | A03, A05, C07, D07 | Combined diff/preview, source labels, explicit conflict resolution, owner Apply, stale review refresh. Continued typing is reflected as staleness |
+| A07 | Files and manual collaborative drafts | A03, A04, D04 | Approved/reference views, Edit together flow, shared manual-edit task, checkpoint and request-review actions. Human-only edits can be reviewed without starting agents |
+| A08 | Cross-flow UI integration | A06, A07, B08, C08, D08 | Connect late-edit handling, closed-document epochs, saved-work retries, owner-key loss state, and multi-file approved results without adding new feature surfaces |
+
+## 17. Dependency map
+
+The ticket tables define the exact prerequisite graph. This map groups related handoffs for readability.
+
+```mermaid
+flowchart TD
+    FOUNDATION["B01–B03: Data and task contracts"]
+    INPUTS["B04–B07: Materials, snapshots, events"]
+    BRANCHES["D01–D02: Git workspaces"]
+    LIVE["D03–D04 and A03: Shared editing"]
+    MODELS["C01–C04: Gemini and tools"]
+    INTEGRATE["D05 and C05: Parallel results"]
+    START["C06: Explicit task execution"]
+    REVIEW["D06–D07 and C07: Review and apply"]
+    UI["A04–A07: Task and file flows"]
+    RECOVERY["D08 and C08: Minimal recovery"]
+    CONNECT["A08 and B08: Integrated behavior"]
+    FOUNDATION --> INPUTS
+    FOUNDATION --> BRANCHES
+    FOUNDATION --> MODELS
+    INPUTS --> LIVE
+    BRANCHES --> LIVE
+    BRANCHES --> MODELS
+    INPUTS --> MODELS
+    MODELS --> INTEGRATE
+    BRANCHES --> INTEGRATE
+    LIVE --> START
+    INTEGRATE --> START
+    LIVE --> REVIEW
+    INTEGRATE --> REVIEW
+    START --> REVIEW
+    START --> UI
+    REVIEW --> UI
+    REVIEW --> RECOVERY
+    UI --> CONNECT
+    RECOVERY --> CONNECT
+```
+
+The most coupled implementation boundary is between live document capture, agent result integration, and exact review application. Their shared inputs are the human checkpoint, agent-result SHA, approved main SHA, task version, and document revision map. Those values must remain consistent across the editor, API, and Git service.
