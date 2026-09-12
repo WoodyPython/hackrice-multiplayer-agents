@@ -1,5 +1,5 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
-import { ZodError, type ZodType } from 'zod';
+import { ZodError, type ZodTypeAny, type infer as ZodInfer } from 'zod';
 import { ApiError } from '@app/contracts';
 
 /**
@@ -10,8 +10,15 @@ import { ApiError } from '@app/contracts';
  * error codes plus, where the UI can act on it, machine-readable details.
  */
 
-/** Parses `value` or throws VALIDATION_FAILED carrying per-field messages. */
-export function parseOrThrow<T>(schema: ZodType<T>, value: unknown): T {
+/**
+ * Parses `value` or throws VALIDATION_FAILED carrying per-field messages.
+ *
+ * Generic over the SCHEMA, not over its output type. A schema carrying
+ * `.default()` or `.refine()` has different input and output types, and binding
+ * the parameter as `ZodType<T>` makes inference pick the input one — so every
+ * field with a default comes back optional and every call site fails.
+ */
+export function parseOrThrow<S extends ZodTypeAny>(schema: S, value: unknown): ZodInfer<S> {
   const result = schema.safeParse(value);
   if (result.success) return result.data;
   throw validationError(result.error);

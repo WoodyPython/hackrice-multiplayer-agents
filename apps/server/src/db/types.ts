@@ -72,6 +72,7 @@ export interface TasksTable {
   status: Generated<TaskStatus>;
   active_run_id: string | null;
   discussion_seq: Generated<number>;
+  client_request_id: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }

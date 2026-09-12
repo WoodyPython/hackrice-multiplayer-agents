@@ -53,6 +53,7 @@ describe('migrations', () => {
       '0002_tables.sql',
       '0003_indexes.sql',
       '0004_rls.sql',
+      '0005_task_idempotency.sql',
     ]);
   });
 

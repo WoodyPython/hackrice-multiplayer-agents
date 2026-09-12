@@ -2,14 +2,19 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
+  NullOrchestrationHook,
   NullWorkspaceLifecycleHook,
   OWNER_KEY_HEADER,
+  type OrchestrationHook,
   type WorkspaceLifecycleHook,
 } from '@app/contracts';
 import type { AppConfig } from '../config.js';
 import type { Db } from '../db/client.js';
 import { PgWorkspaceService } from '../workspaces/service.js';
 import { registerWorkspaceRoutes } from '../workspaces/routes.js';
+import { PgDiscussionService } from '../discussion/service.js';
+import { PgTaskService } from '../tasks/service.js';
+import { registerTaskRoutes } from '../tasks/routes.js';
 import { registerErrorHandler } from './errors.js';
 
 /**
@@ -30,6 +35,8 @@ export interface AppDeps {
   config: AppConfig;
   /** Role D implements this in D01. Defaults to a no-op recorder. */
   lifecycle?: WorkspaceLifecycleHook;
+  /** Role C implements this in C06. Defaults to a no-op recorder. */
+  orchestration?: OrchestrationHook;
   /**
    * Capture log output instead of writing to stdout. Exists so the redaction
    * rules below can be asserted rather than assumed: a test drives an owner
@@ -136,6 +143,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       timeWindow: config.WORKSPACE_CREATE_WINDOW,
     },
   });
+
+  const discussion = new PgDiscussionService({ db: deps.db });
+  const tasks = new PgTaskService({
+    db: deps.db,
+    bootId: config.bootId,
+    orchestration: deps.orchestration ?? new NullOrchestrationHook(),
+    onOrchestrationError: (error, runId) => {
+      // The Start response has already been sent. C06 is responsible for ending
+      // the run in a terminal state with an event saying why; this only records
+      // that the handoff itself threw.
+      app.log.error({ err: error, runId }, 'orchestration hook failed');
+    },
+  });
+
+  await registerTaskRoutes(app, { tasks, discussion });
 
   return app;
 }

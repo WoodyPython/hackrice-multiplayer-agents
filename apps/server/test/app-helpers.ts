@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
-import { NullWorkspaceLifecycleHook } from '@app/contracts';
+import { NullOrchestrationHook, NullWorkspaceLifecycleHook } from '@app/contracts';
 import type { AppConfig } from '../src/config.js';
 import { BOOT_ID } from '../src/config.js';
 import { buildApp } from '../src/http/app.js';
@@ -51,6 +51,7 @@ export interface TestApp {
   app: FastifyInstance;
   handle: DbHandle;
   lifecycle: NullWorkspaceLifecycleHook;
+  orchestration: NullOrchestrationHook;
   logs: LogCapture | undefined;
   close(): Promise<void>;
 }
@@ -61,12 +62,14 @@ export async function buildTestApp(options: {
 } = {}): Promise<TestApp> {
   const handle = connectTestDb();
   const lifecycle = new NullWorkspaceLifecycleHook();
+  const orchestration = new NullOrchestrationHook();
   const logs = options.captureLogs ? new LogCapture() : undefined;
 
   const app = await buildApp({
     db: handle.db,
     config: testConfig(options.config),
     lifecycle,
+    orchestration,
     ...(logs ? { logStream: logs } : {}),
   });
   await app.ready();
@@ -75,6 +78,7 @@ export async function buildTestApp(options: {
     app,
     handle,
     lifecycle,
+    orchestration,
     logs,
     async close() {
       await app.close();
