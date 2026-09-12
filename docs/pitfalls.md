@@ -39,6 +39,30 @@ The permissive schema also defaulted missing dependency arrays, which could
 silently drop a model's misspelled `depends_on`. Provider plans now use a strict
 schema with required camelCase arrays before any graph checks or persistence.
 
+## The intermittent suite failure is a Git test timing out
+
+**Identified during B06.** A full-suite failure appeared roughly once in
+seventeen runs and could not be reproduced. Forty runs of the database suites on
+an isolated database found nothing, because it is not there.
+
+It is `git-files.test.ts > commits create/replace/delete batches and keeps every
+other branch isolated`, failing with `Test timed out in 30000ms` — not an
+assertion. The Git suites do real filesystem and subprocess work, which on
+Windows has a wide and unpredictable tail: handle release, antivirus scanning,
+and process spawn all vary run to run.
+
+`testTimeout: 30_000` lives in the shared `apps/server/vitest.config.ts`, so the
+limit is a Role B setting applied to a Role D test. Raising it is one line and
+would make the symptom go away. Worth a look first at whether a single test
+needing tens of seconds is telling us something — a per-test timeout on the Git
+suites is probably the honest fix rather than relaxing the bar for everything.
+
+**The general lesson:** an intermittent failure with no assertion message is a
+timeout until proven otherwise, and a timeout points at the slowest thing in the
+suite rather than at whatever changed most recently.
+
+---
+
 ## An expiry that rolled back, and opposite lock orders
 
 **C02, question answers.** The answer path updated an expired question and then

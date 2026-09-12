@@ -402,6 +402,8 @@ Yjs's WebSocket provider handles document updates and awareness, and its server 
 
 Supabase Broadcast is the notification transport, not the authoritative document or task store. [Supabase Broadcast](https://supabase.com/docs/guides/realtime/broadcast)
 
+A realtime project is optional at runtime. Where none is configured the server reports that fact, and the client falls back to the polling the frontend stack already provides. Durable events remain the authoritative progress record either way, so the difference is latency rather than correctness, and local development needs no hosted service to exercise the whole flow.
+
 ### 5.2 Backend-only model routing
 
 Initial model choices:
@@ -1022,6 +1024,12 @@ Persist task events before broadcasting their IDs. Example event types:
 
 Use deterministic event keys where an operation may repeat. A broadcast is a hint to refetch; duplicate/missed broadcasts do not change authoritative state.
 
+The ordering is read out of the event table rather than asked of each caller. Events are appended inside whatever transaction produced them, and a separate sweep broadcasts rows newer than the position it last reached. A transaction that rolls back leaves no row and therefore announces nothing, which is a property of the arrangement rather than of every author remembering to place a broadcast after commit. Appending stays a plain database operation, so no component needs a transport in order to record what it did.
+
+The sweep begins from the newest existing event rather than from the beginning. Replaying a workspace's history on startup would produce a burst of refetches for changes every connected browser already has, and a missed hint costs nothing.
+
+A hint carries the workspace, the task, the event type and the event id. Not the event payload: the payload is readable through the API by anyone entitled to it, and a channel that any link holder can read is the wrong place to widen that.
+
 Task discussion entries persist independently of event delivery. A browser reconnect fetches current task state and recent discussion. Workspace guidance changes and removal of selected materials invalidate affected pending reviews; compare the stored guidance version and material availability again at Apply.
 
 ## 12. API and component contracts
@@ -1053,6 +1061,8 @@ Task discussion entries persist independently of event delivery. A browser recon
 | POST /api/workspaces/:w/tasks/:t/review | Prepare combined candidate |
 | POST /api/workspaces/:w/reviews/:r/resolve | Create candidate with chosen conflict resolutions |
 | POST /api/workspaces/:w/reviews/:r/apply | Apply exact candidate; owner key required |
+| GET /api/workspaces/:w/tasks/:t/events | Durable progress record, cursor-paginated |
+| GET /api/workspaces/:w/realtime | Channel name plus the publishable realtime location, or null when unconfigured |
 | GET /api/workspaces/:w/files | Approved tree |
 | GET /api/workspaces/:w/history | Applied versions |
 
