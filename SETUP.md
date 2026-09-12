@@ -16,7 +16,7 @@ Install these three. Nothing else.
 |---|---|---|
 | **Node.js** | **22 or newer** | The codebase is ESM with `NodeNext` module resolution and runs TypeScript directly through `tsx`. Node 20 fails on module resolution with a confusing error |
 | **Docker Desktop** | any current | This is how you get PostgreSQL. See below |
-| **Git** | any | — |
+| **Git** | **2.29 or newer** | Bare repositories with explicit main branch and SHA-1 format |
 
 Check:
 
@@ -94,11 +94,12 @@ Applied 4 migration(s).
 npm test
 ```
 
-**Expected: `Tests 162 passed (162)`.**
+**Expected: all tests pass, including the D01 Git and runtime checks.**
 
-This is the real check. Those 162 tests exercise every uniqueness rule, foreign
+This is the real check. The suite exercises every uniqueness rule, foreign
 key, and check constraint in the schema against a live PostgreSQL, plus the
-workspace API: owner-key isolation, log redaction, and version guards. If they all
+workspace API: owner-key isolation, log redaction, and version guards, plus D01's
+persistent repositories and runtime lifecycle. If they all
 pass, your environment matches everyone else's. If they don't, stop and fix it
 before writing code — don't work around it.
 
@@ -139,6 +140,8 @@ wanders outside their own, merge conflicts should be near zero.
 |---|---|
 | `apps/web/**` | A |
 | `apps/server/src/{workspaces,tasks,discussion,materials,db,events}` | B |
+| `apps/server/src/http`, `apps/server/src/config.ts` | B |
+| `apps/server/src/index.ts`, deployment/runtime configuration | D |
 | `apps/server/src/{models,orchestration,agents}` | C |
 | `apps/server/src/{git,collaboration,reviews,recovery}` | D |
 | `packages/contracts`, `db/migrations` | B (everyone consumes) |
@@ -257,6 +260,63 @@ database doesn't match the schema, and anything you build on it is built wrong.
 | `npm run db:status` | Show applied / pending / drifted |
 | `npm test` | Run the suite |
 | `npm run build` | Typecheck and build both packages |
+| `npm run dev` | Start the server with TypeScript watch/restart |
+| `npm start` | Start the compiled server after building |
+| `npm run test:git --workspace @app/server` | Run D01's Git tests without PostgreSQL |
 
 After any `git pull`, run `npm install && npm run db:migrate` — someone may have
 added a dependency or a migration.
+
+## D01 runtime
+
+Use Node.js 22+ and Git 2.29+ (D01 uses explicit initial-branch and SHA-1
+object-format options). On Windows PowerShell, use `npm.cmd` in place of `npm`
+if the execution policy blocks `npm.ps1`.
+
+From the repository root, configure `.env`, start the database, apply migrations,
+then run `npm run dev`. For the compiled runtime, run `npm run build` followed by
+`npm start`. Root and server-workspace scripts both load the repository-root
+`.env`; environment variables supplied by the host take precedence. Blank
+optional Supabase/Gemini values in the template are treated as unset.
+
+The server binds `0.0.0.0:PORT` (default 3000). `GET /health` returns
+`{ "status": "ok", "bootId": "..." }`; the boot ID changes with each process.
+Startup checks Git, writable storage, and database connectivity before listening.
+It does not apply migrations automatically.
+
+`GIT_DATA_ROOT=./data` resolves relative to the repository root, even when npm
+runs inside `apps/server`. Absolute paths are also supported. The runtime creates:
+
+- `repos/<workspace-uuid>.git`: a bare repository with a server-authored empty
+  initial commit on `main`.
+- `worktrees/`: reserved for D02's scoped worktrees.
+
+Workspace creation returns 201 independently of Git initialization. Its hook
+starts initialization in the background; the Git service retries on first access
+if needed. Hook errors contain a workspace ID and safe error code. Corrupt or
+non-bare repository targets fail without being replaced. Investigate these
+offline; do not delete a workspace repository to retry an operation.
+
+On Render, mount the persistent disk at `/data` and set `GIT_DATA_ROOT=/data`.
+Use one application process and one instance for that root; process-local Git
+locks do not coordinate multiple replicas. Retain the same disk across deploys.
+Do not place live repositories on an ephemeral build filesystem or in object
+storage. Deployment provisioning remains a separate action.
+
+`SIGINT`/`SIGTERM` close live attachments, drain HTTP requests and repository
+initialization, then close the database. D03 will implement the live-document
+attachment on the same `app.server`; D01's default attachment is a no-op.
+
+D02 should reuse the singleton `LocalGitService.withRepository(workspaceId,
+callback)` for accesses and mutations after resolving the workspace record. It
+ensures the repository while holding the workspace lock. Its callback already
+owns that lock: do not re-enter `initialize`, `ensureRepository`, or
+`withRepository` from inside it. Internal repository paths never belong in HTTP
+responses or agent context. The operation lock precedes any task document gate.
+
+Verification: `npm run test:git --workspace @app/server` needs only Git and local
+temporary storage. `npm test` additionally exercises real HTTP/runtime and
+PostgreSQL integration. To check persistence manually, create a workspace via
+`POST /api/workspaces`, wait for its repository, record `main` with
+`git --git-dir=data/repos/<workspace-uuid>.git rev-parse main`, restart the server,
+and verify the same SHA with a different `/health` boot ID.

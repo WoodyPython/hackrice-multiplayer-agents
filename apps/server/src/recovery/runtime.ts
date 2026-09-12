@@ -1,0 +1,95 @@
+import type { Server } from 'node:http';
+import type { FastifyInstance } from 'fastify';
+import type { AppConfig } from '../config.js';
+import { createDb, type DbHandle } from '../db/client.js';
+import { buildApp, type AppDeps } from '../http/app.js';
+import { LocalGitService } from '../git/service.js';
+import { GitWorkspaceLifecycleHook } from '../git/lifecycle.js';
+import { GitRuntimeError } from '../git/command.js';
+
+export interface LiveDocumentAttachment {
+  close(): Promise<void>;
+}
+
+/** D03 supplies the room server here, attached before the single HTTP listen. */
+export type AttachLiveDocuments = (server: Server) => Promise<LiveDocumentAttachment>;
+
+export interface RuntimeOptions {
+  config: AppConfig;
+  attachLiveDocuments?: AttachLiveDocuments;
+  createDatabase?: (url: string) => DbHandle;
+  applicationFactory?: (deps: AppDeps) => Promise<FastifyInstance>;
+  /** Allows tests to use port 0 and an ephemeral, loopback-only listener. */
+  listen?: { host: string; port: number };
+}
+
+export async function startRuntime(options: RuntimeOptions) {
+  const { config } = options;
+  const git = new LocalGitService(config.gitDataRoot);
+  let db: DbHandle | undefined;
+  let app: FastifyInstance | undefined;
+  let live: LiveDocumentAttachment | undefined;
+  let closing: Promise<void> | undefined;
+  const lifecycle = new GitWorkspaceLifecycleHook(git, (fields) => {
+    app?.log.error(fields, 'repository initialization failed; first access will retry');
+  });
+
+  const close = (): Promise<void> => {
+    if (!closing) {
+      closing = (async () => {
+        let failed = false;
+        // Close upgraded connections first, while the database still exists.
+        // Every cleanup runs even if a previous cleanup rejected.
+        for (const cleanup of [
+          () => live?.close(),
+          () => app?.close(),
+          () => lifecycle.drain(),
+          () => db?.close(),
+        ]) {
+          try { await cleanup(); } catch { failed = true; }
+        }
+        if (failed) throw new GitRuntimeError('SHUTDOWN_FAILED');
+      })();
+    }
+    return closing;
+  };
+
+  try {
+    await git.prepare();
+    db = (options.createDatabase ?? createDb)(config.DATABASE_URL);
+    // Do not report healthy until the configured database is reachable.
+    await db.pool.query('select 1');
+    app = await (options.applicationFactory ?? buildApp)({ db: db.db, config, lifecycle });
+    live = await (options.attachLiveDocuments ?? (async () => ({ async close() {} })))(app.server);
+    // D03 snapshot loads remain on demand. Later recovery tickets reconcile
+    // previous boots and pending applies here, before accepting task actions.
+    await app.listen(options.listen ?? { host: '0.0.0.0', port: config.PORT });
+    return { app, git, lifecycle, close };
+  } catch (error) {
+    await close().catch(() => undefined);
+    throw error instanceof GitRuntimeError ? error : new GitRuntimeError('STARTUP_FAILED');
+  }
+}
+
+export function registerShutdownSignals(
+  close: () => Promise<void>,
+  signals: Pick<NodeJS.Process, 'on' | 'off'> = process,
+  reportFailure: () => void = () => {
+    console.error('Runtime shutdown failed.');
+    process.exitCode = 1;
+  },
+): () => void {
+  let stopping = false;
+  const dispose = () => {
+    signals.off('SIGINT', stop);
+    signals.off('SIGTERM', stop);
+  };
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    void Promise.resolve().then(close).catch(reportFailure).finally(dispose);
+  };
+  signals.on('SIGINT', stop);
+  signals.on('SIGTERM', stop);
+  return dispose;
+}

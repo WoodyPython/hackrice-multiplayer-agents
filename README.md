@@ -21,6 +21,15 @@ npm test
 `npm test` creates and migrates a separate `app_test` database, so it never
 touches development data.
 
+After configuring `.env` and applying migrations, run `npm run dev` for the
+server, or `npm run build && npm start` for the compiled runtime. The API listens
+on port 3000 by default; `GET /health` returns its process boot ID.
+
+Git repositories persist under `GIT_DATA_ROOT` (default: repository-root
+`data/`, regardless of the launch directory). Run exactly one runtime process
+against a data root. Production must mount persistent storage there; see the
+[D01 runtime notes](SETUP.md#d01-runtime).
+
 ## Layout
 
 | Path | Owner | Contents |
@@ -28,6 +37,8 @@ touches development data.
 | `packages/contracts` | B | Zod schemas, status enums, error codes, service interfaces. Consumed by every role |
 | `db/migrations` | B | Plain SQL, forward-only, immutable once applied |
 | `apps/server/src/db` | B | Kysely client, hand-written schema types, migration runner |
+| `apps/server/src/{http,config.ts}` | B | Non-listening application factory and configuration |
+| `apps/server/src/index.ts` | D | Process startup, shared HTTP server, and shutdown |
 | `apps/server/src/{workspaces,tasks,discussion,materials,events}` | B | Application data APIs |
 | `apps/server/src/{models,orchestration,agents}` | C | Gemini adapter, budgets, planning, dispatch |
 | `apps/server/src/{git,collaboration,reviews,recovery}` | D | Git service, Yjs rooms, review and apply |

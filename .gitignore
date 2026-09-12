@@ -11,6 +11,7 @@ coverage/
 
 # Local Git data root used by Role D (repos/worktrees)
 data/
+local-tasks/
 
 .DS_Store
 *.log
