@@ -24,3 +24,5 @@ export * from './review.js';
 export * from './events.js';
 export * from './services.js';
 export * from './git.js';
+export * from './collaboration.js';
+export * from './worker.js';

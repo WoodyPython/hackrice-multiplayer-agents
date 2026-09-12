@@ -1,5 +1,14 @@
 # Pitfalls
 
+## A WebSocket error handler erased the useful close code
+
+**D03.** `ws` starts a protocol close with `1009` when a message exceeds
+`maxPayload`. Unconditionally terminating the socket from its error handler
+replaced that close with `1006`, hiding the reason from the client. The handler
+now preserves a close already in progress. In the test provider, calling
+`disconnect()` synchronously inside `connection-close` also reentered that
+callback; setting `shouldConnect = false` stops retries without reentry.
+
 Things that have actually gone wrong in this codebase, written as what happened
 rather than as rules. The rules they produced live in design §15.2; this is the
 evidence behind them.
@@ -19,6 +28,17 @@ only after failure so an explicit retry remains available. The test exercises a
 fast response and double-click, rather than only a deferred request.
 
 ---
+## A pre-tool check did not guard queued Git publication
+
+**C04.** D02 prepared and published a checkpoint under its workspace lock, but
+an execution check made before calling it could expire while the operation was
+queued or preparing its candidate. Checking the returned promise cannot undo
+an already published ref. The additive guarded checkpoint capability now checks
+the worker inside the Git lock at publication; tests invalidate timeout, run,
+boot and local cancellation state after candidate preparation and verify that
+the previous branch remains intact. Database receipts can still fail after Git
+publication, so recovery uses saved Git history instead of replaying the batch.
+
 ## A parser cap was still a step-count cap
 
 **C03, plan schema.** The shared schema described its 64-assignment ceiling as
@@ -30,6 +50,30 @@ bound generation and repairs instead.
 The permissive schema also defaulted missing dependency arrays, which could
 silently drop a model's misspelled `depends_on`. Provider plans now use a strict
 schema with required camelCase arrays before any graph checks or persistence.
+
+## The intermittent suite failure is a Git test timing out
+
+**Identified during B06.** A full-suite failure appeared roughly once in
+seventeen runs and could not be reproduced. Forty runs of the database suites on
+an isolated database found nothing, because it is not there.
+
+It is `git-files.test.ts > commits create/replace/delete batches and keeps every
+other branch isolated`, failing with `Test timed out in 30000ms` — not an
+assertion. The Git suites do real filesystem and subprocess work, which on
+Windows has a wide and unpredictable tail: handle release, antivirus scanning,
+and process spawn all vary run to run.
+
+`testTimeout: 30_000` lives in the shared `apps/server/vitest.config.ts`, so the
+limit is a Role B setting applied to a Role D test. Raising it is one line and
+would make the symptom go away. Worth a look first at whether a single test
+needing tens of seconds is telling us something — a per-test timeout on the Git
+suites is probably the honest fix rather than relaxing the bar for everything.
+
+**The general lesson:** an intermittent failure with no assertion message is a
+timeout until proven otherwise, and a timeout points at the slowest thing in the
+suite rather than at whatever changed most recently.
+
+---
 
 ## An expiry that rolled back, and opposite lock orders
 

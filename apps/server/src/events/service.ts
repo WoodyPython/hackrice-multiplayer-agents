@@ -1,18 +1,27 @@
-import type { TaskEventType } from '@app/contracts';
-import type { Db } from '../db/client.js';
 import type { Transaction } from 'kysely';
+import {
+  type RefreshHint,
+  type TaskEvent,
+  type TaskEventType,
+  taskEventTypeSchema,
+  workspaceChannel,
+} from '@app/contracts';
+import type { Db } from '../db/client.js';
 import type { Database } from '../db/types.js';
+import { toIso } from '../http/serialize.js';
+import type { Broadcaster } from './broadcaster.js';
 
 /**
- * Durable task events (design section 11.5).
+ * B06: durable task events and refresh hints (design section 11.5).
  *
- * B03 needs to append events before B06 exists, so this is the append half
- * only. B06 adds the Supabase Broadcast hint and the read API on top.
+ * "Persist task events before broadcasting their IDs."
  *
- * "Persist task events before broadcasting their IDs" — that ordering is why
- * append is separable at all, and why a missing broadcaster is not a
- * correctness problem: the event is already durable, and a browser that
- * refetches sees the same state a broadcast would have prompted it to fetch.
+ * That ordering is the whole design of this module. `append` runs inside the
+ * caller's transaction, so an event and the state change it describes commit
+ * together; `broadcastHint` runs after that transaction resolves. The two are
+ * deliberately separate calls rather than one convenience method, because a
+ * single method could only broadcast from inside the transaction, and then a
+ * rollback would leave clients refetching a state change that never happened.
  */
 
 export type Appender = Db | Transaction<Database>;
@@ -72,3 +81,116 @@ export async function appendEvent(
 
   return { eventId: String(existing.id), created: false };
 }
+
+// ---------------------------------------------------------------------------
+
+export interface TaskEventServiceDeps {
+  db: Db;
+  broadcaster: Broadcaster;
+}
+
+export class TaskEventService {
+  constructor(private readonly deps: TaskEventServiceDeps) {}
+
+  /** Design section 12.4, EventService.append. */
+  async append(input: AppendEventInput): Promise<AppendedEvent> {
+    return appendEvent(this.deps.db, input);
+  }
+
+  /**
+   * Design section 12.4, EventService.broadcastHint.
+   *
+   * Call this AFTER the transaction that appended the event has committed.
+   * Fire-and-forget by contract: a hint is a latency optimisation over the
+   * polling section 5 already specifies, so a transport failure must not fail
+   * the operation that produced the event.
+   */
+  broadcastHint(input: {
+    workspaceId: string;
+    taskId: string | null;
+    type: TaskEventType;
+    eventId: string;
+  }): void {
+    const hint: RefreshHint = {
+      workspaceId: input.workspaceId,
+      taskId: input.taskId,
+      eventType: input.type,
+      eventId: input.eventId,
+    };
+    void this.deps.broadcaster.hint(hint).catch(() => undefined);
+  }
+
+  /**
+   * Appends inside a transaction and returns a function to broadcast after it.
+   *
+   * The shape exists to make the ordering hard to get wrong: the caller cannot
+   * broadcast without first having appended, and the returned closure is only
+   * useful once the surrounding transaction has resolved.
+   */
+  async appendIn(
+    trx: Appender,
+    input: AppendEventInput,
+  ): Promise<{ event: AppendedEvent; broadcast: () => void }> {
+    const event = await appendEvent(trx, input);
+    return {
+      event,
+      broadcast: () =>
+        this.broadcastHint({
+          workspaceId: input.workspaceId,
+          taskId: input.taskId,
+          type: input.type,
+          eventId: event.eventId,
+        }),
+    };
+  }
+
+  /**
+   * The durable progress record for a task (section 11.5).
+   *
+   * "A browser reconnect fetches current task state and recent discussion."
+   * Cursor-paginated by id, so a client that missed hints while disconnected
+   * reads forward from where it stopped rather than re-reading everything.
+   */
+  async listForTask(
+    workspaceId: string,
+    taskId: string,
+    options: { afterId?: number; limit: number },
+  ): Promise<{ events: TaskEvent[]; latestId: string | null }> {
+    let query = this.deps.db
+      .selectFrom('task_events')
+      .selectAll()
+      .where('workspace_id', '=', workspaceId)
+      .where('task_id', '=', taskId)
+      .orderBy('id')
+      .limit(options.limit);
+
+    if (options.afterId !== undefined) {
+      query = query.where('id', '>', options.afterId);
+    }
+
+    const rows = await query.execute();
+
+    const newest = await this.deps.db
+      .selectFrom('task_events')
+      .select((eb) => eb.fn.max('id').as('id'))
+      .where('task_id', '=', taskId)
+      .executeTakeFirst();
+
+    return {
+      events: rows.map((row) => ({
+        id: String(row.id),
+        taskId: row.task_id,
+        runId: row.run_id,
+        // Stored as text so a future type does not fail an old row's read;
+        // parsed on the way out so the wire shape stays closed.
+        type: taskEventTypeSchema.catch('task.posted').parse(row.type),
+        payload: row.payload,
+        createdAt: toIso(row.created_at),
+      })),
+      latestId: newest?.id === null || newest?.id === undefined ? null : String(newest.id),
+    };
+  }
+}
+
+/** Re-exported so Role A does not have to derive the channel name. */
+export { workspaceChannel };

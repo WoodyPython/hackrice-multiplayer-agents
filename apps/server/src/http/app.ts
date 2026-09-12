@@ -21,6 +21,10 @@ import { PgMaterialService } from '../materials/service.js';
 import { registerMaterialRoutes } from '../materials/routes.js';
 import { PgDraftStore } from '../drafts/store.js';
 import { registerDraftRoutes } from '../drafts/routes.js';
+import { TaskEventService } from '../events/service.js';
+import { registerEventRoutes } from '../events/routes.js';
+import { RecordingBroadcaster, SupabaseBroadcaster, type Broadcaster } from '../events/broadcaster.js';
+import { TaskEventPump } from '../events/pump.js';
 import type { BlobStore } from '../materials/blob-store.js';
 import { LocalDiskBlobStore } from '../materials/blob-store.js';
 import { registerErrorHandler } from './errors.js';
@@ -50,6 +54,11 @@ export interface AppDeps {
    * without a Supabase project; swap in SupabaseBlobStore at deploy time.
    */
   blobs?: BlobStore;
+  /**
+   * Refresh-hint transport. Defaults to a recorder when no Supabase project is
+   * configured, which is every local run; clients poll instead (section 5).
+   */
+  broadcaster?: Broadcaster;
   /**
    * Capture log output instead of writing to stdout. Exists so the redaction
    * rules below can be asserted rather than assumed: a test drives an owner
@@ -186,6 +195,29 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const drafts = new PgDraftStore({ db: deps.db });
   await registerDraftRoutes(app, { drafts });
+
+  const broadcaster =
+    deps.broadcaster ??
+    (config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY
+      ? new SupabaseBroadcaster(
+          { url: config.SUPABASE_URL, serviceRoleKey: config.SUPABASE_SERVICE_ROLE_KEY },
+          (error) => app.log.warn({ err: error }, 'refresh hint broadcast failed'),
+        )
+      : new RecordingBroadcaster());
+
+  const events = new TaskEventService({ db: deps.db, broadcaster });
+  await registerEventRoutes(app, { events, config });
+
+  // Sweeps durable events and broadcasts hints. Started here and stopped with
+  // the server so a caller that only builds an app for tests gets neither a
+  // timer nor a background query loop it did not ask for.
+  const pump = new TaskEventPump({
+    db: deps.db,
+    broadcaster,
+    onError: (error) => app.log.warn({ err: error }, 'event pump sweep failed'),
+  });
+  app.decorate('eventPump', pump);
+  app.addHook('onClose', async () => { await pump.stop(); });
 
   return app;
 }

@@ -101,6 +101,12 @@ For Git/filesystem work, C04/D02 must hold the appropriate mutation gate and cal
 undo arbitrary side effects performed by a tool. Do not publish an unguarded
 write merely because `generate` previously returned a valid response.
 
+C04 implements that boundary using the guarded Git checkpoint capability and
+`withActiveWrite` under the workspace lock. `WorkerExecutor` retains the scope
+across tool repairs, provider backoff and question waits; see the
+[worker integration notes](../workers/README.md). C05/C06 still own dispatch and
+durable cancellation/finalization.
+
 Timeout marks the agent `timed_out`, expires its open questions, retains call
 reservations and accepted checkpoints, emits one durable event, and marks the
 task incomplete. Token exhaustion follows the same pattern. Other parallel

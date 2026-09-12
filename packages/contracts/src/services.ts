@@ -228,6 +228,25 @@ export interface AgentService {
   enforceDeadline(input: { agentInstanceId: string }): Promise<void>;
 }
 
+/** C04 execution only. C05 creates the worker/base and dispatches prerequisites. */
+export interface WorkerExecutionService {
+  execute(input: { agentInstanceId: string; context: PlanningContext }): Promise<import('./worker.js').WorkerResult>;
+  cancel(agentInstanceId: string): void;
+}
+
+/** Called under the workspace Git lock, after preparing a candidate and just
+ * before publishing its ref. The guard owns the short execution-state lock.
+ * A rejected guard MUST NOT publish. Never supply a guard from model input.
+ */
+export type WorkerCommitGuard = (checkpoint: { commitSha: string; changedPaths: string[] },
+  publish: () => Promise<void>) => Promise<void>;
+
+/** Separate capability so an old Git implementation cannot silently ignore a guard. */
+export interface GuardedWorkerGitService extends Pick<GitService, 'readText'> {
+  applyGuardedWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0], guard: WorkerCommitGuard):
+    ReturnType<GitService['applyWorkerChanges']>;
+}
+
 // --- Role D ----------------------------------------------------------------
 
 export interface ReviewService {

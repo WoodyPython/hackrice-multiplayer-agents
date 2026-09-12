@@ -1,6 +1,196 @@
 # Git files and checkpoints
 
-**Reflects:** D02 · **Owner:** Role D
+**Reflects:** D04 · **Owner:** Role D
+
+## Live draft capture (D04)
+
+The runtime now returns `collaboration`, its singleton
+`LiveDocumentCoordinator`. The WebSocket server and checkpoint route use this
+same registry. C06 and D06 should inject its
+`capture({ workspaceId, taskId }): Promise<DraftCapture>` method; do not create
+a second coordinator for the same runtime. Start orchestration and review
+preparation remain those tickets' work.
+
+Contributors can call
+`POST /api/workspaces/:workspaceId/tasks/:taskId/checkpoint` with no body or
+`{}`. The response is HTTP 200 with the existing `DraftCapture` shape:
+
+```ts
+{
+  taskId: string;
+  checkpointSha: string;
+  documentRevisions: Record<string, number>; // draftFileId -> captured revision
+  contextHash: string;
+}
+```
+
+The route validates workspace/task UUIDs and their database relationship.
+It does not require an owner key. Unknown body fields are rejected: callers
+cannot supply text, paths, snapshots, revision claims, or ownership flags.
+Neither Git paths nor Yjs binary state appear in the response.
+
+### A03/A07 acknowledgement boundary
+
+Before Save checkpoint, Start, or Request review, submit local changes and wait
+for the persisted acknowledgement covering the latest accepted update from each
+edited document, using the D03 tracking rules below. A provider sync event or an
+older acknowledgement is insufficient. D04 does not add acknowledgement frames
+or wait indefinitely for edits that have not reached the server.
+
+Capture takes the workspace Git lock, then the task document gate. Update frames
+already queued on that gate are processed first. While capture flushes all
+accepted edits, exports text, commits, and records metadata, later update frames
+wait. They resume in order after release and belong to the next draft revision.
+Other tasks can keep accepting edits. The queued update frame budget is 8 MiB
+per room; overflow disconnects the submitting socket with 1009 for normal
+resynchronization. Capture never replaces a live Y.Doc or closes its epoch.
+
+Every active task document is captured, including revision-zero documents and
+unloaded persisted snapshots. Never-initialized documents are seeded once through
+the existing database guard from the human branch (empty text for an absent
+file). Human-branch files without active documents survive unchanged. A task
+with no documents can still checkpoint its existing human branch.
+
+`contextHash` is a lowercase SHA-256 of UTF-8 `JSON.stringify` applied to an
+object with keys in this order: `taskId`, `checkpointSha`, `documentRevisions`.
+The task ID and revision-map UUID keys are lowercase; the map keys are sorted
+lexicographically. This digest identifies the draft capture only. It does not
+hash requirements, materials, discussion, or C06's complete context manifest.
+Identical text can reuse a Git SHA while a different Yjs revision changes this
+digest (for example, an edit followed by undo).
+
+### Durability and integration
+
+After Git succeeds, one database transaction writes `draft_checkpoints` and a
+`draft.checkpointed` event keyed by `eventKeys.draftCheckpointed(checkpointId)`.
+Its payload contains `checkpointId`, `commitSha`, `documentRevisions`, and
+`contextHash`. Each successful capture records an operation, even if its Git
+head and digest match a previous capture. No broadcast implementation is added.
+
+Closed epochs return `DOCUMENT_EPOCH_CLOSED`; unknown/scoped-out tasks return
+`TASK_NOT_FOUND`. Save, restoration, Git-runtime, and metadata-recording failures
+return `DRAFT_NOT_SAVED` without claiming checkpoint success. Existing Git
+validation errors retain their codes. Saved Yjs edits remain durable even if
+checkpointing fails. If Git succeeds but recording fails, the commit remains;
+retrying unchanged content reuses that head. D02's worktree repair remains in
+effect for `WORKTREE_SYNC_FAILED`. There is no rollback/reset or automatic
+workflow replay. Shutdown drains captures and queued updates before flushing
+rooms and closing the database.
+
+`LocalGitService.withDraftCapture(input, callback)` is an internal scoped
+primitive. Its callback owns the workspace lock and may acquire the task gate,
+use its bound `readText(path)`/`checkpoint(files)` functions, then record the
+capture. Never call public Git methods recursively inside it or retain those
+bound functions after the callback returns. D04 does not implement
+`CollaborationService.isCurrent` or `closeEpoch`; those remain D07.
+
+## Shared documents (D03)
+
+The runtime attaches the live server to the same HTTP server as the API. It
+uses the existing `PgDraftStore` and singleton Git service. One process owns
+each data root; rooms and revisions are process-local until persisted.
+
+Connect to `/live/:workspaceId/:taskId/:draftFileId/:epoch`. Obtain the document
+ID and epoch through the existing draft open/list APIs. Every join validates
+UUIDs, the full workspace/task/document relationship, and the stored epoch.
+Paths come exclusively from the resolved database row. No owner key is needed
+for shared editing; do not put one in the connection URL or awareness state.
+
+The server loads persisted Yjs binary state first. Only an uninitialized row
+is seeded from the committed human branch, or empty text for an absent file.
+Concurrent joins share one initialization; a database initialization loser
+adopts the winner's state. Reconnecting never refreshes text from Git.
+
+### A03 connection contract
+
+Use Yjs 13 and the stable `y-websocket` 3.x provider. All imports must use the
+same ESM Yjs instance. The shared text is `doc.getText(LIVE_TEXT_NAME)`, where
+`LIVE_TEXT_NAME` is exported by `@app/contracts` and equals `content`. Browsers
+must start with an empty document, then bind the synchronized text to Monaco;
+they must not independently seed the file text.
+
+```ts
+const provider = new WebsocketProvider(
+  websocketOrigin,
+  liveRoomPath({ workspaceId, taskId, draftFileId, epoch }).slice(1),
+  doc,
+  { connect: false, disableBc: true },
+);
+provider.messageHandlers[LIVE_MESSAGE_ACK] = (_encoder, decoder) => {
+  const subtype = decoding.readVarUint(decoder);
+  const revision = decoding.readVarUint(decoder);
+  // Update the pending-submission/saved state described below.
+};
+provider.on('connection-close', (event) => {
+  if (event?.code === LIVE_EPOCH_CLOSED_CODE) provider.shouldConnect = false;
+});
+provider.connect();
+```
+
+Import the path builder/constants from `@app/contracts` and `decoding` from
+`lib0/decoding`. The `.slice(1)` is required: the provider inserts its own `/`.
+Register the extension handler before connecting. Disable BroadcastChannel
+for the persistence-aware binding so acknowledgements are received only from
+the server and offline/closed-room edits are not exchanged around it.
+
+Standard binary message types remain sync `0`, awareness `1`, and awareness
+query `3`. Application acknowledgement type `4` is server-to-client only:
+three lib0 unsigned varints `[4, subtype, revision]`. Subtype `0`
+(`LIVE_ACK_ACCEPTED`) is sent to the submitting socket after each valid sync
+step 2 or update, including retransmissions. Subtype `1`
+(`LIVE_ACK_PERSISTED`) is broadcast after a successful save and sent on join.
+`LiveAcknowledgement` exports the corresponding semantic TypeScript union.
+
+Track outstanding submitted update frames as well as their accepted revisions.
+Only show Saved once all local changes have been submitted and accepted, and
+the highest persisted acknowledgement covers those accepted revisions. A
+previous acknowledgement cannot cover edits still in transit or offline.
+Include the reconnect sync-step-2 response in that accounting. Reset
+connection acknowledgement tracking on reconnect and wait for the new sync
+exchange. Neither the provider's `sync` event nor a state-vector comparison
+proves persistence: deletion-only edits can leave the state vector unchanged.
+
+Awareness uses the standard `user`/cursor payloads consumed by the Monaco
+binding. It is ephemeral, unverified display data. Disconnects remove the
+socket's awareness states, and ping/pong detects dead peers. Awareness does
+not advance document revisions or enter snapshots.
+
+### Saving, errors, and lifecycle
+
+Accepted changes immediately advance the live revision and broadcast to peers.
+Full binary snapshots and state vectors are saved in ordered per-document
+writes after a 500 ms coalescing window. Continuous typing still gets periodic
+saves. New edits during a save require a subsequent save. A skipped guarded
+write (`applied: false`) is a normal success covered by the returned revision.
+
+Transient save failures retain dirty state and retry; no persisted
+acknowledgement is sent for the failed save. The last disconnect triggers an
+immediate flush. A room is evicted only once saved and no pending join remains.
+Shutdown stops sockets and flushes rooms before closing the database; failed
+durability causes the runtime's existing shutdown-failure result.
+
+Rejected upgrades return the existing JSON API error envelope:
+`VALIDATION_FAILED`, `DRAFT_NOT_FOUND`, or `DOCUMENT_EPOCH_CLOSED` as applicable.
+Browser WebSocket APIs do not expose HTTP rejection bodies; use the draft
+open/list APIs to refresh document metadata when connection errors occur.
+When persistence detects an epoch closed after connection, the server closes
+the socket with code `4409` (`LIVE_EPOCH_CLOSED_CODE`) and reason
+`DOCUMENT_EPOCH_CLOSED`. A03 must stop provider reconnection for that code and
+keep local unsent text available for copying; do not replay it into a new epoch.
+
+Invalid/non-binary/unknown frames close with `1008`; oversized frames use
+`1009`. The binary message and snapshot limit is 8 MiB (CRDT history can exceed
+plain text size); editable text retains the existing 1 MiB limit and rejects
+NULs. Invalid Yjs updates are checked on a disposable copy before changing
+authoritative state. Slow sockets exceeding the send buffer limit disconnect
+and can resynchronize normally.
+
+D03 does not expose snapshot-write HTTP endpoints or create checkpoints while
+typing. D04 adds the explicit capture boundary above; review invalidation and Apply-driven
+epoch closure remain D07. Persisted snapshots restore on demand; workflow
+restart reconciliation remains D08.
+
+## Git files and checkpoints (D02)
 
 `LocalGitService` implements the D01/D02 subset of `GitService`. Use the runtime's
 existing singleton; its `withRepository` callback already holds the workspace
@@ -11,6 +201,20 @@ calling. C02/C04 must check current boot, cancellation, supersession, terminal
 state and the fixed deadline, bind the worker instance, and supply authoritative
 scopes. IDs, scopes, refs, filesystem paths and the runner are not model inputs.
 The Git layer has no database or model dependency and cannot check agent state.
+
+C04 now uses the additive `GuardedWorkerGitService` capability implemented by
+`LocalGitService.applyGuardedWorkerChanges(input, guard)`. The same D02 batch
+rules apply. After preparing the candidate, under the workspace operation lock,
+Git calls `guard(checkpoint, publish)` immediately before ref publication. The
+guard must invoke `publish` once only after accepting the worker's current
+execution state. A rejection preserves the old ref; no-op batches also invoke
+the guard. C04 owns the short task/run/agent DB lock inside that callback. Do not
+hold an outer DB transaction while calling this Git method. Original unguarded
+methods remain available for trusted non-worker callers and existing tests.
+
+Guard errors retain their original type. Failures after publication can leave a
+saved Git checkpoint even when its DB receipt or disk projection failed; stop
+the worker and inspect the branch for recovery instead of replaying the batch.
 
 | Method | Input and result |
 |---|---|
