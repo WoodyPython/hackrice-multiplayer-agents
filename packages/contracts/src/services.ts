@@ -264,6 +264,8 @@ export interface ReviewService {
     workspaceId: string;
     reviewId: string;
     candidateSha: string;
+    /** D07 validates possession server-side; missing keys fail even for in-process callers. */
+    ownerKey?: string;
   }): Promise<{ appliedCommitSha: string | null; alreadyApplied: boolean }>;
 }
 

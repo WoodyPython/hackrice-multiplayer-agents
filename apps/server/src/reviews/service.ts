@@ -10,6 +10,9 @@ import { LocalGitService } from '../git/service.js';
 import { PgReviewStore } from '../runs/review-store.js';
 import { TaskDocumentGate } from '../collaboration/gate.js';
 import { filePath } from '../git/files.js';
+import { LiveDocumentCoordinator } from '../collaboration/coordinator.js';
+import { ownerKeyMatches } from '../workspaces/owner-key.js';
+import { applyReviewRequestSchema } from '@app/contracts';
 
 /** Stable context digest; D04's digest alone only identifies the captured draft. */
 function canonical(value: unknown): string {
@@ -20,17 +23,17 @@ function canonical(value: unknown): string {
 }
 const digest = (value: unknown) => createHash('sha256').update(canonical(value), 'utf8').digest('hex');
 
-export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'resolve'> {
+export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'resolve' | 'invalidate' | 'apply'> {
   private readonly store: PgReviewStore;
   // Serializes prepare/resolve for a task; never acquired from inside a Git/document gate.
   private readonly operations = new TaskDocumentGate();
-  constructor(private readonly deps: { db: Db; git: LocalGitService; collaboration: Pick<CollaborationService, 'capture'> }) {
+  constructor(private readonly deps: { db: Db; git: LocalGitService; collaboration: Pick<CollaborationService, 'capture'>; bootId?: string }) {
     this.store = new PgReviewStore({ db: deps.db });
   }
 
-  private async inputs(workspaceId: string, taskId: string) {
+  private async inputs(workspaceId: string, taskId: string, transaction?: Db) {
     // A short consistent DB snapshot. Never hold it during Git or document capture.
-    return this.deps.db.transaction().setIsolationLevel('repeatable read').execute(async (db) => {
+    const read = async (db: Db) => {
       const workspace = await db.selectFrom('workspaces').select(['id', 'guidance', 'guidance_version'])
         .where('id', '=', workspaceId).executeTakeFirst();
       if (!workspace) throw new ApiError('WORKSPACE_NOT_FOUND', 'No such workspace.');
@@ -72,7 +75,109 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
           manifest: contextManifestSchema.parse(run.context_manifest) } : null,
       };
       return { task, workspace, run, context };
+    };
+    return transaction ? read(transaction) : this.deps.db.transaction().setIsolationLevel('repeatable read').execute(read);
+  }
+
+  async invalidate(input: { taskId: string; reason: string }): Promise<void> {
+    await this.deps.db.transaction().execute(async (db) => {
+      const changed = await db.updateTable('reviews').set({ status: 'stale', updated_at: new Date() })
+        .where('task_id', '=', input.taskId).where('status', 'in', ['building', 'ready', 'conflict']).returningAll().execute();
+      for (const review of changed) await appendEvent(db, { workspaceId: review.workspace_id, taskId: review.task_id, runId: review.run_id,
+        type: 'review.stale', eventKey: eventKeys.reviewStale(review.id, input.reason), payload: { reviewId: review.id, reason: input.reason } });
     });
+  }
+
+  async apply(input: { workspaceId: string; reviewId: string; candidateSha: string; ownerKey?: string }) {
+    const workspaceId = uuidSchema.parse(input.workspaceId).toLowerCase(), reviewId = uuidSchema.parse(input.reviewId).toLowerCase();
+    const { candidateSha } = applyReviewRequestSchema.parse({ candidateSha: input.candidateSha });
+    const workspace = await this.deps.db.selectFrom('workspaces').select('owner_key_hash').where('id', '=', workspaceId).executeTakeFirst();
+    if (!workspace) throw new ApiError('WORKSPACE_NOT_FOUND');
+    const found = await this.scoped(workspaceId, reviewId);
+    if (!ownerKeyMatches(input.ownerKey, workspace.owner_key_hash)) throw new ApiError('OWNER_KEY_REQUIRED', 'This action requires the workspace owner key.');
+    const collaboration = this.deps.collaboration;
+    if (!(collaboration instanceof LiveDocumentCoordinator) || !this.deps.bootId) throw new ApiError('INVALID_STATE', 'Apply is not configured.');
+    return this.operations.run(found.taskId, () => this.deps.git.withApply(workspaceId, (git) => collaboration.withApply(found.taskId, async (live) => {
+      const review = await this.scoped(workspaceId, reviewId);
+      if (review.candidateSha !== candidateSha) throw new ApiError('REVIEW_STALE', 'The candidate changed. Refresh review.');
+      const artifact = await git.readReview(reviewId, candidateSha);
+      if (canonical(artifact.source) !== canonical(review.source) || digest(artifact.context) !== review.source.contextHash) throw new ApiError('INPUT_CONFLICT');
+      if (artifact.conflicts.length) throw new ApiError('REVIEW_CONFLICT');
+      let operation = await this.store.readOperation(reviewId);
+      if (operation && (operation.workspace_id !== workspaceId || operation.candidate_sha !== candidateSha || operation.expected_main_sha !== review.source.mainSha)) throw new ApiError('INPUT_CONFLICT');
+      const head = await git.main();
+      if (operation?.status === 'applied' && review.status === 'applied') {
+        live.close();
+        return { status: 'applied' as const, appliedCommitSha: candidateSha, alreadyApplied: true };
+      }
+      if (operation && ['failed', 'ambiguous'].includes(operation.status)) throw new ApiError('RUN_INTERRUPTED', 'This apply operation needs review.');
+      if (operation && head !== candidateSha && head !== operation.expected_main_sha) {
+        await this.store.settle(reviewId, 'ambiguous', 'RUN_INTERRUPTED');
+        live.close();
+        throw new ApiError('RUN_INTERRUPTED', 'The apply outcome is ambiguous.');
+      }
+      const alreadyApplied = !!operation && head === candidateSha;
+      if (!alreadyApplied) {
+        await this.store.claimForApply(reviewId, candidateSha);
+        if (head !== review.source.mainSha || !await live.isCurrent(review.source.documentRevisions)) {
+          await this.invalidate({ taskId: review.taskId, reason: 'apply:freshness' });
+          throw new ApiError('REVIEW_STALE');
+        }
+        const started = await this.store.begin({ workspaceId, reviewId, candidateSha, expectedMainSha: review.source.mainSha, bootId: this.deps.bootId! });
+        operation = started.operation;
+      }
+      if (!operation) throw new ApiError('INVALID_STATE');
+      if (alreadyApplied) live.close();
+      // The pending row is committed first. Only final validation + the single ref update
+      // run under DB row locks, preventing requirements/Start/guidance races.
+      try { await this.deps.db.transaction().execute(async (db) => {
+        const lockedWorkspace = await db.selectFrom('workspaces').selectAll().where('id', '=', workspaceId).forUpdate().executeTakeFirstOrThrow();
+        await db.selectFrom('tasks').selectAll().where('id', '=', review.taskId).forUpdate().executeTakeFirstOrThrow();
+        const lockedReview = await db.selectFrom('reviews').selectAll().where('id', '=', reviewId).forUpdate().executeTakeFirstOrThrow();
+        if (alreadyApplied && !['ready', 'applied'].includes(lockedReview.status)) throw new ApiError('RUN_INTERRUPTED', 'Published review metadata requires reconciliation.');
+        if (!ownerKeyMatches(input.ownerKey, lockedWorkspace.owner_key_hash)) throw new ApiError('OWNER_KEY_REQUIRED', 'This action requires the workspace owner key.');
+        if (!alreadyApplied) {
+          if (lockedReview.status !== 'ready' || lockedReview.candidate_sha !== candidateSha) throw new ApiError('REVIEW_STALE');
+          await db.selectFrom('draft_files').select('id').where('task_id', '=', review.taskId).forUpdate().execute();
+          await db.selectFrom('runs').select('id').where('task_id', '=', review.taskId).forUpdate().execute();
+          await db.selectFrom('agent_instances').select('id').where('task_id', '=', review.taskId).forUpdate().execute();
+          await db.selectFrom('task_input_links').select('id').where('task_id', '=', review.taskId).forUpdate().execute();
+          await db.selectFrom('material_links').select('id').where('task_id', '=', review.taskId).forUpdate().execute();
+          await db.selectFrom('materials').select('id').where('workspace_id', '=', workspaceId).forShare().execute();
+          const current = await this.inputs(workspaceId, review.taskId, db);
+          if (digest({ ...current.context, draft: artifact.context.draft }) !== review.source.contextHash || current.run?.id !== (review.runId ?? undefined)) throw new ApiError('REVIEW_STALE');
+          if (await git.ref(`refs/heads/human/${review.taskId}`) !== review.source.humanSha) throw new ApiError('REVIEW_STALE');
+          if (!await git.isAncestor(await git.ref(`refs/app/bases/human/${review.taskId}`), review.source.humanSha)) throw new ApiError('INPUT_CONFLICT');
+          if (current.run && (await git.ref(`refs/heads/results/${current.run.id}`) !== review.source.resultSha ||
+            await git.ref(`refs/app/bases/results/${current.run.id}`) !== current.run.input_snapshot_sha)) throw new ApiError('REVIEW_STALE');
+          if (!await live.isCurrent(review.source.documentRevisions)) throw new ApiError('REVIEW_STALE');
+          const result = await git.publish(review.source.mainSha, candidateSha);
+          if (!result.applied) throw new ApiError('REVIEW_STALE');
+          live.close();
+        }
+        await db.updateTable('apply_operations').set({ status: 'applied', settled_at: new Date(), error_code: null }).where('id', '=', operation!.id).execute();
+        await db.updateTable('reviews').set({ status: 'applied', updated_at: new Date() }).where('id', '=', reviewId).where('status', '=', 'ready').execute();
+        await db.updateTable('tasks').set({ status: 'completed', updated_at: new Date() }).where('id', '=', review.taskId).execute();
+        await db.updateTable('draft_files').set({ status: 'closed', updated_at: new Date() }).where('task_id', '=', review.taskId).where('status', '=', 'active').execute();
+        await appendEvent(db, { workspaceId, taskId: review.taskId, runId: review.runId, type: 'task.applied', eventKey: eventKeys.taskApplied(operation!.id),
+          payload: { applyOperationId: operation!.id, reviewId, appliedCommitSha: candidateSha } });
+      }); } catch (error) {
+        // A failed SQL commit does not roll Git back. Leave its receipt pending and
+        // keep rooms closed if publication happened; the next authorized Apply reconciles it.
+        const currentMain = await git.main().catch((failure: unknown) => { live.close(); throw failure; });
+        if (currentMain === candidateSha) live.close();
+        else if (currentMain !== review.source.mainSha) {
+          live.close();
+          await this.store.settle(reviewId, 'ambiguous', 'RUN_INTERRUPTED');
+        } else if (error instanceof ApiError && ['REVIEW_STALE', 'INPUT_CONFLICT', 'INVALID_STATE'].includes(error.code)) {
+          await this.store.settle(reviewId, 'failed', 'REVIEW_STALE');
+          await this.invalidate({ taskId: review.taskId, reason: 'apply:source_changed' });
+          throw new ApiError('REVIEW_STALE', 'The review sources changed. Request review again.');
+        }
+        throw error;
+      }
+      return { status: 'applied' as const, appliedCommitSha: candidateSha, alreadyApplied };
+    })));
   }
 
   prepare(input: Parameters<ReviewService['prepare']>[0]): Promise<Review>;
@@ -150,6 +255,20 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
   }
 
   private async finish(workspaceId: string, review: Review, data: ReviewCandidateData, expected: string | null) {
+    const collaboration = this.deps.collaboration;
+    if (collaboration instanceof LiveDocumentCoordinator) {
+      return this.deps.git.withApply(workspaceId, (git) => collaboration.withApply(review.taskId, async (live) => {
+        if (await git.main() !== review.source.mainSha || !await live.isCurrent(review.source.documentRevisions)) {
+          await this.invalidate({ taskId: review.taskId, reason: 'build:source_changed' });
+          throw new ApiError('REVIEW_STALE', 'The draft changed while building. Request review again.');
+        }
+        return this.finishMetadata(workspaceId, review, data, expected);
+      }));
+    }
+    return this.finishMetadata(workspaceId, review, data, expected);
+  }
+
+  private async finishMetadata(workspaceId: string, review: Review, data: ReviewCandidateData, expected: string | null) {
     await this.deps.db.transaction().execute(async (db) => {
       const task = await db.selectFrom('tasks').selectAll().where('workspace_id', '=', workspaceId)
         .where('id', '=', review.taskId).forUpdate().executeTakeFirstOrThrow();

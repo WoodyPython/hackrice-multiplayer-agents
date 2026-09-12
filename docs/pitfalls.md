@@ -1,5 +1,14 @@
 # Pitfalls
 
+## Typing can invalidate a review before a candidate exists
+
+**D07.** B07's invalidation includes `building`, but the original
+`reviews_candidate_ck` rejected any non-building row with a null candidate.
+An accepted edit during construction therefore failed the stale update.
+Migration 0007 allows null candidates for `stale` as well as `building`, while
+retaining the candidate requirement for ready/conflict/applied reviews. Final
+readiness also checks live revisions, covering edits between capture and row creation.
+
 ## A conflicted review cannot temporarily become ready
 
 **D06 integration with B07.** The database requires a candidate SHA for every

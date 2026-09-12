@@ -119,6 +119,9 @@ typing.
    on the candidate matching, so a browser looking at an earlier candidate
    cannot apply a refreshed one it never saw, and two simultaneous applies
    resolve to one winner.
+   The implemented method is a guarded read, not an exclusive claim: D07 holds
+   the workspace lock across publication and relies on `begin`'s unique operation
+   row for durable duplicate protection. Do not use `claimForApply` alone as a lock.
 2. `begin({...})` writes the pending record **before** the ref moves. Git and
    Postgres do not share a transaction (§10.5), so this row is the only evidence
    an apply was in flight if the process dies mid-way. One row per review,

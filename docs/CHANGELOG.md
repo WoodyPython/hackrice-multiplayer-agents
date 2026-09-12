@@ -2,6 +2,32 @@
 
 Newest first. One entry per landed ticket.
 
+## D07 - Owner Apply and stale-review handling
+**Implemented:** 2026-09-12 - local main worktree (commit pending) - Role D
+**Affects:** Roles A, B, C, and D
+**Action required:** Apply migration `0007_stale_building_reviews.sql`, rebuild
+contracts, and read [the D07 Apply contract](interfaces/git.md#owner-apply-and-stale-reviews-d07).
+The migration permits a building review invalidated by typing to remain without
+a candidate. Ready/conflict/applied reviews still require a candidate.
+
+- Owner-key-protected exact-candidate Apply, full source/context and live revision
+  validation, and guarded atomic main publication.
+- Accepted-edit invalidation with durable stale events; queued late updates are
+  rejected after successful Apply closes the original document epochs.
+- Unique apply receipts, authorized duplicate reconciliation, transactional task,
+  review, epoch and event finalization, and closed rooms after post-Git SQL failure.
+- Existing A03 closure protocol is reused. A06 UI, C07 AI review and D08 startup
+  reconciliation remain separate work. No dependency is added.
+
+Verified: workspace build, `git diff --check`, all 101 Git tests, and all 31
+focused D07/D06 tests passed. The full suite passed with 561 backend and 27
+frontend tests. D07 adds 23 checks, including real two-client epoch closure,
+queued late typing, three duplicate-Apply rounds, and post-publication SQL failure.
+Migration 0007 was exercised on the separate test database; apply it to your
+development/deployment database before running the updated server.
+
+---
+
 ## D06 - Combined review candidates
 **Implemented:** 2026-09-12 - local main worktree (commit pending) - Role D
 **Affects:** Roles A, C, and D

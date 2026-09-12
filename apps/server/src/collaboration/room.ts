@@ -58,8 +58,17 @@ export class LiveRoom {
 
   get dirty(): boolean { return this.revision > this.persistedRevision; }
   get busy(): boolean { return this.saving !== undefined || this.queuedUpdates > 0; }
+  get saveInFlight(): boolean { return this.saving !== undefined; }
+
+  closeEpoch(): void {
+    this.closed = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    for (const socket of this.connections.keys()) socket.close(LIVE_EPOCH_CLOSED_CODE, 'DOCUMENT_EPOCH_CLOSED');
+  }
 
   attach(socket: WebSocket, release: () => void): void {
+    if (this.closed) { socket.once('close', release); socket.close(LIVE_EPOCH_CLOSED_CODE, 'DOCUMENT_EPOCH_CLOSED'); return; }
     this.connections.set(socket, new Set());
     let alive = true;
     const interval = setInterval(() => {

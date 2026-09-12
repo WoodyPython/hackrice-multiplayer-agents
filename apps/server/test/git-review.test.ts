@@ -41,6 +41,27 @@ async function agent(base: string, text: string | null, name = path) {
 }
 
 describe('D06 Git review candidates', { timeout: 60_000 }, () => {
+  it('D07 publishes once with expected-main comparison and preserves source branches', async () => {
+    const human = await checkpoint(taskId, [{ path, text: 'reviewed' }, { path: 'code/new.ts', text: 'export {};' }]);
+    const candidate = await build(source(human.commitSha));
+    const published = await git.applyExpected({ workspaceId, expectedMainSha: approved, candidateSha: candidate.candidateSha });
+    expect(published).toEqual({ applied: true, currentMainSha: candidate.candidateSha });
+    expect(await content(candidate.candidateSha)).toBe('reviewed');
+    expect(await content(candidate.candidateSha, 'code/new.ts')).toBe('export {};');
+    expect(await command('rev-parse', `refs/heads/human/${taskId}`)).toBe(human.commitSha);
+    expect(await git.applyExpected({ workspaceId, expectedMainSha: approved, candidateSha: human.commitSha }))
+      .toEqual({ applied: false, currentMainSha: candidate.candidateSha });
+    expect(await command('rev-parse', 'main')).toBe(candidate.candidateSha);
+  });
+
+  it('D07 rejects absent, invalid and foreign candidate commits', async () => {
+    const other = randomUUID();
+    const foreign = await git.checkpoint({ workspaceId: other, taskId: randomUUID(), files: [{ path, text: 'foreign' }] });
+    for (const candidateSha of ['bad', 'f'.repeat(40), foreign.commitSha]) {
+      await expect(git.applyExpected({ workspaceId, expectedMainSha: approved, candidateSha })).rejects.toBeDefined();
+      expect(await command('rev-parse', 'main')).toBe(approved);
+    }
+  });
   it('combines manual edits and newer approved changes, returns real diffs, and leaves every source intact', async () => {
     const human = await checkpoint(taskId, [{ path, text: original.replace('first', 'human') }]);
     const main = await checkpoint(randomUUID(), [{ path: 'code/new.ts', text: 'inert();' }]);

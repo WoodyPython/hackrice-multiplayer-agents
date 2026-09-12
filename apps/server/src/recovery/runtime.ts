@@ -13,6 +13,7 @@ import { PgCheckpointStore } from '../collaboration/checkpoint-store.js';
 import { registerCheckpointRoutes } from '../collaboration/routes.js';
 import { LocalReviewService } from '../reviews/service.js';
 import { registerReviewRoutes } from '../reviews/routes.js';
+import { ApiError } from '@app/contracts';
 
 export interface LiveDocumentAttachment {
   close(): Promise<void>;
@@ -78,7 +79,26 @@ export async function startRuntime(options: RuntimeOptions) {
       drafts, git, checkpoints: new PgCheckpointStore(db.db),
     });
     await registerCheckpointRoutes(app, collaboration);
-    const reviews = new LocalReviewService({ db: db.db, git, collaboration });
+    const database = db.db;
+    collaboration.checkUnloaded = async (taskId, revisions) => {
+      const task = await database.selectFrom('tasks').select('status').where('id', '=', taskId).executeTakeFirst();
+      if (!task || task.status === 'completed') return false;
+      const rows = await database.selectFrom('draft_files').select(['id', 'persisted_revision']).where('task_id', '=', taskId).where('status', '=', 'active').execute();
+      return rows.length === Object.keys(revisions).length && rows.every((row) => revisions[row.id] === row.persisted_revision);
+    };
+    collaboration.persistClosure = async (taskId) => {
+      const task = await database.selectFrom('tasks').select('workspace_id').where('id', '=', taskId).executeTakeFirstOrThrow();
+      await drafts.closeEpoch(task.workspace_id, taskId);
+    };
+    collaboration.assertWritable = async (taskId) => {
+      const task = await database.selectFrom('tasks').select('status').where('id', '=', taskId).executeTakeFirst();
+      if (!task || task.status === 'completed') throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+      const pending = await database.selectFrom('apply_operations').innerJoin('reviews', 'reviews.id', 'apply_operations.review_id')
+        .select('apply_operations.id').where('reviews.task_id', '=', taskId).where('apply_operations.status', 'in', ['pending', 'ambiguous']).executeTakeFirst();
+      if (pending) throw new ApiError('RUN_INTERRUPTED', 'An apply operation must be reconciled before editing.');
+    };
+    const reviews = new LocalReviewService({ db: db.db, git, collaboration, bootId: config.bootId });
+    collaboration.onAcceptedChange = (taskId, revisionMark) => reviews.invalidate({ taskId, reason: revisionMark });
     await registerReviewRoutes(app, reviews);
     live = options.attachLiveDocuments
       ? await options.attachLiveDocuments(app.server)

@@ -48,12 +48,15 @@ function restore(loaded: LoadedDraft): Y.Doc {
 }
 
 /** One registry per runtime, shared by WebSocket joins and in-process capture. */
-export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capture'> {
+export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capture' | 'isCurrent' | 'closeEpoch'> {
   private readonly entries = new Map<string, Entry>();
   private readonly gates = new TaskDocumentGate();
   private readonly captures = new Set<Promise<DraftCapture>>();
   private stopping = false;
   private closing?: Promise<void>;
+  private readonly closedTasks = new Set<string>();
+  onAcceptedChange?: (taskId: string, revisionMark: string) => Promise<void>;
+  assertWritable?: (taskId: string) => Promise<void>;
 
   constructor(private readonly deps: LiveDocumentDeps, private readonly captureDeps?: CaptureDeps) {}
 
@@ -85,6 +88,8 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
       });
     }
     return this.gates.run(id.taskId, async () => {
+      if (this.closedTasks.has(id.taskId)) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+      await this.assertWritable?.(id.taskId);
       // An intervening capture may have seeded the row; initialize's database
       // guard returns that winner, never merging an independently seeded copy.
       let loaded = initial;
@@ -101,7 +106,15 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
       const room = new LiveRoom({
         draftFileId: id.draftFileId, doc, revision: loaded.draftFile.persistedRevision,
         store: this.deps.drafts, debounceMs: this.deps.debounceMs,
-        processUpdate: (operation) => this.gates.run(id.taskId, operation),
+        processUpdate: (operation) => this.gates.run(id.taskId, async () => {
+          if (this.closedTasks.has(id.taskId)) { entry.room?.closeEpoch(); return; }
+          await this.assertWritable?.(id.taskId);
+          const before = entry.room?.revision;
+          operation();
+          if (entry.room && before !== entry.room.revision) {
+            await this.onAcceptedChange?.(id.taskId, `${id.draftFileId}:${entry.room.revision}`).catch(() => this.deps.onError?.({ draftFileId: id.draftFileId, code: 'DRAFT_NOT_SAVED' }));
+          }
+        }),
         onError: () => this.deps.onError?.({ draftFileId: id.draftFileId, code: 'DRAFT_NOT_SAVED' }),
         onIdle: () => this.evict(key, entry),
       });
@@ -115,6 +128,8 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
     const parsed = liveRoomSchema.parse(input);
     const id = { ...parsed, workspaceId: parsed.workspaceId.toLowerCase(),
       taskId: parsed.taskId.toLowerCase(), draftFileId: parsed.draftFileId.toLowerCase() };
+    if (this.closedTasks.has(id.taskId)) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+    await this.assertWritable?.(id.taskId);
     const draft = await this.deps.drafts.resolveRoom(id);
     if (draft.epoch !== id.epoch) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
     if (this.stopping) throw new ApiError('DRAFT_NOT_SAVED');
@@ -150,6 +165,7 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
   }
 
   capture(input: { workspaceId: string; taskId: string }): Promise<DraftCapture> {
+    if (this.closedTasks.has(input.taskId.toLowerCase())) return Promise.reject(new ApiError('DOCUMENT_EPOCH_CLOSED'));
     if (this.stopping) return Promise.reject(new ApiError('DRAFT_NOT_SAVED', 'The server is shutting down.'));
     const operation = this.captureDraft(input);
     this.captures.add(operation);
@@ -166,6 +182,8 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
     try {
       await deps.checkpoints.requireTask(workspaceId, taskId);
       return await deps.git.withDraftCapture({ workspaceId, taskId }, (git) => this.gates.run(taskId, async () => {
+        if (this.closedTasks.has(taskId)) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+        await this.assertWritable?.(taskId);
         const pinned = [...this.entries.entries()].filter(([, entry]) =>
           entry.id.workspaceId === workspaceId && entry.id.taskId === taskId && entry.room);
         for (const [, entry] of pinned) entry.users++;
@@ -222,6 +240,54 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
       if (error instanceof ApiError) throw error;
       throw new ApiError('DRAFT_NOT_SAVED', 'The draft checkpoint could not be saved. Retry capture.');
     }
+  }
+
+  /** Caller takes the workspace Git lock first. Bound checks do not reacquire this gate. */
+  withApply<T>(taskId: string, operation: (scope: {
+    isCurrent: (revisions: Record<string, number>) => Promise<boolean>;
+    close: () => void;
+  }) => Promise<T>): Promise<T> {
+    taskId = createDraftRequestSchema.shape.taskId.parse(taskId).toLowerCase();
+    if (this.stopping) return Promise.reject(new ApiError('DRAFT_NOT_SAVED', 'The server is shutting down.'));
+    return this.gates.run(taskId, async () => {
+      let active = true;
+      const check = () => { if (!active) throw new ApiError('INVALID_STATE', 'Apply scope ended.'); };
+      try { return await operation({
+        isCurrent: (revisions) => { check(); return this.current(taskId, revisions); },
+        close: () => { check(); this.closeInMemory(taskId); },
+      }); } finally { active = false; }
+    });
+  }
+
+  private async current(taskId: string, revisions: Record<string, number>): Promise<boolean> {
+    if (this.closedTasks.has(taskId) || !this.captureDeps) return false;
+    // Resolve scope through the stored task, never through caller-provided document IDs.
+    const ids = Object.keys(revisions);
+    const entries = [...this.entries.values()].filter((e) => e.id.taskId === taskId);
+    const workspaceId = entries[0]?.id.workspaceId;
+    if (!workspaceId) return this.checkUnloaded?.(taskId, revisions) ?? false;
+    const drafts = await this.captureDeps.drafts.listActiveForTask(workspaceId, taskId);
+    return drafts.length === ids.length && entries.every((e) => !e.room || (!e.room.closed && drafts.some((d) => d.id === e.id.draftFileId))) && drafts.every((d) => {
+      const room = entries.find((e) => e.id.draftFileId === d.id)?.room;
+      return revisions[d.id] === d.persistedRevision && (!room || (!room.closed && !room.dirty && !room.saveInFlight && room.revision === revisions[d.id]));
+    });
+  }
+
+  checkUnloaded?: (taskId: string, revisions: Record<string, number>) => Promise<boolean>;
+  persistClosure?: (taskId: string) => Promise<void>;
+
+  isCurrent(input: { taskId: string; documentRevisions: Record<string, number> }): Promise<boolean> {
+    return this.withApply(input.taskId, (scope) => scope.isCurrent(input.documentRevisions));
+  }
+
+  private closeInMemory(taskId: string): void {
+    this.closedTasks.add(taskId);
+    for (const entry of this.entries.values()) if (entry.id.taskId === taskId) entry.room?.closeEpoch();
+  }
+
+  closeEpoch(input: { taskId: string }): Promise<void> {
+    const taskId = createDraftRequestSchema.shape.taskId.parse(input.taskId).toLowerCase();
+    return this.withApply(taskId, async (scope) => { scope.close(); await this.persistClosure?.(taskId); });
   }
 
   close(): Promise<void> {

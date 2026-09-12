@@ -56,7 +56,7 @@ async function directory(path: string): Promise<void> {
 
 /** Git files, D05 integration and D06 private candidates. */
 export class LocalGitService implements Pick<GitService,
-  'initialize' | 'createDraft' | 'createWorker' | 'createResult' | 'checkpoint' | 'readText' | 'applyWorkerChanges' | 'integrate' | 'buildReview'> {
+  'initialize' | 'createDraft' | 'createWorker' | 'createResult' | 'checkpoint' | 'readText' | 'applyWorkerChanges' | 'integrate' | 'buildReview' | 'applyExpected'> {
   private readonly root: string;
   private preparation?: Promise<void>;
 
@@ -98,6 +98,54 @@ export class LocalGitService implements Pick<GitService,
   async initialize(workspaceId: string): Promise<{ mainSha: string }> {
     const { mainSha } = await this.ensureRepository(workspaceId);
     return { mainSha };
+  }
+
+  /** Workspace-locked capability; never call public Git methods from the callback. */
+  async withApply<T>(workspaceId: string, operation: (scope: {
+    main: () => Promise<string>;
+    readReview: (reviewId: string, candidateSha: string) => ReturnType<ReviewGit['read']>;
+    ref: (name: string) => Promise<string>;
+    isAncestor: (base: string, head: string) => Promise<boolean>;
+    publish: (expectedMainSha: string, candidateSha: string) => Promise<{ applied: boolean; currentMainSha: string }>;
+  }) => Promise<T>): Promise<T> {
+    return this.withRepository(workspaceId, async (repo) => {
+      const files = new ManagedWorktrees(this.root, workspaceId.toLowerCase(), repo.repositoryPath, this.git);
+      let active = true;
+      const check = () => { if (!active) throw new ApiError('INVALID_STATE', 'Apply scope ended.'); };
+      const ref = async (name: string) => {
+        check();
+        const result = await this.git(['--git-dir', repo.repositoryPath, 'rev-parse', '--verify', `${name}^{commit}`], { allowedExitCodes: [128] });
+        if (result.exitCode !== 0) throw new ApiError('INPUT_CONFLICT', 'A review source is unavailable.');
+        return shaSchema.parse(result.stdout.trim());
+      };
+      try { return await operation({
+        main: () => ref('refs/heads/main'), ref,
+        isAncestor: async (base, head) => {
+          check(); shaSchema.parse(base); shaSchema.parse(head);
+          return (await this.git(['--git-dir', repo.repositoryPath, 'merge-base', '--is-ancestor', base, head], { allowedExitCodes: [1] })).exitCode === 0;
+        },
+        readReview: async (reviewId, candidateSha) => {
+          check();
+          return new ReviewGit(repo.repositoryPath, files, this.git).read(uuidSchema.parse(reviewId).toLowerCase(), shaSchema.parse(candidateSha));
+        },
+        publish: async (expectedMainSha, candidateSha) => {
+          check(); shaSchema.parse(expectedMainSha); shaSchema.parse(candidateSha);
+          await files.commit(candidateSha);
+          const current = await ref('refs/heads/main');
+          if (current !== expectedMainSha) return { applied: false, currentMainSha: current };
+          const result = await this.git(['--git-dir', repo.repositoryPath, 'update-ref', 'refs/heads/main', candidateSha, expectedMainSha], { allowedExitCodes: [1, 128] });
+          if (result.exitCode === 0) return { applied: true, currentMainSha: candidateSha };
+          const head = await ref('refs/heads/main');
+          if (result.exitCode !== 0 && head === expectedMainSha) throw new GitRuntimeError('FILE_OPERATION_FAILED');
+          return { applied: result.exitCode === 0, currentMainSha: head };
+        },
+      }); } finally { active = false; }
+    });
+  }
+
+  async applyExpected(input: Parameters<GitService['applyExpected']>[0]) {
+    const value = parse(z.object({ workspaceId: uuidSchema, expectedMainSha: shaSchema, candidateSha: shaSchema }).strict(), input);
+    return this.withApply(value.workspaceId, (scope) => scope.publish(value.expectedMainSha, value.candidateSha));
   }
 
   private async files<T>(workspaceId: string, operation: (files: ManagedWorktrees, repo: Repository) => Promise<T>): Promise<T> {

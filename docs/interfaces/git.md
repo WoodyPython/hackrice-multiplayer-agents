@@ -1,6 +1,58 @@
 # Git files and checkpoints
 
-**Reflects:** D06 · **Owner:** Role D
+**Reflects:** D07 · **Owner:** Role D
+
+## Owner Apply and stale reviews (D07)
+
+`POST /api/workspaces/:w/reviews/:r/apply` accepts strict
+`{ candidateSha, clientRequestId? }` and the owner credential in `x-owner-key`.
+It returns HTTP 200 with `{ status: "applied", appliedCommitSha, alreadyApplied }`.
+The optional client request label does not replace the database's unique operation
+per review. Missing and incorrect credentials return identical 403 responses.
+The backend `ReviewService.apply` also accepts `ownerKey` and validates it itself.
+
+The browser must send the candidate it displayed. Freshness checks compare task
+and guidance versions, the D06 context/material union, run identity and result,
+human branch head and lineage, approved main, and the entire live/persisted
+document revision map. Changed sources return `REVIEW_STALE` (409); invalid source
+artifacts return `INPUT_CONFLICT`. Request a fresh review after edits. Apply does
+not capture newer text or replace the reviewed candidate.
+
+Accepted Yjs state changes invalidate building/ready/conflict reviews and append
+`review.stale` events before releasing the task gate, independently of snapshot
+debouncing. Retransmissions and awareness do not invalidate. Failed invalidation
+retains the accepted edit; live revisions still prevent publication. Applied
+reviews remain immutable history. Migration `0007_stale_building_reviews.sql`
+allows stale builds to have no candidate; ready/conflict/applied still require one.
+
+Apply locks in this order: review task operation, workspace Git, document gate,
+then database workspace/task/review/source rows. The pending operation commits
+before the final SQL transaction. Only final validation and the guarded ref update
+occur with the database row locks held; no capture or candidate build occurs there.
+The internal Git/coordinator `withApply` callbacks expose bounded capabilities;
+never call public Git or gate-taking methods recursively from those callbacks.
+
+Git publishes the exact candidate with `update-ref main M A`. After success the
+coordinator immediately closes rooms in memory, before any further database write.
+One transaction then marks the operation/review applied, completes the task,
+closes its stored epochs, and appends `task.applied`. The existing event pump
+delivers refresh hints. Connected peers receive code 4409; A03/A06 must retain
+late local text and stop reconnecting. Further editing uses a new task; old epoch
+rows and Yjs state are retained, never seeded with approved output.
+
+Authorized repeated Apply returns the saved success without republishing, even
+if later tasks have advanced main. A pending operation at M finalizes metadata;
+one still at A repeats all owner/freshness checks. A different head becomes
+ambiguous and returns `RUN_INTERRUPTED`. Failed/ambiguous records are not reused
+to publish new candidates. A database failure after Git leaves the operation
+pending and rooms closed. Pending/ambiguous tasks reject live joins, updates, and
+captures until reconciled. D08 owns startup reconciliation and broader task-action
+recovery; this ticket adds no workflow replay.
+
+`LocalGitService.applyExpected` is backend-only and returns
+`{ applied, currentMainSha }`; it validates commits and compares the old main ref.
+It does not perform ownership or review checks. Runtime HTTP callers use the
+review service, never that low-level primitive directly.
 
 ## Combined review candidates (D06)
 
@@ -89,7 +141,7 @@ preserve semantic order except explicitly sorted sets. SHA-256 hashes canonical
 UTF-8 JSON. Reads verify the digest and exact source tuple. Late discussion is
 not added to the frozen agent manifest.
 
-D07 still owns continuous invalidation, persisted/in-memory revision checks,
+D07 implements continuous invalidation, persisted/in-memory revision checks,
 source checks at Apply, ownership, publication, and epoch closure. `ready` alone
 is not permission to publish. C07 owns AI review and revision assignments and
 must bind findings to the examined candidate SHA. D08 owns workflow recovery.
@@ -232,8 +284,8 @@ rooms and closing the database.
 primitive. Its callback owns the workspace lock and may acquire the task gate,
 use its bound `readText(path)`/`checkpoint(files)` functions, then record the
 capture. Never call public Git methods recursively inside it or retain those
-bound functions after the callback returns. D04 does not implement
-`CollaborationService.isCurrent` or `closeEpoch`; those remain D07.
+bound functions after the callback returns. D07 implements
+`CollaborationService.isCurrent` and `closeEpoch` on the same coordinator.
 
 ## Shared documents (D03)
 
@@ -337,8 +389,8 @@ authoritative state. Slow sockets exceeding the send buffer limit disconnect
 and can resynchronize normally.
 
 D03 does not expose snapshot-write HTTP endpoints or create checkpoints while
-typing. D04 adds the explicit capture boundary above; review invalidation and Apply-driven
-epoch closure remain D07. Persisted snapshots restore on demand; workflow
+typing. D04 adds the explicit capture boundary above; D07 adds review invalidation
+and Apply-driven epoch closure. Persisted snapshots restore on demand; workflow
 restart reconciliation remains D08.
 
 ## Git files and checkpoints (D02)

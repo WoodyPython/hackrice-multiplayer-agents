@@ -568,6 +568,8 @@ A review records the exact human draft checkpoint and document revision map.
 
 Any new accepted human edit marks it stale immediately, even before the debounce has persisted the edit. Apply checks both persisted versions and in-memory dirty/revision state.
 
+A build invalidated before its candidate exists may be stored as stale with a null candidate. Ready, conflicted, and applied reviews always require a candidate; migration 0007 makes this distinction explicit.
+
 The owner must refresh review after edits. The editor need not be locked for the entire review period.
 
 During the final short Apply operation, the server gates new updates and validates freshness. After application:

@@ -120,7 +120,7 @@ describe('D06 review HTTP and persistence', { timeout: 60_000 }, () => {
     expect(main).toBe(first.review.source.mainSha);
   });
 
-  it('validates route/body scope, rejects forged sources and permits no Apply route', async () => {
+  it('validates route/body scope and rejects forged sources and malformed Apply', async () => {
     const other = await insertWorkspace(db.db);
     const first = await conflict();
     for (const target of [url().replace(taskId, 'bad'), url().replace(workspaceId, 'bad')]) {
@@ -139,7 +139,7 @@ describe('D06 review HTTP and persistence', { timeout: 60_000 }, () => {
     expect(resolve.statusCode).toBe(404);
     const unsafe = await runtime.app.inject({ method: 'GET', url: `${reviewUrl(first.review.id)}/preview?path=../secret` });
     expect(unsafe.statusCode).toBe(400);
-    expect((await runtime.app.inject({ method: 'POST', url: `${reviewUrl(first.review.id)}/apply`, payload: {} })).statusCode).toBe(404);
+    expect((await runtime.app.inject({ method: 'POST', url: `${reviewUrl(first.review.id)}/apply`, payload: {} })).statusCode).toBe(400);
   });
 
   it('implements the shared prepare and resolve service signatures', async () => {
