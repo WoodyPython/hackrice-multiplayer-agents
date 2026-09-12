@@ -20,6 +20,10 @@ export class FakeModelAdapter implements ModelAdapter {
 
   constructor(private readonly steps: readonly FakeModelStep[]) {}
 
+  getModel(_preset: AgentRequest['preset']) {
+    return { modelId: 'fake', minOutputTokens: 1, maxOutputTokens: 65536 };
+  }
+
   private next(): FakeModelStep {
     const step = this.steps[this.cursor];
     if (!step) throw new ModelAdapterError('invalid_request', 'Fake model script is exhausted.');

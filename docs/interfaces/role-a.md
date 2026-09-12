@@ -1,6 +1,6 @@
 # For Role A — calling the API
 
-**Reflects:** B05 · **Owner:** Role B
+**Reflects:** B07 · **Owner:** Role B
 
 What the frontend needs from the data layer. Shapes and enums live in
 `@app/contracts` — import them rather than transcribing anything here.

@@ -5,6 +5,49 @@ Newest first. One entry per landed ticket.
 Every entry carries **Action required**, so you can skim the entries since your
 last pull and know in one line whether any of them need anything from you.
 
+## B07 — Review and run metadata operations
+**Landed:** 2026-09-12 · Role B
+**Affects:** Roles C and D
+**Action required:** Everyone — run `npm run db:migrate` (migration `0006` adds a trigger). Role C — **C02 is unblocked**; read [`interfaces/role-c.md`](interfaces/role-c.md). Role D — **D05 and D06 are unblocked**, and `markInterruptedFromPreviousBoots()` fills the placeholder in `recovery/runtime.ts`.
+
+- `PgBudgetLedger`: atomic reserve-and-reconcile against `task_agent_budgets`.
+  The check and the reservation are one statement, so concurrent calls cannot
+  collectively overrun the budget. A failed call **charges** its reservation
+  rather than refunding it, per §9.3.
+- `PgRunStore`: plan materialisation with a cycle re-check, derived deadlines
+  that callers cannot extend, ready-set computation for parallel dispatch, and
+  startup reconciliation.
+- `PgReviewStore`: review source tuples, staleness invalidation, and the single
+  pending apply record with its cross-boot reconciliation.
+- Migration `0006` adds a database trigger enforcing §11.2's "a terminal or
+  expired instance cannot write". Late *usage* is still recordable; late results
+  and outcome changes are not.
+
+**Open question: two ledgers now exist.** C02 shipped `PgAgentLedger` under
+`src/agents` while this was in flight; B07 shipped `PgBudgetLedger` under
+`src/runs`. Both reserve and reconcile against `task_agent_budgets`, and both are
+individually correct — the atomicity is in the SQL, not in either class — so
+nothing is broken today. But two writers to one ledger is a bug waiting to
+happen, and this should collapse to one before C04 builds on either. Roles B and
+C to decide.
+
+---
+
+## C02 — Per-task agent budgets and fixed deadlines
+**Landed:** 2026-09-12 · `17aba19` · Role C
+**Affects:** Roles B, C, and D
+**Action required:** C06 must retain execution scopes, sweep deadlines, and finalize runs. C04/D02 must guard result writes. See [C02 integration notes](../apps/server/src/agents/README.md). No migration or new dependency is required.
+
+- Added atomic reservations and idempotent usage reconciliation against existing
+  task-agent budgets, preserving consumed and unknown usage across attempts.
+- Added exact-input counting, fixed 600-second execution scopes, abort handling,
+  and rejection of late results while retaining late provider usage.
+- B07's broader metadata service remains pending; C02 supplies its own focused
+  persistence seam. C06 orchestration remains unwired.
+- Fixed question-answer lock ordering and expiry rollback, and the Windows Git
+  null-config path. Existing Git and runtime tests now pass on this machine.
+- Validation: build and all 249 tests passed, including 27 C02 tests.
+
 ---
 
 ## A01 — Workspace/task UI shell
