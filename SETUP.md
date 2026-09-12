@@ -310,8 +310,9 @@ Do not place live repositories on an ephemeral build filesystem or in object
 storage. Deployment provisioning remains a separate action.
 
 `SIGINT`/`SIGTERM` close live attachments, drain HTTP requests and repository
-initialization, then close the database. D03 will implement the live-document
-attachment on the same `app.server`; D01's default attachment is a no-op.
+initialization, then close the database. D03 attaches the live-document server
+on the same `app.server` by default and flushes dirty rooms before database
+cleanup. See [the connection contract](docs/interfaces/git.md#shared-documents-d03).
 
 D02 should reuse the singleton `LocalGitService.withRepository(workspaceId,
 callback)` for accesses and mutations after resolving the workspace record. It

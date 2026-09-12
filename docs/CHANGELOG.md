@@ -25,6 +25,30 @@ Newest first. One entry per landed ticket.
 Every entry carries **Action required**, so you can skim the entries since your
 last pull and know in one line whether any of them need anything from you.
 
+## D03 — Yjs room server
+**Implemented:** 2026-09-12 · local main worktree (commit pending) · Role D
+**Affects:** Roles A and D
+**Action required:** Run `npm install` and rebuild `@app/contracts`. A03 should
+read [the shared document connection contract](interfaces/git.md#shared-documents-d03)
+before binding the editor, especially acknowledgement tracking and closed epochs.
+No migration is required.
+
+- Standard Yjs sync/awareness on the runtime's shared HTTP server, scoped by
+  workspace, task, document ID, and epoch.
+- Shared initialization promises, persisted-state restoration, and one-time
+  Git seeding through the B05 guarded initialization surface.
+- Immediate live revisions, ordered debounced snapshots, accepted/persisted
+  acknowledgements, transient save retries, and safe idle-room eviction.
+- Closed-epoch rejection, malformed-frame isolation, awareness cleanup, and
+  shutdown flushing before database cleanup.
+- No capture/checkpoint, review, Apply, agent, or frontend feature changes.
+
+Verified: `npm run build`, `git diff --check`, and `npm test`: 422 backend
+tests (including 25 new D03 tests) and 8 frontend tests passed. The focused
+collaboration/runtime run also passed before the additional failure cases.
+
+---
+
 ## B07 — Review and run metadata operations
 **Landed:** 2026-09-12 · Role B
 **Affects:** Roles C and D

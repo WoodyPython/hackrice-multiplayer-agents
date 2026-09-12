@@ -1,6 +1,114 @@
 # Git files and checkpoints
 
-**Reflects:** D02 · **Owner:** Role D
+**Reflects:** D03 · **Owner:** Role D
+
+## Shared documents (D03)
+
+The runtime attaches the live server to the same HTTP server as the API. It
+uses the existing `PgDraftStore` and singleton Git service. One process owns
+each data root; rooms and revisions are process-local until persisted.
+
+Connect to `/live/:workspaceId/:taskId/:draftFileId/:epoch`. Obtain the document
+ID and epoch through the existing draft open/list APIs. Every join validates
+UUIDs, the full workspace/task/document relationship, and the stored epoch.
+Paths come exclusively from the resolved database row. No owner key is needed
+for shared editing; do not put one in the connection URL or awareness state.
+
+The server loads persisted Yjs binary state first. Only an uninitialized row
+is seeded from the committed human branch, or empty text for an absent file.
+Concurrent joins share one initialization; a database initialization loser
+adopts the winner's state. Reconnecting never refreshes text from Git.
+
+### A03 connection contract
+
+Use Yjs 13 and the stable `y-websocket` 3.x provider. All imports must use the
+same ESM Yjs instance. The shared text is `doc.getText(LIVE_TEXT_NAME)`, where
+`LIVE_TEXT_NAME` is exported by `@app/contracts` and equals `content`. Browsers
+must start with an empty document, then bind the synchronized text to Monaco;
+they must not independently seed the file text.
+
+```ts
+const provider = new WebsocketProvider(
+  websocketOrigin,
+  liveRoomPath({ workspaceId, taskId, draftFileId, epoch }).slice(1),
+  doc,
+  { connect: false, disableBc: true },
+);
+provider.messageHandlers[LIVE_MESSAGE_ACK] = (_encoder, decoder) => {
+  const subtype = decoding.readVarUint(decoder);
+  const revision = decoding.readVarUint(decoder);
+  // Update the pending-submission/saved state described below.
+};
+provider.on('connection-close', (event) => {
+  if (event?.code === LIVE_EPOCH_CLOSED_CODE) provider.shouldConnect = false;
+});
+provider.connect();
+```
+
+Import the path builder/constants from `@app/contracts` and `decoding` from
+`lib0/decoding`. The `.slice(1)` is required: the provider inserts its own `/`.
+Register the extension handler before connecting. Disable BroadcastChannel
+for the persistence-aware binding so acknowledgements are received only from
+the server and offline/closed-room edits are not exchanged around it.
+
+Standard binary message types remain sync `0`, awareness `1`, and awareness
+query `3`. Application acknowledgement type `4` is server-to-client only:
+three lib0 unsigned varints `[4, subtype, revision]`. Subtype `0`
+(`LIVE_ACK_ACCEPTED`) is sent to the submitting socket after each valid sync
+step 2 or update, including retransmissions. Subtype `1`
+(`LIVE_ACK_PERSISTED`) is broadcast after a successful save and sent on join.
+`LiveAcknowledgement` exports the corresponding semantic TypeScript union.
+
+Track outstanding submitted update frames as well as their accepted revisions.
+Only show Saved once all local changes have been submitted and accepted, and
+the highest persisted acknowledgement covers those accepted revisions. A
+previous acknowledgement cannot cover edits still in transit or offline.
+Include the reconnect sync-step-2 response in that accounting. Reset
+connection acknowledgement tracking on reconnect and wait for the new sync
+exchange. Neither the provider's `sync` event nor a state-vector comparison
+proves persistence: deletion-only edits can leave the state vector unchanged.
+
+Awareness uses the standard `user`/cursor payloads consumed by the Monaco
+binding. It is ephemeral, unverified display data. Disconnects remove the
+socket's awareness states, and ping/pong detects dead peers. Awareness does
+not advance document revisions or enter snapshots.
+
+### Saving, errors, and lifecycle
+
+Accepted changes immediately advance the live revision and broadcast to peers.
+Full binary snapshots and state vectors are saved in ordered per-document
+writes after a 500 ms coalescing window. Continuous typing still gets periodic
+saves. New edits during a save require a subsequent save. A skipped guarded
+write (`applied: false`) is a normal success covered by the returned revision.
+
+Transient save failures retain dirty state and retry; no persisted
+acknowledgement is sent for the failed save. The last disconnect triggers an
+immediate flush. A room is evicted only once saved and no pending join remains.
+Shutdown stops sockets and flushes rooms before closing the database; failed
+durability causes the runtime's existing shutdown-failure result.
+
+Rejected upgrades return the existing JSON API error envelope:
+`VALIDATION_FAILED`, `DRAFT_NOT_FOUND`, or `DOCUMENT_EPOCH_CLOSED` as applicable.
+Browser WebSocket APIs do not expose HTTP rejection bodies; use the draft
+open/list APIs to refresh document metadata when connection errors occur.
+When persistence detects an epoch closed after connection, the server closes
+the socket with code `4409` (`LIVE_EPOCH_CLOSED_CODE`) and reason
+`DOCUMENT_EPOCH_CLOSED`. A03 must stop provider reconnection for that code and
+keep local unsent text available for copying; do not replay it into a new epoch.
+
+Invalid/non-binary/unknown frames close with `1008`; oversized frames use
+`1009`. The binary message and snapshot limit is 8 MiB (CRDT history can exceed
+plain text size); editable text retains the existing 1 MiB limit and rejects
+NULs. Invalid Yjs updates are checked on a disposable copy before changing
+authoritative state. Slow sockets exceeding the send buffer limit disconnect
+and can resynchronize normally.
+
+D03 does not expose snapshot-write HTTP endpoints or create checkpoints while
+typing. Task gates/capture remain D04; review invalidation and Apply-driven
+epoch closure remain D07. Persisted snapshots restore on demand; workflow
+restart reconciliation remains D08.
+
+## Git files and checkpoints (D02)
 
 `LocalGitService` implements the D01/D02 subset of `GitService`. Use the runtime's
 existing singleton; its `withRepository` callback already holds the workspace

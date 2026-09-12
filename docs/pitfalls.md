@@ -1,5 +1,14 @@
 # Pitfalls
 
+## A WebSocket error handler erased the useful close code
+
+**D03.** `ws` starts a protocol close with `1009` when a message exceeds
+`maxPayload`. Unconditionally terminating the socket from its error handler
+replaced that close with `1006`, hiding the reason from the client. The handler
+now preserves a close already in progress. In the test provider, calling
+`disconnect()` synchronously inside `connection-close` also reentered that
+callback; setting `shouldConnect = false` stops retries without reentry.
+
 Things that have actually gone wrong in this codebase, written as what happened
 rather than as rules. The rules they produced live in design §15.2; this is the
 evidence behind them.

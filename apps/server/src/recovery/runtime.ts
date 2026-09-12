@@ -6,6 +6,8 @@ import { buildApp, type AppDeps } from '../http/app.js';
 import { LocalGitService } from '../git/service.js';
 import { GitWorkspaceLifecycleHook } from '../git/lifecycle.js';
 import { GitRuntimeError } from '../git/command.js';
+import { PgDraftStore } from '../drafts/store.js';
+import { attachLiveDocuments } from '../collaboration/server.js';
 
 export interface LiveDocumentAttachment {
   close(): Promise<void>;
@@ -60,7 +62,12 @@ export async function startRuntime(options: RuntimeOptions) {
     // Do not report healthy until the configured database is reachable.
     await db.pool.query('select 1');
     app = await (options.applicationFactory ?? buildApp)({ db: db.db, config, lifecycle });
-    live = await (options.attachLiveDocuments ?? (async () => ({ async close() {} })))(app.server);
+    live = options.attachLiveDocuments
+      ? await options.attachLiveDocuments(app.server)
+      : attachLiveDocuments(app.server, {
+        drafts: new PgDraftStore({ db: db.db }), git,
+        onError: (fields) => app?.log.error(fields, 'shared draft persistence failed; retrying'),
+      });
     // D03 snapshot loads remain on demand. Later recovery tickets reconcile
     // previous boots and pending applies here, before accepting task actions.
     await app.listen(options.listen ?? { host: '0.0.0.0', port: config.PORT });
