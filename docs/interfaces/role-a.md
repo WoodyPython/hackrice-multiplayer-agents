@@ -106,6 +106,37 @@ Each entry carries `afterActiveRunCutoff`, which is what drives the
 
 ---
 
+## Staying current: events and refresh hints
+
+Two pieces, and the split matters. **Durable events are authoritative; realtime
+is only a prompt to come and read them.**
+
+`GET /tasks/:t/events` is the progress record — cursor-paginated by `id`, so a
+browser that was disconnected reads forward from where it stopped rather than
+re-reading everything. The response carries `events[]` and `latestId`. Poll it
+with `?afterId=`.
+
+`GET /workspaces/:w/realtime` tells you how to subscribe:
+
+```json
+{ "channel": "workspace:<id>",
+  "realtime": { "url": "...", "publishableKey": "..." } }
+```
+
+**`realtime` is `null` when no Supabase project is configured**, which is every
+local run today. That is not an error — fall back to polling the events route.
+Design §5 specifies polling as the fallback, and events are authoritative
+either way, so the difference is latency, not correctness. Build the polling
+path first; realtime is a latency optimisation layered on it.
+
+A hint carries only `workspaceId`, `taskId`, `eventType`, and `eventId` — never
+the payload. §5.1: "Assume channel messages can be forged by a link holder."
+**Treat an arriving hint as "something changed, go refetch", never as data** and
+never as a permission. A forged hint should at worst cause a wasted refetch.
+
+Missed and duplicate hints are both normal. If your refetch is idempotent, you
+have handled every case the transport can produce.
+
 ## Tasks
 
 `GET /tasks` returns board summaries with `materialCount` and

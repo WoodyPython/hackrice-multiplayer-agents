@@ -18,6 +18,7 @@ export const TASK_EVENT_TYPES = [
   'agent.question_answered',
   'agent.completed',
   'agent.failed',
+  'agent.checkpointed',
   'agent.timed_out',
   'agent.token_exhausted',
   'draft.checkpointed',

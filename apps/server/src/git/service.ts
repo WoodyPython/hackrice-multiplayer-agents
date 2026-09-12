@@ -5,7 +5,7 @@ import {
   createDraftRequestSchema, createResultRequestSchema, createWorkerRequestSchema,
   gitBranchResultSchema, gitCheckpointRequestSchema, gitCheckpointResultSchema,
   gitReadTextRequestSchema, gitReadTextResultSchema, gitWorktreeResultSchema,
-  shaSchema, type GitService,
+  shaSchema, type GitService, type WorkerCommitGuard,
 } from '@app/contracts';
 import { GitRuntimeError, runGit, type GitRunner } from './command.js';
 import { canonicalWorkspaceId, WorkspaceOperationLock } from './lock.js';
@@ -142,33 +142,19 @@ export class LocalGitService implements Pick<GitService,
     ));
   }
 
-  /** D04: acquire workspace first; the caller may then gate the task and record capture. */
-  async withDraftCapture<T>(input: { workspaceId: string; taskId: string },
-    operation: (capture: DraftGitCapture) => Promise<T>): Promise<T> {
-    const value = parse(createDraftRequestSchema, input);
-    const taskId = value.taskId.toLowerCase();
-    return this.files(value.workspaceId, async (files, repo) => {
-      let active = true;
-      const check = () => { if (!active) throw new ApiError('INVALID_STATE', 'Capture scope has ended.'); };
-      try {
-        return await operation({
-          readText: async (path) => {
-            check();
-            const safePath = filePath(path);
-            await files.ensure('human', taskId, repo.mainSha, true);
-            return gitReadTextResultSchema.parse(await files.read({ kind: 'draft', taskId }, safePath));
-          },
-          checkpoint: async (batch) => {
-            check();
-            const validated = parse(gitCheckpointRequestSchema, { ...value, files: batch });
-            return gitCheckpointResultSchema.parse(await files.checkpoint(taskId, repo.mainSha, checkpointFiles(validated.files)));
-          },
-        });
-      } finally { active = false; }
-    });
+  async applyGuardedWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0], guard: WorkerCommitGuard) {
+    // Preserve trusted guard failures through files()'s filesystem redaction.
+    let rejected = false;
+    let rejection: unknown;
+    try {
+      return await this.applyWorkerChanges(input, async (checkpoint, publish) => {
+        try { await guard(checkpoint, publish); }
+        catch (error) { rejected = true; rejection = error; throw error; }
+      });
+    } catch (error) { throw rejected ? rejection : error; }
   }
 
-  async applyWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0]) {
+  async applyWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0], guard?: WorkerCommitGuard) {
     const value = parse(applyWorkerChangesRequestSchema, input);
     const allowed = pathSet(value.allowedWritePaths);
     portablePaths(allowed);
@@ -183,7 +169,7 @@ export class LocalGitService implements Pick<GitService,
     });
     uniquePaths(changes.map(({ path }) => path));
     return this.files(value.workspaceId, async (files) => applyWorkerChangesResultSchema.parse(
-      await files.apply(value.agentInstanceId.toLowerCase(), changes),
+      await files.apply(value.agentInstanceId.toLowerCase(), changes, guard),
     ));
   }
 

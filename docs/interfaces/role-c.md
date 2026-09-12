@@ -1,6 +1,6 @@
 # For Role C — orchestration against the data layer
 
-**Reflects:** B07, C02, C03 · **Owner:** Role B (data), Role C (execution)
+**Reflects:** B07, C02, C03, C04 · **Owner:** Role B (data), Role C (execution)
 
 > **Resolved: `PgAgentLedger` is the ledger.** B07 briefly shipped a second one,
 > `PgBudgetLedger` under `src/runs`; it has been deleted. Yours won on three
@@ -11,6 +11,14 @@
 
 
 ## C02 execution and accounting
+
+C04's `WorkerExecutor` now wraps the five worker tools in this execution scope.
+C05 must persist each worker's base, create mutating worktrees, and dispatch
+after prerequisites finish. C06 supplies the immutable captured context and
+owns cancellation/run finalization. Read the [C04 integration notes](../../apps/server/src/workers/README.md).
+`agent.completed` worker events contain `{ agentId, result }`; result holds the
+summary, issued references, limitations, verified artifact hashes and result SHA.
+`agent.checkpointed` records accepted Git checkpoints. No migration is needed.
 
 `PgAgentLedger` and `AgentExecution` are available under `src/agents`; their
 [integration notes](../../apps/server/src/agents/README.md) describe the callable

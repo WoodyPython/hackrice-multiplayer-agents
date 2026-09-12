@@ -1,6 +1,6 @@
 import { chmod, lstat, mkdtemp, readFile, readdir, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { ApiError, MAX_TEXT_FILE_BYTES, shaSchema, type GitReadTarget, type TextChange } from '@app/contracts';
+import { ApiError, MAX_TEXT_FILE_BYTES, shaSchema, type GitReadTarget, type TextChange, type WorkerCommitGuard } from '@app/contracts';
 import { GitRuntimeError, type GitRunner } from './command.js';
 import { blobHash, decodeText, directories, diskBytes, filePath, inspectFile, invalidPath, portablePaths, stat, textBytes } from './files.js';
 
@@ -185,12 +185,12 @@ export class ManagedWorktrees {
     return this.mutate(managed, changes, `Checkpoint human draft ${taskId}`);
   }
 
-  async apply(agentInstanceId: string, changes: TextChange[]) {
+  async apply(agentInstanceId: string, changes: TextChange[], guard?: WorkerCommitGuard) {
     const managed = await this.ensure('agents', agentInstanceId, undefined, false);
-    return this.mutate(managed, changes, `Checkpoint worker ${agentInstanceId}`);
+    return this.mutate(managed, changes, `Checkpoint worker ${agentInstanceId}`, guard);
   }
 
-  private async mutate(managed: Managed, changes: TextChange[], message: string) {
+  private async mutate(managed: Managed, changes: TextChange[], message: string, guard?: WorkerCommitGuard) {
     const current = await this.tree(managed.head);
     const proposed = new Map(current);
     const replacements = new Map<string, Buffer>();
@@ -214,7 +214,11 @@ export class ManagedWorktrees {
       const old = current.get(path), next = proposed.get(path);
       return old?.hash !== next?.hash || old?.mode !== next?.mode;
     }).map(({ path }) => path).sort();
-    if (!changedPaths.length) return { commitSha: managed.head, changedPaths };
+    if (!changedPaths.length) {
+      const checkpoint = { commitSha: managed.head, changedPaths };
+      if (guard) await guard(checkpoint, async () => {});
+      return checkpoint;
+    }
 
     const temporary = await mkdtemp(join(managed.admin, 'batch-'));
     const indexFile = join(temporary, 'index');
@@ -241,7 +245,9 @@ export class ManagedWorktrees {
     }
     // Finish candidate cleanup before publishing: all failures from here on
     // either reject the CAS or explicitly report a committed projection failure.
-    await this.command(['update-ref', `refs/heads/${managed.branch}`, commitSha, managed.head]);
+    const publish = async () => { await this.command(['update-ref', `refs/heads/${managed.branch}`, commitSha, managed.head]); };
+    if (guard) await guard({ commitSha, changedPaths }, publish);
+    else await publish();
     try { await this.synchronize({ ...managed, head: commitSha }, proposed); }
     catch { throw new GitRuntimeError('WORKTREE_SYNC_FAILED'); }
     return { commitSha, changedPaths };

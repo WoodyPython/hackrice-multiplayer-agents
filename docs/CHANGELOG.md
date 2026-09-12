@@ -1,7 +1,6 @@
 # Changelog
 
 Newest first. One entry per landed ticket.
-
 ## D04 — Live draft to Git capture
 **Implemented:** 2026-09-12 · local main worktree (commit pending) · Role D
 **Affects:** Roles A, C, and D
@@ -27,6 +26,24 @@ Git/runtime regressions and the D03/D04 collaboration run also passed.
 
 ---
 
+## C04 — Worker tools and checkpoints
+**Landed:** 2026-09-12 · `d95a8e8` · Role C
+**Affects:** Roles B, C, and D
+**Action required:** C05 must persist bases/create mutating worktrees before dispatch; C06 supplies captured context and owns cancellation/finalization. Use the shared `WorkerExecutor` and guarded Git capability. Read [C04 integration notes](../apps/server/src/workers/README.md). No migration or dependency is added.
+
+- Added scoped captured-file/material reads, issued source references, atomic
+  Git text batches, task-local question waits, and verified completion artifacts.
+- Worker model calls, repairs, provider backoff and human waits use C02's sole
+  token ledger and fixed deadline. No count quota or model shell access.
+- Added the narrow D02 publication guard so queued candidates recheck execution
+  state under the Git lock, immediately before updating the worker ref.
+- Checkpoint receipts and completion/failure events retain saved work. C05/C06
+  scheduling, integration and HTTP orchestration remain separate tickets.
+- Rebased onto D03's collaboration update, preserving both interfaces and exports.
+- Validation after integration: build passed; full suite passed with 457 backend
+  and eight frontend tests, including all 35 C04 tests.
+
+---
 ## C03 — Orchestrator plan and graph validation
 **Landed:** 2026-09-12 · `16d09d2` · Role C
 **Affects:** Roles B, C, and D
@@ -71,6 +88,29 @@ No migration is required.
 Verified: `npm run build`, `git diff --check`, and `npm test`: 422 backend
 tests (including 25 new D03 tests) and 8 frontend tests passed. The focused
 collaboration/runtime run also passed before the additional failure cases.
+
+---
+
+## B06 — Task events and realtime refresh
+**Landed:** 2026-09-12 · Role B
+**Affects:** Role A primarily; everyone indirectly
+**Action required:** Role A — build the **polling** path first against `GET /tasks/:t/events`; realtime is a latency optimisation on top and is `null` until a Supabase project exists. See [`interfaces/role-a.md`](interfaces/role-a.md#staying-current-events-and-refresh-hints). Role D — the intermittent suite failure is now identified as your `git-files` test timing out at the shared 30s limit, not a logic bug; see [`pitfalls.md`](pitfalls.md#the-intermittent-suite-failure-is-a-git-test-timing-out). No migration.
+
+- Hints are swept out of `task_events` rather than sent at each append site, so
+  §11.5's "persist before broadcasting" holds by construction: a rolled-back
+  transaction leaves no row and announces nothing. Appending stays a plain
+  database operation, so no service needs a transport to record what it did.
+- The sweep starts from the newest existing event, not from the beginning —
+  replaying history on boot would be a burst of refetches for changes every
+  browser already has.
+- A hint carries workspace, task, event type, and event id. **Never the
+  payload.** §5.1 assumes a link holder can forge channel messages.
+- `GET /tasks/:t/events` — cursor-paginated durable progress record.
+- `GET /workspaces/:w/realtime` — channel name plus the publishable location, or
+  `null` when unconfigured. The service-role key is never on the wire.
+- `SupabaseBroadcaster` written but **unverified against a live project**, same
+  status as `SupabaseBlobStore` from B04. Both need a smoke test when the
+  project exists.
 
 ---
 
