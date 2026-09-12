@@ -6,6 +6,8 @@ agents. The workspace creator reviews the exact combined result and applies it.
 
 **New here? Start with [SETUP.md](SETUP.md).** Working alongside other roles? [docs/](docs) has the changelog, the per-role interface notes, and the handoff procedure.
 
+Connecting the hosted services: [docs/supabase-setup.md](docs/supabase-setup.md).
+
 Full specification: [hackrice-final-mvp-design.md](hackrice-final-mvp-design.md).
 
 Role C integration: [model adapter](apps/server/src/models/README.md) and

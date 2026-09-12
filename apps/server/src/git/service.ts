@@ -142,6 +142,32 @@ export class LocalGitService implements Pick<GitService,
     ));
   }
 
+  /** D04: acquire workspace first; the caller may then gate the task and record capture. */
+  async withDraftCapture<T>(input: { workspaceId: string; taskId: string },
+    operation: (capture: DraftGitCapture) => Promise<T>): Promise<T> {
+    const value = parse(createDraftRequestSchema, input);
+    const taskId = value.taskId.toLowerCase();
+    return this.files(value.workspaceId, async (files, repo) => {
+      let active = true;
+      const check = () => { if (!active) throw new ApiError('INVALID_STATE', 'Capture scope has ended.'); };
+      try {
+        return await operation({
+          readText: async (path) => {
+            check();
+            const safePath = filePath(path);
+            await files.ensure('human', taskId, repo.mainSha, true);
+            return gitReadTextResultSchema.parse(await files.read({ kind: 'draft', taskId }, safePath));
+          },
+          checkpoint: async (batch) => {
+            check();
+            const validated = parse(gitCheckpointRequestSchema, { ...value, files: batch });
+            return gitCheckpointResultSchema.parse(await files.checkpoint(taskId, repo.mainSha, checkpointFiles(validated.files)));
+          },
+        });
+      } finally { active = false; }
+    });
+  }
+
   async applyGuardedWorkerChanges(input: Parameters<GitService['applyWorkerChanges']>[0], guard: WorkerCommitGuard) {
     // Preserve trusted guard failures through files()'s filesystem redaction.
     let rejected = false;

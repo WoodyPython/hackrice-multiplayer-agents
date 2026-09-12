@@ -16,7 +16,8 @@
     "test:agents": "vitest run --config vitest.agents.config.ts",
     "test:planning": "vitest run --config vitest.planning.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "supabase:smoke": "tsx scripts/supabase-smoke.ts"
   },
   "dependencies": {
     "@app/contracts": "*",

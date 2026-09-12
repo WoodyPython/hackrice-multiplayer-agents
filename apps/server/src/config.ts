@@ -41,6 +41,14 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   /** The one Supabase value that reaches the browser, for refresh channels. */
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1).optional(),
+  /**
+   * Storage bucket for material bytes. Must be PRIVATE: access goes through the
+   * API, which scopes by workspace (section 11.4).
+   *
+   * Only consulted when SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are both
+   * present; without them, materials live on local disk under GIT_DATA_ROOT.
+   */
+  SUPABASE_STORAGE_BUCKET: z.string().min(1).default('materials'),
 
   // Role C. Optional so B and D can run without a key.
   GEMINI_API_KEY: z.string().min(1).optional(),

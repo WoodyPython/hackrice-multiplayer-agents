@@ -2,6 +2,31 @@
 
 Newest first. One entry per landed ticket.
 
+## Fix — restore `withDraftCapture`, wire Supabase storage, handoff docs
+**Landed:** 2026-09-12 · Role B
+**Affects:** everyone
+**Action required:** Pull. `main` did not build before this.
+
+- **`main` was broken.** Merge `5c483af` resolved a `git/service.ts` conflict
+  between C04 and D04 by keeping C04's `applyGuardedWorkerChanges` and dropping
+  D04's `withDraftCapture`, leaving its doc comment and every caller in place.
+  Restored verbatim from `dde066a`; both methods now exist. Build and the full
+  suite are green: **496 backend + 8 frontend**.
+  *After any merge where two roles touched one file, build and test before
+  pushing — a green branch plus a green branch is not a green merge.*
+- **`SupabaseBlobStore` was never selected from configuration.** `buildApp`
+  always fell back to local disk, and `config.ts` did not read
+  `SUPABASE_STORAGE_BUCKET` despite `.env.example` documenting it. Setting the
+  Supabase variables would have enabled broadcasting and silently not storage.
+  Both are now chosen from config.
+- `npm run supabase:smoke --workspace @app/server` verifies storage and realtime
+  against a live project in one command. Both integrations remain **unverified**
+  until someone runs it.
+- New: [`supabase-setup.md`](supabase-setup.md) and
+  [`handoff-b08.md`](handoff-b08.md).
+
+---
+
 ## A02 — Guest workspace entry and browser owner controls
 **Landed:** 2026-09-12 · `a1b704e` · Role A
 **Affects:** Role A; A03/A04 consume the browser session

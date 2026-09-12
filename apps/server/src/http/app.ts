@@ -26,7 +26,7 @@ import { registerEventRoutes } from '../events/routes.js';
 import { RecordingBroadcaster, SupabaseBroadcaster, type Broadcaster } from '../events/broadcaster.js';
 import { TaskEventPump } from '../events/pump.js';
 import type { BlobStore } from '../materials/blob-store.js';
-import { LocalDiskBlobStore } from '../materials/blob-store.js';
+import { LocalDiskBlobStore, SupabaseBlobStore } from '../materials/blob-store.js';
 import { registerErrorHandler } from './errors.js';
 
 /**
@@ -65,6 +65,25 @@ export interface AppDeps {
    * request through the app and checks the raw key never appears.
    */
   logStream?: NodeJS.WritableStream;
+}
+
+/**
+ * Supabase Storage when a project is configured, local disk otherwise.
+ *
+ * Selected here rather than at the call site so a deployment gets object
+ * storage by setting environment variables, with no code change. Local disk is
+ * not a production target: it shares the persistent disk section 5.3 reserves
+ * for Git and has no replication.
+ */
+function defaultBlobStore(config: AppConfig) {
+  if (config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY) {
+    return new SupabaseBlobStore({
+      url: config.SUPABASE_URL,
+      serviceRoleKey: config.SUPABASE_SERVICE_ROLE_KEY,
+      bucket: config.SUPABASE_STORAGE_BUCKET,
+    });
+  }
+  return new LocalDiskBlobStore(join(config.gitDataRoot, 'materials'));
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -189,7 +208,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const materials = new PgMaterialService({
     db: deps.db,
-    blobs: deps.blobs ?? new LocalDiskBlobStore(join(config.gitDataRoot, 'materials')),
+    blobs: deps.blobs ?? defaultBlobStore(config),
   });
   await registerMaterialRoutes(app, { materials });
 
