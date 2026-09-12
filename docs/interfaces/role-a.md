@@ -1,6 +1,6 @@
 # For Role A — calling the API
 
-**Reflects:** B07 · **Owner:** Role B
+**Reflects:** B07, plus the Supabase verification of 2026-09-12 · **Owner:** Role B
 
 What the frontend needs from the data layer. Shapes and enums live in
 `@app/contracts` — import them rather than transcribing anything here.
@@ -123,11 +123,18 @@ with `?afterId=`.
   "realtime": { "url": "...", "publishableKey": "..." } }
 ```
 
-**`realtime` is `null` when no Supabase project is configured**, which is every
-local run today. That is not an error — fall back to polling the events route.
-Design §5 specifies polling as the fallback, and events are authoritative
-either way, so the difference is latency, not correctness. Build the polling
-path first; realtime is a latency optimisation layered on it.
+**`realtime` is `null` when no Supabase project is configured.** That is not an
+error — fall back to polling the events route. Design §5 specifies polling as
+the fallback, and events are authoritative either way, so the difference is
+latency, not correctness. Build the polling path first; realtime is a latency
+optimisation layered on it.
+
+Both branches are now reachable, which they were not before. A project is
+configured (2026-09-12) and the server's broadcasts are verified as accepted, so
+against a `.env` carrying the Supabase values this route returns an object and
+your subscribe path runs. Comment out `SUPABASE_URL` to get the `null` branch
+back. **Nobody has yet watched a hint actually arrive in a browser** — the
+server half is proven, the subscriber half is yours and still unverified.
 
 A hint carries only `workspaceId`, `taskId`, `eventType`, and `eventId` — never
 the payload. §5.1: "Assume channel messages can be forged by a link holder."

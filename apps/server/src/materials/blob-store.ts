@@ -92,15 +92,53 @@ export class LocalDiskBlobStore implements BlobStore {
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether a failed storage response means "there is no such object".
+ *
+ * Supabase Storage does not answer a missing object with HTTP 404. It answers
+ * **400**, and puts the status it means in the body:
+ *
+ *     {"statusCode":"404","error":"not_found","message":"Object not found",
+ *      "code":"NoSuchKey"}
+ *
+ * So the status line cannot distinguish "not there" from "malformed request",
+ * and the body is the only thing that can. Newer storage-api versions do return
+ * a real 404, so both are accepted and neither is relied upon.
+ *
+ * A missing *bucket* is also 400, and also carries `"statusCode":"404"` — so the
+ * discriminator has to be `code`, not the status the body claims. It must keep
+ * throwing: a mistyped `SUPABASE_STORAGE_BUCKET` would otherwise read as "every
+ * material is missing", turning a configuration error into a silent empty
+ * store. Same for a wrong key, which arrives as 400 `AccessDenied`.
+ *
+ * Only the machine-readable code is read, never echoed into the error: the body
+ * can quote the request, and the service-role key is in the headers (13.3).
+ * Reading it consumes it, which is deliberate — a later attempt to put the body
+ * into an error message fails loudly rather than leaking it quietly.
+ */
+async function isMissingObject(response: Response): Promise<boolean> {
+  if (response.status === 404) return true;
+  if (response.status !== 400) return false;
+  try {
+    const body = (await response.json()) as { code?: unknown; error?: unknown };
+    if (body.code === 'NoSuchBucket') return false;
+    return body.code === 'NoSuchKey' || body.error === 'not_found';
+  } catch {
+    // Not JSON, so not a shape we can classify. Let the caller throw.
+    return false;
+  }
+}
+
+/**
  * Supabase Storage over its REST API.
  *
  * Deliberately plain fetch rather than supabase-js: the three operations here
  * are single HTTP calls, and the service-role key must stay on the server
  * (section 11.4), so the client library's session handling buys nothing.
  *
- * UNVERIFIED against a live project. Everything above the interface is covered
- * by tests using LocalDiskBlobStore; this implementation needs one smoke test
- * (upload, read back, delete) the first time a Supabase project is configured.
+ * Verified against a live project by `npm run supabase:smoke`: upload, read
+ * back, delete, and read-after-delete. Everything above the interface is covered
+ * by tests using LocalDiskBlobStore, and `isMissingObject` below is covered by
+ * tests against recorded response shapes.
  */
 export class SupabaseBlobStore implements BlobStore {
   constructor(
@@ -146,9 +184,9 @@ export class SupabaseBlobStore implements BlobStore {
 
   async get(key: string): Promise<Uint8Array | null> {
     const response = await fetch(this.endpoint(key), { headers: this.headers() });
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`storage read failed with ${response.status}`);
-    return new Uint8Array(await response.arrayBuffer());
+    if (response.ok) return new Uint8Array(await response.arrayBuffer());
+    if (await isMissingObject(response)) return null;
+    throw new Error(`storage read failed with ${response.status}`);
   }
 
   async delete(key: string): Promise<void> {
@@ -156,8 +194,11 @@ export class SupabaseBlobStore implements BlobStore {
       method: 'DELETE',
       headers: this.headers(),
     });
-    if (!response.ok && response.status !== 404) {
-      throw new Error(`storage delete failed with ${response.status}`);
-    }
+    if (response.ok) return;
+    // Deleting something that is already gone is the outcome the caller wanted.
+    // This matters more than it looks: the upload path deletes the object to
+    // roll back a lost dedupe race, and that must not turn into a second error.
+    if (await isMissingObject(response)) return;
+    throw new Error(`storage delete failed with ${response.status}`);
   }
 }
