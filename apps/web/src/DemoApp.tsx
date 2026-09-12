@@ -9,7 +9,7 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
-import { type TaskDetail as Task } from "@app/contracts";
+import { isStartableTaskStatus, type TaskDetail as Task } from "@app/contracts";
 import {
   createFixtureTask,
   initialTasks,
@@ -19,7 +19,32 @@ import {
 import { EmptyState } from "./components/EmptyState";
 import { RequirementForm } from "./components/RequirementForm";
 import { TaskBoard } from "./pages/TaskBoard";
-import { TaskDetail } from "./pages/TaskDetail";
+import { TaskDetail, type TaskTab } from "./pages/TaskDetail";
+import { inputOptions } from "./fixtures";
+
+/**
+ * The demo renders the same task screen the live app does, with fixture data.
+ * Its tabs are inert by design — this route exists to show the shell without a
+ * backend, so it must not imply that discussion or agents are connected.
+ */
+const demoTabCopy: Record<TaskTab, readonly [string, string]> = {
+  Discussion: [
+    "Start with a conversation",
+    "Discussion is live in a real workspace. This preview does not post anything.",
+  ],
+  Drafts: [
+    "A place for work in progress",
+    "Shared drafts open from Files in a real workspace.",
+  ],
+  Agents: [
+    "Assignments will appear here",
+    "Agent progress is not connected in this preview. Posting a task does not start any agents.",
+  ],
+  Changes: [
+    "Nothing to review here yet",
+    "Combined changes and owner review appear once a review exists.",
+  ],
+};
 import { useGuest } from "./browser-context";
 import { GuestNameControl } from "./components/GuestNameControl";
 
@@ -27,7 +52,30 @@ function TaskRoute({ tasks, base }: { tasks: Task[]; base: string }) {
   const { taskId } = useParams();
   const task = tasks.find((item) => item.id === taskId);
   return task ? (
-    <TaskDetail key={task.id} task={task} base={base} />
+    <TaskDetail
+      key={task.id}
+      task={task}
+      base={base}
+      options={inputOptions}
+      action={
+        task.kind === "agent_task" &&
+        task.activeRunId === null &&
+        isStartableTaskStatus(task.status) ? (
+          <div className="start-action">
+            {/* Inert here on purpose: this route has no backend to start. */}
+            <button className="primary" disabled aria-describedby="start-help">
+              Start task
+            </button>
+            <small id="start-help">
+              Execution is not connected in this preview.
+            </small>
+          </div>
+        ) : undefined
+      }
+      renderTab={(tab) => (
+        <EmptyState title={demoTabCopy[tab][0]}>{demoTabCopy[tab][1]}</EmptyState>
+      )}
+    />
   ) : (
     <EmptyState
       title="Task not found"
@@ -206,9 +254,14 @@ function WorkspaceShell() {
                     </header>
                     <RequirementForm
                       guestLabel={guest.name}
+                      options={inputOptions}
                       onCancel={() => navigate(base)}
-                      onPost={(request) => {
-                        const task = createFixtureTask(request);
+                      onSubmit={(fields) => {
+                        const task = createFixtureTask({
+                          kind: "agent_task",
+                          ...fields,
+                          creatorGuestLabel: guest.name,
+                        });
                         setTasks((previous) => [task, ...previous]);
                         navigate(`${base}/tasks/${task.id}`);
                       }}

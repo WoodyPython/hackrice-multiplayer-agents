@@ -208,6 +208,29 @@ export class PgDraftStore {
     return rows.map(toDraftFile);
   }
 
+  /**
+   * Every active document in the workspace, for the Files view (section 4.1).
+   *
+   * The per-task listing above answers "what can I edit inside this task"; this
+   * answers "what is being edited anywhere", which is what Files needs to offer
+   * Edit together without first knowing which task owns the document.
+   *
+   * Closed epochs are excluded for the same reason they are excluded per task:
+   * a closed document is not editable, and offering it would produce a
+   * DOCUMENT_EPOCH_CLOSED the moment someone clicked it.
+   */
+  async listActiveForWorkspace(workspaceId: string): Promise<DraftFile[]> {
+    const rows = await this.deps.db
+      .selectFrom('draft_files')
+      .selectAll()
+      .where('workspace_id', '=', workspaceId)
+      .where('status', '=', 'active')
+      .orderBy('path')
+      .orderBy('task_id')
+      .execute();
+    return rows.map(toDraftFile);
+  }
+
   // -------------------------------------------------------------------------
   // State
   // -------------------------------------------------------------------------

@@ -225,6 +225,12 @@ describe('budgeted worker tool loop and human waits', () => {
     const agent = await state(f.agentInstanceId);
     expect(new Date(agent.deadline_at!).getTime() - new Date(agent.started_at!).getTime()).toBe(AGENT_TIMEOUT_MS);
     expect(adapter.calls).toHaveLength(2);
+    const waiting = (await events(f.agentInstanceId, 'agent.waiting')).filter((event) => event.payload.reason === 'provider_backoff');
+    expect(waiting.map((event) => event.payload.waiting)).toEqual([true, false]);
+    expect(waiting[0]!.payload).toMatchObject({ agentId: f.agentInstanceId, delayMs: 1000,
+      retryAt: new Date(clock + 1000).toISOString() });
+    expect(waiting[1]!.payload.retryAt).toBeNull();
+    expect((await events(f.agentInstanceId, 'agent.waiting')).some((event) => event.payload.questionId)).toBe(false);
   });
 
   it('waits for a B03 answer above the cutoff without refreshing the clock', async () => {

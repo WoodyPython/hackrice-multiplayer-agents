@@ -1,6 +1,6 @@
 # Git files and checkpoints
 
-**Reflects:** D07 · **Owner:** Role D
+**Reflects:** D07, C05 guard integration, C06 start snapshot · **Owner:** Role D
 
 ## Owner Apply and stale reviews (D07)
 
@@ -53,6 +53,27 @@ recovery; this ticket adds no workflow replay.
 `{ applied, currentMainSha }`; it validates commits and compares the old main ref.
 It does not perform ownership or review checks. Runtime HTTP callers use the
 review service, never that low-level primitive directly.
+
+## Start snapshot (section 8.4, added by C06)
+
+`LocalGitService.combineStartSnapshot({ workspaceId, taskId, mainSha, draftSha })`
+implements `StartSnapshotService` from `@app/contracts` and returns
+`{ snapshotSha, conflicts }`. Exactly one is populated: a snapshot commit, or
+the sorted paths that prevented one.
+
+It combines approved main (A) with the human-draft checkpoint (L) into the
+private starting snapshot S. When the draft already descends from main the
+checkpoint *is* the snapshot and nothing new is written; when main has moved
+independently, a three-way merge over their merge base produces a commit with
+both as parents. Portable namespace collisions between the two trees are
+reported as conflicts, with original paths rather than Git's synthesized names.
+
+No ref is published: the snapshot is reachable once C05 creates the result
+branch at it, and `gc.auto=0` keeps the loose commit until then. Main, the human
+draft and every worker ref are read-only here — a contributor keeps typing on
+their own lineage while a run is prepared. `draftSha` must be in the task's own
+human lineage; a checkpoint from another task is refused rather than merged.
+The three-way stage resolution is shared with D05's integration path.
 
 ## Combined review candidates (D06)
 
@@ -182,6 +203,17 @@ and already-integrated workers return the current result SHA without a new commi
 
 ### C05 handoff
 
+C05 uses the additive `LocalGitService.integrateGuarded(input, guard)` capability.
+Besides workspace/run/agent IDs, input fixes `baseSha`, `workerResultSha`,
+`expectedResultSha`, and exact `writePaths`. D05 checks all three Git sources
+and the complete delta before preparing the merge. Under the workspace lock,
+it invokes the supplied guard immediately before the result ref CAS (also on
+no-op/conflict outcomes). The guard verifies current task/run/boot and durable
+completion under database row locks, publishes, and records the integration
+receipt plus result head atomically in the database. A rejected guard never
+publishes. No database transaction surrounds Git preparation. The existing
+unguarded method remains compatible for trusted backend callers.
+
 C05 resolves workspace/run/instance membership, checks current run/boot and
 cancellation, requires durable C04 completion, and validates the worker's stored
 scope and final commit before calling. D05 has no database dependency; IDs alone
@@ -190,12 +222,12 @@ by the coordinator; do not reopen a completed instance with `assertActive` or
 change its immutable `agent_instances.result_sha`.
 
 Keep integration and metadata recording ordered in C05: await a conflict-free
-integration, await `PgRunStore.recordResultHead(runId, resultSha)`, then release
+guarded integration and its committed receipt/result head, then release
 dependents using the current integrated SHA as their persisted `base_sha`.
 `readyInstances` currently tests completion only; C05 must additionally require
 successful integration of mutating prerequisites. Read-only workers have no
 worker branch and are handled by C05 without calling this method. C05 owns
-blocked-assignment metadata, conflict events, dispatch, and run settlement.
+blocked-assignment metadata, conflict events and dispatch; C06/C07 own run settlement.
 Do not concurrently record an older return value after a newer result head.
 
 A conflict never releases dependents. Git/validation failures also stop release.
@@ -481,8 +513,9 @@ again. Do not reset the branch or blindly replay old expected hashes. Retrying
 with the same instance preserves its base and committed history.
 
 Git and files are accessed with trusted arguments and raw object I/O. Generated
-code is never run. Start-snapshot combination, reviews, Apply,
-execution-state recovery and branch retention policies remain later tickets.
+code is never run. Start-snapshot combination landed with C06 above; reviews
+landed with D06 above. Apply, execution-state recovery and branch retention
+policies remain later tickets.
 
 Verification: `npm run build`, `npm run test:git --workspace @app/server`, and
 `npm test` (the last command rebuilds the separate test database).

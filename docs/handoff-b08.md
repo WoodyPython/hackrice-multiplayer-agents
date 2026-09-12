@@ -20,16 +20,30 @@ done and B08 is the only Role B ticket left.
 
 ## Where things stand
 
+*Updated 2026-09-12 after A04 and D06 landed.*
+
 | Role | Done | Remaining |
 |---|---|---|
-| A | A01, A02 | A03–A08 |
+| A | A01–A04, plus the unblocked half of A07 | A05, A06, rest of A07, A08 |
 | **B** | **B01–B07** | **B08 only** |
-| C | C01–C04 | C05–C08 |
-| D | D01–D04 | D05–D08 |
+| C | C01–C04 | **C05**–C08 |
+| D | D01–D06 | D07, D08 |
 
-**B08 is blocked.** It depends on B04, B06, B07 (done) plus **C07 and D07**,
-which are four and three tickets away respectively. You cannot start the ticket
-as written. What you *can* do is below.
+**C05 is not implemented, despite a commit saying it is.** `6950fc3 "Add C05"`
+changes one line: an npm script `test:scheduler` pointing at
+`vitest.scheduler.config.ts`, which does not exist. There is no scheduler in
+`src/agents`, and `npm run test:scheduler --workspace @app/server` fails on the
+missing config. There is no CHANGELOG entry either. Anyone planning around C05
+being done — C06 depends on it — should confirm before building.
+
+**B08 is still blocked,** on B04/B06/B07 (done) plus **C07 and D07**:
+
+- **D07 is unblocked now.** It needs D06 (landed) and B02 (done), so it can be
+  started today.
+- **C07 needs C06, which needs C05** — which is the phantom above. Three
+  tickets, not one.
+
+You cannot start B08 as written. What you *can* do is below.
 
 ## B08 itself
 

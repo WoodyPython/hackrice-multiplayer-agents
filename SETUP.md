@@ -121,6 +121,11 @@ Ticket definitions are in
 
 B01 is done, which unblocks the first ticket for all three of you.
 
+*The table below is the original starting point, written when B01 landed. It is
+kept as onboarding context and is no longer a status report — for where things
+actually stand, read [`docs/CHANGELOG.md`](docs/CHANGELOG.md) newest-first and
+the status table in [`docs/handoff-b08.md`](docs/handoff-b08.md).*
+
 | You | Start with | What B01 gives you |
 |---|---|---|
 | **Role A** — Frontend | **A01** Workspace/task UI shell | A01 says "using contract-shaped fixtures" — that's `TaskSummary`, `TaskDetail`, all 10 `TASK_STATUSES` for board columns, and 26 error codes so error states are real states, not generic banners |
@@ -148,7 +153,9 @@ wanders outside their own, merge conflicts should be near zero.
 
 ### Environment values you'll need to add
 
-`.env.example` lists everything. Role C needs a real `GEMINI_API_KEY` locally.
+`.env.example` lists everything. A real `GEMINI_API_KEY` is now required to run
+a task: without one the server still boots and serves the workspace, editor and
+materials, but every Start ends its run immediately with `model_configuration`.
 Supabase values (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) are only needed
 for B04/B06 and will be distributed once the project exists — local PostgreSQL
 covers everything until then.

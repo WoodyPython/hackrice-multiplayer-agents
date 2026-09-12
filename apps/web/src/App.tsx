@@ -21,6 +21,10 @@ import { GuestNameControl } from "./components/GuestNameControl";
 import { CreateWorkspace } from "./pages/CreateWorkspace";
 import { WorkspaceSettings } from "./pages/WorkspaceSettings";
 import { TaskDrafts } from "./pages/TaskDrafts";
+import { TaskBoardPage } from "./pages/TaskBoardPage";
+import { TaskDetailPage } from "./pages/TaskDetailPage";
+import { NewTask } from "./pages/NewTask";
+import { Files } from "./pages/Files";
 
 function ShareWorkspace({ id }: { id: string }) {
   const [copied, setCopied] = useState(false);
@@ -204,26 +208,16 @@ function LiveWorkspace({ id }: { id: string }) {
             <Route
               index
               element={
-                <>
-                  <header className="page-heading">
-                    <div>
-                      <span className="eyebrow">Your shared workspace</span>
-                      <h1>{workspace.name}</h1>
-                      <p>
-                        {workspace.purpose || "A place to shape work together."}
-                      </p>
-                    </div>
-                    <ShareWorkspace id={id} />
-                  </header>
-                  <div className="board-toolbar">
-                    <h2>Task board</h2>
-                  </div>
-                  <EmptyState title="Your workspace is ready">
-                    Share the link to invite collaborators. Task posting will be
-                    connected in the next task-workflow ticket.
-                  </EmptyState>
-                </>
+                <TaskBoardPage
+                  workspace={workspace}
+                  share={<ShareWorkspace id={id} />}
+                />
               }
+            />
+            <Route path="tasks/new" element={<NewTask workspaceId={id} />} />
+            <Route
+              path="tasks/:taskId"
+              element={<TaskDetailPage workspaceId={id} />}
             />
             <Route
               path="settings"
@@ -234,43 +228,32 @@ function LiveWorkspace({ id }: { id: string }) {
                 />
               }
             />
-            <Route
-              path="files"
-              element={
-                <>
-                  <h1>Files</h1>
-                  <EmptyState title="Your shared library">
-                    Approved files, reference materials, and shared drafts will
-                    appear here when file browsing is connected.
-                  </EmptyState>
-                </>
-              }
-            />
+            <Route path="files" element={<Files workspaceId={id} />} />
             <Route
               path="history"
               element={
                 <>
                   <h1>History</h1>
-                  <EmptyState title="A record of progress">
-                    Applied changes will appear here when history is connected.
+                  {/*
+                    §4.1 specifies this screen, but no part of the system can
+                    answer it: applied changes are recorded as per-task
+                    `task.applied` events and there is no workspace-wide query,
+                    route, or contract for them. An empty list would claim
+                    nothing has been applied, which we cannot know.
+                  */}
+                  <EmptyState
+                    title="Not available yet"
+                    action={
+                      <Link className="button" to={base}>
+                        Back to the board
+                      </Link>
+                    }
+                  >
+                    A workspace-wide record of applied changes needs an endpoint
+                    that does not exist yet. Each task keeps its own record in
+                    the meantime.
                   </EmptyState>
                 </>
-              }
-            />
-            <Route
-              path="tasks/*"
-              element={
-                <EmptyState
-                  title="Task workflow is coming next"
-                  action={
-                    <Link className="button" to={base}>
-                      Back to workspace
-                    </Link>
-                  }
-                >
-                  Task posting and discussion are not yet connected in this
-                  workspace.
-                </EmptyState>
               }
             />
             <Route

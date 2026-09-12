@@ -8,8 +8,10 @@ import {
   gitBranchResultSchema, gitCheckpointRequestSchema, gitCheckpointResultSchema,
   gitReadTextRequestSchema, gitReadTextResultSchema, gitWorktreeResultSchema,
   gitIntegrateRequestSchema, gitIntegrateResultSchema,
+  startSnapshotRequestSchema, startSnapshotResultSchema,
   shaSchema, uuidSchema, reviewSourceSchema, resolveCandidateRequestSchema,
-  type GitService, type WorkerCommitGuard, type ResolveCandidateRequest,
+  type GitService, type WorkerCommitGuard, type GuardedResultIntegrationService,
+  type StartSnapshotService, type ResolveCandidateRequest,
 } from '@app/contracts';
 import { GitRuntimeError, runGit, type GitRunner } from './command.js';
 import { canonicalWorkspaceId, WorkspaceOperationLock } from './lock.js';
@@ -262,6 +264,35 @@ export class LocalGitService implements Pick<GitService,
     const value = parse(gitIntegrateRequestSchema, input);
     return this.files(value.workspaceId, async (files) => gitIntegrateResultSchema.parse(
       await files.integrate(value.runId.toLowerCase(), value.agentInstanceId.toLowerCase()),
+    ));
+  }
+
+  /** D05 merge with C05's completed-result authority checked at publication. */
+  async integrateGuarded(input: Parameters<GuardedResultIntegrationService['integrateGuarded']>[0],
+    guard: Parameters<GuardedResultIntegrationService['integrateGuarded']>[1]): Promise<'handled'> {
+    const value = parse(gitIntegrateRequestSchema, input);
+    const expected = { baseSha: parse(shaSchema, input.baseSha), workerResultSha: parse(shaSchema, input.workerResultSha),
+      expectedResultSha: parse(shaSchema, input.expectedResultSha), writePaths: [...pathSet(input.writePaths)] };
+    portablePaths(expected.writePaths);
+    let rejected = false, rejection: unknown;
+    try {
+      await this.files(value.workspaceId, async (files) => files.integrate(value.runId.toLowerCase(), value.agentInstanceId.toLowerCase(), {
+        ...expected,
+        guard: async (candidate, publish) => {
+          try { await guard(candidate, publish); }
+          catch (error) { rejected = true; rejection = error; throw error; }
+        },
+      }));
+      return 'handled';
+    } catch (error) { throw rejected ? rejection : error; }
+  }
+
+  /** C06: section 8.4's start snapshot. A conflict publishes nothing and
+   * returns no snapshot, so a run can never start from a partial combination. */
+  async combineStartSnapshot(input: Parameters<StartSnapshotService['combineStartSnapshot']>[0]) {
+    const value = parse(startSnapshotRequestSchema, input);
+    return this.files(value.workspaceId, async (files) => startSnapshotResultSchema.parse(
+      await files.startSnapshot(value.taskId.toLowerCase(), value.mainSha, value.draftSha),
     ));
   }
 

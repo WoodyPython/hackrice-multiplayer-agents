@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gitIntegrateResultSchema, MAX_TEXT_FILE_BYTES } from '@app/contracts';
 import { LocalGitService } from '../src/git/service.js';
 import { runGit, GitRuntimeError, type GitRunner } from '../src/git/command.js';
@@ -37,6 +37,55 @@ async function fixture(runner: GitRunner = runGit) {
 
 // Real Git subprocesses on Windows can exceed the default 30s per scenario.
 describe('D05 worker integration', { timeout: 120_000 }, () => {
+  it('checks C05 source SHAs and exact changed paths before invoking the publication guard', async () => {
+    const f = await fixture(); const a = await f.worker();
+    const checkpoint = await a.change({ 'documents/a.md': 'accepted' });
+    const input = { workspaceId: f.workspaceId, runId: f.runId, agentInstanceId: a.id, baseSha: f.base,
+      workerResultSha: checkpoint.commitSha, expectedResultSha: f.base, writePaths: ['documents/a.md'] };
+    const guard = vi.fn(async () => {});
+    for (const override of [{ baseSha: f.repo.mainSha }, { workerResultSha: f.base },
+      { expectedResultSha: checkpoint.commitSha }, { writePaths: ['documents/z.md'] }]) {
+      await expect(f.git.integrateGuarded({ ...input, ...override }, guard)).rejects.toBeDefined();
+    }
+    expect(guard).not.toHaveBeenCalled(); expect(await f.cmd('rev-parse', f.result.branch)).toBe(f.base);
+    expect(await f.git.integrateGuarded(input, async (candidate, publish) => {
+      expect(candidate).toEqual({ status: 'integrated', resultSha: checkpoint.commitSha }); await publish();
+    })).toBe('handled');
+    expect(await f.cmd('rev-parse', f.result.branch)).toBe(checkpoint.commitSha);
+  });
+
+  it('preserves refs and guard errors when cancellation rejects prepared fast-forward, merge, or no-op results', async () => {
+    const f = await fixture(); const a = await f.worker(), b = await f.worker();
+    const ca = await a.change({ 'documents/a.md': 'A' }), cb = await b.change({ 'documents/z.md': 'B' });
+    const rejection = new Error('C05 cancellation');
+    const reject = vi.fn(async () => { throw rejection; });
+    const input = { workspaceId: f.workspaceId, runId: f.runId, agentInstanceId: a.id, baseSha: f.base,
+      workerResultSha: ca.commitSha, expectedResultSha: f.base, writePaths: ['documents/a.md'] };
+    await expect(f.git.integrateGuarded(input, reject)).rejects.toBe(rejection);
+    expect(await f.cmd('rev-parse', f.result.branch)).toBe(f.base);
+    await a.integrate();
+    await expect(f.git.integrateGuarded({ ...input, agentInstanceId: b.id, workerResultSha: cb.commitSha,
+      expectedResultSha: ca.commitSha, writePaths: ['documents/z.md'] }, reject)).rejects.toBe(rejection);
+    await expect(f.git.integrateGuarded({ ...input, expectedResultSha: ca.commitSha }, reject)).rejects.toBe(rejection);
+    expect(await f.cmd('rev-parse', f.result.branch)).toBe(ca.commitSha);
+    expect(reject).toHaveBeenCalledTimes(3);
+    expect(await f.cmd('rev-parse', 'main')).toBe(f.repo.mainSha);
+    expect(await f.cmd('rev-parse', `human/${f.taskId}`)).toBe(f.base);
+  });
+
+  it('passes real conflict metadata through C05 guard without publishing any result', async () => {
+    const f = await fixture(); const a = await f.worker(), b = await f.worker();
+    const ca = await a.change({ 'documents/a.md': 'left' }), cb = await b.change({ 'documents/a.md': 'right' });
+    await a.integrate();
+    const candidates: unknown[] = [];
+    expect(await f.git.integrateGuarded({ workspaceId: f.workspaceId, runId: f.runId, agentInstanceId: b.id,
+      baseSha: f.base, workerResultSha: cb.commitSha, expectedResultSha: ca.commitSha, writePaths: ['documents/a.md'] },
+    async (candidate) => { candidates.push(candidate); })).toBe('handled');
+    expect(candidates).toEqual([{ status: 'conflict', paths: ['documents/a.md'] }]);
+    expect(await f.cmd('rev-parse', f.result.branch)).toBe(ca.commitSha);
+    expect(await readFile(join(f.result.worktreePath, 'documents/a.md'), 'utf8')).toBe('left');
+  });
+
   it('validates IDs before creating storage and checks response ordering', async () => {
     const git = new LocalGitService(join(root, 'absent'));
     const valid = { workspaceId: randomUUID(), runId: randomUUID(), agentInstanceId: randomUUID() };

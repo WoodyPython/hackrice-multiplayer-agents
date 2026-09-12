@@ -17,6 +17,7 @@
     "test:planning": "vitest run --config vitest.planning.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:scheduler": "vitest run --config vitest.scheduler.config.ts",
+    "test:start": "vitest run --config vitest.start.config.ts",
     "test:watch": "vitest",
     "supabase:smoke": "tsx scripts/supabase-smoke.ts"
   },

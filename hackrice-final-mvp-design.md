@@ -108,6 +108,15 @@ The form contains:
 - Selected approved files or shared drafts.
 - Optional intended output paths.
 
+**Approved files are not selectable yet.** Nothing in the system can enumerate
+them: the Git service exposes `readText(path)` for one known path and has no
+tree or list operation, so there is no way to populate that part of the picker.
+The form offers reference materials and shared drafts, and says plainly that
+approved files are unavailable rather than showing an empty category, which
+would read as "this workspace has approved nothing". A path can still be typed
+as an intended output. Closing this needs a listing operation in the Git service
+and a route in front of it.
+
 The primary form action is Post task. It creates a posted task and opens its discussion. It makes no Gemini request and creates no agent execution.
 
 People can add comments, attach materials, adjust requirements, and edit drafts before deciding to start. Requirement updates use optimistic version checks so two form saves cannot silently overwrite each other.
@@ -130,6 +139,8 @@ The server:
 Steps 1 and 2 are one database transaction; the run row itself is the duplicate-start guard, so it is written before the Git checkpoint rather than after. Do not hold that transaction open across capture, planning, or any model call.
 
 Steps 4 onward run after the response. If capture fails or the start snapshot conflicts, the run ends in a terminal state and the task reports it. A failed capture never leaves the task without a run record explaining why.
+
+C06 implements steps 4 onward. Its capture unions explicitly selected inputs with materials attached directly to the task, and reports a selection it cannot capture rather than substituting empty text. A run and its task reach their terminal states in one transaction: ending the run first would leave the task reporting `planning` with nothing behind it, and ending the task first would leave it terminal while the active-run row still blocks every retry. Failure is recorded as a stable code, never provider or filesystem text.
 
 Double-clicks or concurrent Start requests produce one active attempt. Two independent mechanisms enforce this: a per-task idempotency key returns the original run for a replayed request, and a unique active-run constraint rejects a genuinely concurrent second request.
 
@@ -277,11 +288,23 @@ Excel editing, office-file conversion, external repository import, and generated
 | /w/:workspaceId | Task board | Posted work, active work, attention, review, completed |
 | /w/:workspaceId/tasks/:taskId | Task detail | Requirements, discussion, materials, drafts, agent progress, review |
 | /w/:workspaceId/files | Files | Approved files, reference materials, active shared drafts |
-| /w/:workspaceId/tasks/:taskId/edit/:fileId | Collaborative editor | Shared text, cursors, preview, saved state |
+| /w/:workspaceId/tasks/:taskId/drafts | Collaborative editor | File selector, shared text, cursors, preview, saved state |
 | /w/:workspaceId/history | History | Applied changes and associated tasks |
 | /w/:workspaceId/settings | Workspace settings | Guidance and owner-only configuration |
 
 The creator sees Copy workspace link. Opening that link requires no extra entry screen.
+
+**The editor is one route per task, not one per file.** An earlier revision of
+this table put the file ID in the path. Section 4.4 already requires a file
+selector as a control, so a per-file route duplicates it — two ways to change
+document, one of which forces a navigation and remounts the Yjs binding. A03
+shipped the selector; this table now matches it.
+
+**History reads `apply_operations`,** joined to its review and task. That table
+carries the workspace, the candidate SHA, the status and the settle time, which
+is what "applied changes and associated tasks" needs. It stays empty until the
+owner-apply path (D07) writes to it, and an empty History is therefore a correct
+answer rather than a missing feature.
 
 ### 4.2 Navigation and layout
 
@@ -307,7 +330,17 @@ Columns:
 
 Use state-derived placement. Dragging a card cannot mark work approved.
 
-Cards show title, anonymous creator label, current assignment summary, material count, and whether input or owner review is needed.
+Cards show title, anonymous creator label, state, material count, and whether
+input or owner review is needed.
+
+**A card must not describe agent activity.** An earlier revision asked for a
+"current assignment summary" here, which `TaskSummary` does not carry and cannot
+cheaply carry — assignment state lives on agent instances, per run. The first
+implementation satisfied the wording with per-status copy, so every working task
+claimed a "Writer" was "preparing a first draft" whether or not any such agent
+existed. That is the fake progress section 4.7 forbids. Card copy is derived
+from task state only; real assignment detail belongs to the Agents tab, which
+reads actual records.
 
 ### 4.4 Collaborative editor
 
@@ -335,6 +368,15 @@ Show token usage per task per agent as read-only information if useful. Do not e
 
 Time left may be displayed for a running agent; its deadline is always fixed by the backend.
 
+**This screen has no data source yet.** `AgentProgress` is defined in
+`@app/contracts` with every field above, and no route serves it: task events
+carry only `{ agentId }`, which is enough to know something happened and not
+enough to render a row. Until an endpoint exists, the Agents tab says so rather
+than showing an empty list — "no agents have run" is a claim the frontend cannot
+support. Note this is separate from orchestration itself being absent: with the
+null orchestration hook in place, Start records an attempt and creates no
+assignments at all.
+
 ### 4.6 Review
 
 Review displays:
@@ -350,6 +392,14 @@ Review displays:
 Default to readable content. Put Git commit IDs and operation metadata in Details.
 
 All contributors can discuss changes. Only the owner key enables application. The server performs the same check; hiding a button is insufficient.
+
+**Two gaps stand between this section and a screen.** There is no read path to a
+task's current review: `reviewId` is not on the task detail shape, and the only
+way to obtain one is `POST /tasks/:t/review`, which prepares a candidate and is
+therefore a mutation — not something a page may call on load. And there is no
+apply route at all; `applyReviewRequestSchema` and `applyReviewResponseSchema`
+exist in `@app/contracts` with nothing behind them. Both are needed before the
+Changes tab can be more than an explanation of why it is empty.
 
 ### 4.7 Minimal error states
 
@@ -689,6 +739,8 @@ Human Yjs content is not replaced by S; it continues on its own draft lineage. T
 
 The task-run result branch starts at S. Each eligible worker starts from the current result branch after its prerequisites have integrated.
 
+The combination is a separate Git capability rather than another method on the existing service, so an implementation that predates it cannot silently start a run from an uncombined base. Where the draft already descends from main, the checkpoint is S and nothing new is written; where main has moved independently, a three-way merge over their merge base produces S with both as parents. No branch is published: S becomes reachable when the result branch is created at it. A conflict surfaces before any planning model call, with the affected paths recorded and the task in `conflict`.
+
 ### 8.5 Worker isolation and integration
 
 Each mutating worker gets a separate branch/worktree and records its base SHA. It reads the approved selected context and any completed prerequisite outputs.
@@ -736,6 +788,18 @@ Provider rate limits and transport capacity can delay requests. Handle quota res
 Each agent has one in-flight model request at a time, which makes its own usage accounting deterministic. This does not limit the number of separate agents running concurrently.
 
 Git mutation is briefly serialized per workspace; model execution remains parallel.
+
+C05 implements this scheduling boundary through a per-runtime scheduler.
+Worker completion and integration readiness are distinct: dependents require
+a durable successful integration receipt before receiving the current result
+head as their base. Conflicted or unavailable integration blocks dependents
+while independent peers may finish. Provider retry waits emit durable waiting
+and resumed events without creating human questions or extending deadlines.
+D05's guarded integration checks the exact Git sources and worker delta, then
+rechecks run/cancellation authority immediately before result publication under
+the workspace lock. C06 owns Start-hook wiring and run finalization after
+scheduling returns. Isolated consumers lacking D05 retain changed results as
+pending integration.
 
 ## 9. Models, token usage, and the fixed deadline
 
@@ -1363,7 +1427,7 @@ These live in docs/ at the repository root.
 
 Every row is a single-owner work package. “Expected behavior” defines what that component must do and can be checked in isolation or against the listed prerequisites. It is not a separate release checklist.
 
-Completed so far: B01 through B04. The schema and its migrations, the contracts package, the application factory and configuration, anonymous workspaces with owner-key checks, posted tasks with discussion and the Start transaction, and reference materials behind a storage interface. Everything else is open.
+Implementation status and verification are recorded in `docs/CHANGELOG.md`. C06 now connects Start end to end: it captures the run's context, combines the start snapshot, plans, dispatches through C05, and terminalizes the run. C07's review handoff remains a separate work package.
 
 ### 16.1 Role B — Supabase and application data
 

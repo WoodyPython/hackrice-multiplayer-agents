@@ -9,6 +9,39 @@ Migration 0007 allows null candidates for `stale` as well as `building`, while
 retaining the candidate requirement for ready/conflict/applied reviews. Final
 readiness also checks live revisions, covering edits between capture and row creation.
 
+## A test that scripts an invalid plan runs until the token budget drains
+
+**C06.** A planning test returning a plan that fails validation looked like the
+obvious way to check that a run terminalizes. It is not: validation feedback
+asks for a corrected plan, and the loop is bounded by the agent's budget and
+ten-minute deadline, not by an attempt count. An adapter that always returns the
+same invalid plan therefore spends 64,000 tokens at 100 per call before
+anything fails — minutes of real database round-trips, then a 30-second test
+timeout with no useful message. Script a *fatal* outcome instead (a blocked
+response, unexpected tool calls) when the subject is run finalization. Keep
+invalid-plan repair where it belongs, in the C03 planning tests.
+
+## Settling a run and its task in two transactions strands one of them
+
+**C06.** `PgRunStore.settle` ended the run and cleared `active_run_id` but left
+the task status alone, so C06 had to write the task separately. Both orders are
+broken. Run first: if the task write fails, the task reports `planning` with no
+active run, which is precisely the stuck state section 2.2 warns about. Task
+first: if the settle fails, the task is terminal while the active-run row still
+exists, so Start is refused by the unique index and Cancel is refused because
+the status is no longer cancelable — unstartable until a restart. `settle` now
+takes the task status and writes both under the locks it already held.
+
+## A completed worker is not necessarily integrated
+
+**C05.** B07's ready-set query tests only prerequisite agent completion. C04
+completes a worker before D05 merges its branch, so using that ready set directly
+would start dependents on an older result head and release them even after a
+merge conflict. C05 now requires a separate successful integration receipt,
+records it with the new combined head, and keeps the worker checkpoint immutable.
+Tests pause integration after both workers finish and verify the dependent still
+has no base or running clock. Missing D05 support returns a visible pending state.
+
 ## A conflicted review cannot temporarily become ready
 
 **D06 integration with B07.** The database requires a candidate SHA for every
@@ -50,6 +83,54 @@ evidence behind them.
 
 Short on purpose. Add an entry when something costs you more than a few minutes
 and would cost the next person the same.
+
+---
+
+## An append cursor cannot see a field that changed in place
+
+**A04, task discussion.** Discussion is paginated by `seq`, and the interface
+notes say to poll with `?afterSeq=`. That is right for what it was designed for:
+entries only ever get appended, so a refetch returns just the new ones and a
+duplicate poll costs nothing.
+
+Answering an agent question is not an append. §2.6 flips `question.status` from
+`open` to `answered` **on the entry that is already below the cursor**. Polling
+additively never returns that entry again, so the question kept rendering as
+open with an answer box under it, forever, in a thread that had already been
+answered.
+
+**Instead:** a write this client performed re-reads the thread from zero and
+merges by id; ordinary polling stays additive. The merge was already keyed by
+id, so the fix was one flag, but only after noticing that "poll with afterSeq"
+answers a narrower question than it looks like it answers.
+
+**The general shape:** when an API gives you a cursor, check whether the
+resource is append-only. If any field on an existing row can change, the cursor
+is an optimisation for the common case and not a complete refresh strategy.
+
+---
+
+## A file-upload test that could not reach the code it was testing
+
+**A04, material upload.** The guard that rejects a PNG before the request leaves
+the browser had a test that passed for the wrong reason. `user.upload()` from
+testing-library honours the input's `accept` attribute: given a `.png` against
+`accept=".md,.txt,…"` it sets no file at all, so the change handler never ran,
+no request was attempted, and the assertion "no POST was made" passed against
+code that was never executed.
+
+It surfaced only because the *other* assertion in the same test — that an error
+is shown — failed. Had the test only asserted the negative, it would have been
+green and meaningless.
+
+**Why it matters beyond the test:** `accept` is a filter, not a guarantee. The
+OS dialog has an "All files" option and a drag-and-drop bypasses `accept`
+entirely, so the JavaScript guard is the real check and needs real coverage.
+
+**Instead:** set `files` on the input directly and dispatch `change`, which is
+what the browser does in the cases `accept` does not cover. And be suspicious of
+a test whose only assertion is that something did *not* happen — that passes
+just as well when nothing happened at all.
 
 ---
 

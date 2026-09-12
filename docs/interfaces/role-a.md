@@ -1,6 +1,7 @@
 # For Role A — calling the API
 
-**Reflects:** B07, plus the Supabase verification of 2026-09-12 · **Owner:** Role B
+**Reflects:** B07, C06, D06, the Supabase verification of 2026-09-12, and the
+A04 draft listing · **Owner:** Role B
 
 What the frontend needs from the data layer. Shapes and enums live in
 `@app/contracts` — import them rather than transcribing anything here.
@@ -106,6 +107,32 @@ Each entry carries `afterActiveRunCutoff`, which is what drives the
 
 ---
 
+## What a started run does now (C06)
+
+Start is no longer inert. After the 202, the task moves on its own and reaches a
+terminal state on **every** path, so no run sits in `planning` forever:
+`working` once assignments dispatch, then `ready_for_review`, `conflict`,
+`incomplete`, or `canceled`. Poll the task and its events; nothing pushes.
+
+Alongside the agent events, the run emits `agent.waiting` entries keyed
+`run:<runId>:start:<reason>` with `payload.phase === 'start'`. The reason is a
+stable code, never a message, and is safe to render or map to your own copy:
+
+| Reason | What to show |
+|---|---|
+| `context_captured` | Inputs are frozen; `payload.omitted[]` lists selections that could not be captured (a deleted material, a path absent from main) |
+| `snapshot_conflict` | Approved main and the draft could not be combined; `payload.paths[]` are the files. The task is in `conflict` |
+| `integration_conflict` | Worker outputs conflicted; `payload.paths[]` are the files |
+| `assignments_incomplete` | At least one assignment failed, was blocked, or never integrated |
+| `task_version_changed`, `guidance_version_changed` | The task moved between Start and capture; start a fresh attempt |
+| `model_configuration` | The server has no provider key configured |
+| anything else | A generic failure; show saved work and offer retry |
+
+Never show these codes raw as the primary message, and do not parse them for
+detail beyond the table: the codes are stable, the set is not closed.
+
+---
+
 ## Staying current: events and refresh hints
 
 Two pieces, and the split matters. **Durable events are authoritative; realtime
@@ -143,6 +170,60 @@ never as a permission. A forged hint should at worst cause a wasted refetch.
 
 Missed and duplicate hints are both normal. If your refetch is idempotent, you
 have handled every case the transport can produce.
+
+## Drafts
+
+`GET /workspaces/:w/drafts` lists every **active** document in the workspace —
+path, epoch, owning task, persisted revision. Added for the Files view, which
+has to answer "what is being edited anywhere" and therefore cannot use the
+per-task listing: that one needs the task ID it is trying to discover.
+
+`GET /tasks/:t/drafts` is still the editor's file selector.
+
+Both exclude closed epochs. Offering a closed document produces
+`DOCUMENT_EPOCH_CLOSED` the moment someone opens it, so it is filtered at the
+source rather than handled at the click.
+
+`POST /drafts/open` is "Edit together" (§2.5) and is find-or-create: **200 means
+you joined an existing editing session**, which is the normal outcome when two
+people click the same file, not a collision to report.
+
+---
+
+## Still missing, and what it blocks
+
+Three things the frontend needs do not exist. Recorded here so they are not
+rediscovered:
+
+| Needed | For | Owner |
+|---|---|---|
+| A route serving `AgentProgress` | A05's Agents tab (§4.5) | B or C |
+| A `reviewId` on task detail, or a read path to the current review | A06 — `POST /tasks/:t/review` is a mutation, and nothing else exposes the ID | B |
+| An approved-file **listing** (Git has `readText(path)` only — no tree op) | A07's Files view and the approved-file input picker (§2.1, §4.1) | D, then B |
+| A workspace-wide `apply_operations` listing + route | History (§4.1). Table and store already exist; empty until D07 | B |
+
+`agentProgressSchema`, `applyReviewRequestSchema`, and
+`applyReviewResponseSchema` are all already in `@app/contracts` with no route
+behind them. The shapes are agreed; the endpoints are not built.
+
+**History** is a smaller gap than it first looks. The data model is already
+there: `apply_operations` (migration 0002) carries workspace, review, candidate
+SHA, status and settle time, and `src/runs/review-store.ts` already writes,
+settles and reads it. Joining it to its review and task gives §4.1's "applied
+changes and associated tasks" directly.
+
+What is missing is a workspace-wide listing method, a route, and a contract
+shape — all Role B, all in files Role B already owns. Nothing writes
+`apply_operations` until owner apply (D07) exists, so the screen will correctly
+show an empty list for now; that is a reason to build it cheaply, not a reason it
+cannot be built. The `task.applied` event type is likewise declared in contracts
+with no writer anywhere.
+
+The route currently renders "not available yet" rather than an empty list,
+because an empty list today would be indistinguishable from "nothing has been
+applied" — which happens to be true but not for the reason a reader would infer.
+
+---
 
 ## Tasks
 

@@ -1,6 +1,7 @@
 import { chmod, lstat, mkdtemp, readFile, readdir, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { ApiError, MAX_TEXT_FILE_BYTES, shaSchema, type GitReadTarget, type TextChange, type WorkerCommitGuard } from '@app/contracts';
+import { ApiError, MAX_TEXT_FILE_BYTES, shaSchema, type GitReadTarget, type TextChange, type WorkerCommitGuard,
+  type ResultIntegrationGuard } from '@app/contracts';
 import { GitRuntimeError, type GitRunner } from './command.js';
 import { blobHash, decodeText, directories, diskBytes, filePath, inspectFile, invalidPath, portablePaths, stat, textBytes } from './files.js';
 
@@ -206,9 +207,14 @@ export class ManagedWorktrees {
   }
 
   /** Coordinator operation over already accepted commits; never writes the worker. */
-  async integrate(runId: string, agentInstanceId: string) {
+  async integrate(runId: string, agentInstanceId: string, authority?: {
+    baseSha: string; workerResultSha: string; expectedResultSha: string; writePaths: string[]; guard: ResultIntegrationGuard;
+  }) {
     const result = await this.integrationSource('results', runId);
     const worker = await this.integrationSource('agents', agentInstanceId);
+    if (authority && (result.head !== authority.expectedResultSha || worker.base !== authority.baseSha || worker.head !== authority.workerResultSha)) {
+      throw new ApiError('INPUT_CONFLICT', 'Integration sources changed.');
+    }
     if (!await this.ancestor(worker.base, result.head) || !await this.ancestor(result.base, worker.base)) {
       throw new ApiError('INPUT_CONFLICT', 'Worker base is outside this result lineage or has not integrated.');
     }
@@ -221,11 +227,23 @@ export class ManagedWorktrees {
     const current = trees.get(result.head)!;
     const base = trees.get(worker.base)!;
     const incoming = trees.get(worker.head)!;
+    if (authority) {
+      const allowed = new Set(authority.writePaths);
+      for (const path of new Set([...base.keys(), ...incoming.keys()])) {
+        if ((base.get(path)?.hash !== incoming.get(path)?.hash || base.get(path)?.mode !== incoming.get(path)?.mode) && !allowed.has(path)) invalidPath();
+      }
+    }
+    const conflictResult = async (conflicts: Set<string>) => {
+      const paths = [...conflicts].sort();
+      if (authority) await authority.guard({ status: 'conflict', paths }, async () => {});
+      return { resultSha: result.head, conflicts: paths };
+    };
     const same = (a: Tree, b: Tree) => a.size === b.size && [...a].every(([path, entry]) =>
       b.get(path)?.hash === entry.hash && b.get(path)?.mode === entry.mode);
     if (same(base, incoming) || await this.ancestor(worker.head, result.head)) {
       // Also repairs a projection left behind by an earlier successful publication.
       await this.ensure('results', runId, result.base, false);
+      if (authority) await authority.guard({ status: 'integrated', resultSha: result.head }, async () => {});
       return { resultSha: result.head, conflicts: [] };
     }
 
@@ -241,61 +259,122 @@ export class ManagedWorktrees {
     let resultSha = worker.head;
     let proposed = incoming;
     if (result.head !== worker.base) {
-      // read-tree handles trivial resolutions; merge-file resolves remaining
-      // text stages without checkout, attributes, external drivers, or hooks.
-      const temporary = await mkdtemp(join(this.repository, 'integration-'));
-      const indexFile = join(temporary, 'index');
-      try {
-        await this.command(['read-tree', '-i', '-m', worker.base, result.head, worker.head], { indexFile });
-        const listing = await this.command(['ls-files', '--unmerged', '-z'], { indexFile });
-        const stages = new Map<string, Map<number, Entry>>();
-        for (const record of listing.stdout.split('\0').filter(Boolean)) {
-          const match = /^(100644|100755) ([0-9a-f]{40}) ([123])\t([\s\S]+)$/.exec(record);
-          if (!match || filePath(match[4]!) !== match[4]) throw new GitRuntimeError('INVALID_TREE');
-          const path = match[4]!;
-          const entries = stages.get(path) ?? new Map<number, Entry>();
-          entries.set(Number(match[3]), { mode: match[1]!, hash: match[2]! });
-          stages.set(path, entries);
-        }
-        for (const [path, entries] of stages) {
-          const b = entries.get(1), ours = entries.get(2), theirs = entries.get(3);
-          if (!b || !ours || !theirs) { conflicts.add(path); continue; }
-          const mode = ours.mode === theirs.mode ? ours.mode : ours.mode === b.mode ? theirs.mode
-            : theirs.mode === b.mode ? ours.mode : undefined;
-          if (!mode) { conflicts.add(path); continue; }
-          const names = ['current', 'base', 'worker'].map((name) => join(temporary, name));
-          for (const [i, entry] of [ours, b, theirs].entries()) await writeFile(names[i]!, await this.blob(entry.hash));
-          const merged = await this.command(['merge-file', '-p', ...names], {
-            binary: true, allowedExitCodes: Array.from({ length: 127 }, (_, i) => i + 1),
-          });
-          if (merged.exitCode !== 0) { conflicts.add(path); continue; }
-          const bytes = merged.stdoutBytes!;
-          decodeText(bytes);
-          const hash = shaSchema.parse((await this.command(['hash-object', '-w', '--stdin', '--no-filters'], { input: bytes })).stdout.trim());
-          await this.command(['update-index', '-z', '--index-info'], {
-            indexFile, input: `0 ${'0'.repeat(40)}\t${path}\0${mode} ${hash}\t${path}\0`,
-          });
-        }
-        if (conflicts.size) return { resultSha: result.head, conflicts: [...conflicts].sort() };
-        if ((await this.command(['ls-files', '--unmerged', '-z'], { indexFile })).stdout) throw new GitRuntimeError('INVALID_TREE');
-        const treeSha = shaSchema.parse((await this.command(['write-tree'], { indexFile })).stdout.trim());
-        proposed = await this.tree(treeSha);
-        for (const entry of proposed.values()) await this.blob(entry.hash);
-        resultSha = shaSchema.parse((await this.command(['commit-tree', treeSha,
-          '-p', result.head, '-p', worker.head, '-m', `Integrate worker ${agentInstanceId} into run ${runId}`])).stdout.trim());
-      } finally {
-        // Exact server-allocated scratch directory; contains no user worktree.
-        await rm(temporary, { recursive: true, force: true });
-      }
+      const treeSha = await this.mergeTree(worker.base, result.head, worker.head, conflicts, ['current', 'base', 'worker']);
+      if (treeSha === null) return await conflictResult(conflicts);
+      proposed = await this.tree(treeSha);
+      for (const entry of proposed.values()) await this.blob(entry.hash);
+      resultSha = shaSchema.parse((await this.command(['commit-tree', treeSha,
+        '-p', result.head, '-p', worker.head, '-m', `Integrate worker ${agentInstanceId} into run ${runId}`])).stdout.trim());
     }
-    if (conflicts.size) return { resultSha: result.head, conflicts: [...conflicts].sort() };
+    if (conflicts.size) return await conflictResult(conflicts);
     portablePaths(new Set([...current.keys(), ...proposed.keys()]));
     const managed = await this.ensure('results', runId, result.base, false);
     if (managed.head !== result.head) throw new ApiError('CONFLICT', 'Result head changed during integration.');
-    await this.command(['update-ref', `refs/heads/${managed.branch}`, resultSha, result.head]);
+    const publish = async () => { await this.command(['update-ref', `refs/heads/${managed.branch}`, resultSha, result.head]); };
+    if (authority) await authority.guard({ status: 'integrated', resultSha }, publish);
+    else await publish();
     try { await this.synchronize({ ...managed, head: resultSha }, proposed); }
     catch { throw new GitRuntimeError('WORKTREE_SYNC_FAILED'); }
     return { resultSha, conflicts: [] };
+  }
+
+  /**
+   * Three-way merge of two trees over a common base, into a written tree.
+   *
+   * read-tree handles trivial resolutions; merge-file resolves the remaining
+   * text stages without checkout, attributes, external drivers, or hooks.
+   * Unresolved paths are added to `conflicts` and the result is null, so a
+   * caller cannot mistake a partially merged index for a mergeable one.
+   * `labels` name the temporary ours/base/theirs files merge-file reports.
+   */
+  private async mergeTree(base: string, ours: string, theirs: string,
+    conflicts: Set<string>, labels: [string, string, string]): Promise<string | null> {
+    const temporary = await mkdtemp(join(this.repository, 'integration-'));
+    const indexFile = join(temporary, 'index');
+    try {
+      await this.command(['read-tree', '-i', '-m', base, ours, theirs], { indexFile });
+      const listing = await this.command(['ls-files', '--unmerged', '-z'], { indexFile });
+      const stages = new Map<string, Map<number, Entry>>();
+      for (const record of listing.stdout.split('\0').filter(Boolean)) {
+        const match = /^(100644|100755) ([0-9a-f]{40}) ([123])\t([\s\S]+)$/.exec(record);
+        if (!match || filePath(match[4]!) !== match[4]) throw new GitRuntimeError('INVALID_TREE');
+        const path = match[4]!;
+        const entries = stages.get(path) ?? new Map<number, Entry>();
+        entries.set(Number(match[3]), { mode: match[1]!, hash: match[2]! });
+        stages.set(path, entries);
+      }
+      for (const [path, entries] of stages) {
+        const b = entries.get(1), left = entries.get(2), right = entries.get(3);
+        if (!b || !left || !right) { conflicts.add(path); continue; }
+        const mode = left.mode === right.mode ? left.mode : left.mode === b.mode ? right.mode
+          : right.mode === b.mode ? left.mode : undefined;
+        if (!mode) { conflicts.add(path); continue; }
+        const names = labels.map((name) => join(temporary, name));
+        for (const [i, entry] of [left, b, right].entries()) await writeFile(names[i]!, await this.blob(entry.hash));
+        const merged = await this.command(['merge-file', '-p', ...names], {
+          binary: true, allowedExitCodes: Array.from({ length: 127 }, (_, i) => i + 1),
+        });
+        if (merged.exitCode !== 0) { conflicts.add(path); continue; }
+        const bytes = merged.stdoutBytes!;
+        decodeText(bytes);
+        const hash = shaSchema.parse((await this.command(['hash-object', '-w', '--stdin', '--no-filters'], { input: bytes })).stdout.trim());
+        await this.command(['update-index', '-z', '--index-info'], {
+          indexFile, input: `0 ${'0'.repeat(40)}\t${path}\0${mode} ${hash}\t${path}\0`,
+        });
+      }
+      if (conflicts.size) return null;
+      if ((await this.command(['ls-files', '--unmerged', '-z'], { indexFile })).stdout) throw new GitRuntimeError('INVALID_TREE');
+      return shaSchema.parse((await this.command(['write-tree'], { indexFile })).stdout.trim());
+    } finally {
+      // Exact server-allocated scratch directory; contains no user worktree.
+      await rm(temporary, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Section 8.4's start snapshot: approved main combined with the human draft
+   * checkpoint, for C06 to record as the run's immutable input.
+   *
+   * Publishes no ref. The snapshot is reachable from the run's result branch
+   * once the scheduler creates it; `gc.auto=0` keeps the loose commit in the
+   * meantime. Main and the human draft are read, never written: a contributor
+   * keeps typing on their own lineage while this run is prepared.
+   */
+  async startSnapshot(taskId: string, mainSha: string, draftSha: string) {
+    const main = await this.commit(mainSha);
+    const draft = await this.commit(draftSha);
+    const human = await this.ref(`refs/heads/${this.location('human', taskId).branch}`);
+    if (!human) throw new ApiError('INVALID_STATE', 'Capture the human draft before combining a start snapshot.');
+    // A checkpoint from another task or workspace is not this task's draft.
+    if (!await this.ancestor(draft, human)) throw new ApiError('INPUT_CONFLICT', 'That checkpoint is outside this task draft lineage.');
+    if (await this.ancestor(main, draft)) return { snapshotSha: draft, conflicts: [] };
+    if (await this.ancestor(draft, main)) return { snapshotSha: main, conflicts: [] };
+
+    const found = await this.command(['merge-base', main, draft], { allowedExitCodes: [1] });
+    if (found.exitCode !== 0) throw new ApiError('INPUT_CONFLICT', 'Approved main and this draft share no history.');
+    const base = shaSchema.parse(found.stdout.trim());
+    const trees = new Map<string, Tree>();
+    for (const sha of new Set([base, main, draft])) {
+      const tree = await this.tree(sha);
+      for (const entry of tree.values()) await this.blob(entry.hash);
+      trees.set(sha, tree);
+    }
+    // Two individually valid trees can still introduce a portable namespace
+    // collision. Report original paths, never Git's synthesized names.
+    const paths = [...new Set([...trees.get(main)!.keys(), ...trees.get(draft)!.keys()])];
+    const conflicts = new Set<string>();
+    for (let i = 0; i < paths.length; i++) for (let j = i + 1; j < paths.length; j++) {
+      try { portablePaths([paths[i]!, paths[j]!]); }
+      catch { conflicts.add(paths[i]!); conflicts.add(paths[j]!); }
+    }
+    const treeSha = await this.mergeTree(base, main, draft, conflicts, ['main', 'base', 'draft']);
+    if (treeSha === null) return { snapshotSha: null, conflicts: [...conflicts].sort() };
+    const proposed = await this.tree(treeSha);
+    for (const entry of proposed.values()) await this.blob(entry.hash);
+    portablePaths(new Set(proposed.keys()));
+    const snapshotSha = shaSchema.parse((await this.command(['commit-tree', treeSha,
+      '-p', main, '-p', draft, '-m', `Start snapshot for task ${taskId}`])).stdout.trim());
+    return { snapshotSha, conflicts: [] };
   }
 
   private async mutate(managed: Managed, changes: TextChange[], message: string, guard?: WorkerCommitGuard) {
