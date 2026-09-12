@@ -342,7 +342,7 @@ All contributors can discuss changes. Only the owner key enables application. Th
 |---|---|---|
 | Frontend | React, TypeScript, Vite | Workspace/task interface |
 | Routing | React Router | Page navigation |
-| Components | Tailwind plus a small existing component set | Forms, tabs, dialogs, panels |
+| Components | Local React components, CSS design tokens, and Lucide React icons | Forms, tabs, dialogs, panels, and interface icons |
 | Client server-state | TanStack Query | API requests, refresh, fallback polling |
 | Text/code editor | Monaco | Editing and diff views |
 | Shared typing | Yjs + y-monaco | Concurrent text operations and editor binding |

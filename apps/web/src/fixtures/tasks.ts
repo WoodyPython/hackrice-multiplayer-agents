@@ -1,0 +1,102 @@
+import {
+  taskDetailSchema,
+  taskSummarySchema,
+  type TaskDetail,
+  type TaskSummary,
+} from '@app/contracts';
+
+export const DEMO_WORKSPACE_ID = '58bb9109-ad24-45ac-8f84-169226b03e69';
+
+const rawTasks = [
+  {
+    id: 'c209529d-61be-4779-9d67-c2257be14023',
+    workspaceId: DEMO_WORKSPACE_ID,
+    kind: 'agent_task',
+    title: 'Shape the launch story',
+    outcome: 'Turn the product notes into a concise launch narrative for the demo.',
+    criteria: ['Explains the collaborative workflow', 'Uses only confirmed product claims'],
+    version: 3,
+    status: 'working',
+    creatorGuestLabel: 'Guest Cedar',
+    activeRunId: '087c426d-93bd-4f13-a8c5-19b32c9ff23d',
+    materialCount: 3,
+    openQuestionCount: 0,
+    updatedAt: '2026-09-12T13:28:00-05:00',
+  },
+  {
+    id: 'da8ec94c-2573-4787-b13e-c38f302d0287',
+    workspaceId: DEMO_WORKSPACE_ID,
+    kind: 'agent_task',
+    title: 'Draft the judging FAQ',
+    outcome: 'Write a short FAQ covering the questions judges are most likely to ask.',
+    criteria: ['Answers stay under 120 words', 'Unknown facts are clearly marked'],
+    version: 1,
+    status: 'posted',
+    creatorGuestLabel: 'Guest Juniper',
+    activeRunId: null,
+    materialCount: 2,
+    openQuestionCount: 0,
+    updatedAt: '2026-09-12T12:42:00-05:00',
+  },
+  {
+    id: '1f21661a-d462-4667-87b2-63cf71dd02d2',
+    workspaceId: DEMO_WORKSPACE_ID,
+    kind: 'agent_task',
+    title: 'Verify architecture claims',
+    outcome: 'Cross-check the technical overview against the implementation plan.',
+    criteria: ['Cites the relevant design sections', 'Calls out unresolved dependencies'],
+    version: 2,
+    status: 'needs_input',
+    creatorGuestLabel: 'Guest Saffron',
+    activeRunId: '60400fc9-29ef-489f-9011-965673fa07c9',
+    materialCount: 1,
+    openQuestionCount: 1,
+    updatedAt: '2026-09-12T13:09:00-05:00',
+  },
+  {
+    id: '657593f5-81e7-486a-b05a-20b8d3a68a53',
+    workspaceId: DEMO_WORKSPACE_ID,
+    kind: 'manual_edit',
+    title: 'Polish the project overview',
+    outcome: 'Make the overview ready for owner review.',
+    criteria: ['Clear opening paragraph', 'Consistent terminology'],
+    version: 4,
+    status: 'ready_for_review',
+    creatorGuestLabel: 'Guest Cedar',
+    activeRunId: null,
+    materialCount: 0,
+    openQuestionCount: 0,
+    updatedAt: '2026-09-12T11:18:00-05:00',
+  },
+  {
+    id: 'b815138b-579f-499a-966e-f4ce86fb226c',
+    workspaceId: DEMO_WORKSPACE_ID,
+    kind: 'agent_task',
+    title: 'Create sample task prompts',
+    outcome: 'Add three example prompts for first-time collaborators.',
+    criteria: ['Examples cover writing and coding', 'Each prompt has acceptance criteria'],
+    version: 1,
+    status: 'completed',
+    creatorGuestLabel: 'Guest Willow',
+    activeRunId: null,
+    materialCount: 1,
+    openQuestionCount: 0,
+    updatedAt: '2026-09-11T19:36:00-05:00',
+  },
+] satisfies TaskSummary[];
+
+export const fixtureTasks = rawTasks.map((task) => taskSummarySchema.parse(task));
+
+export const fixtureTaskDetails: Record<string, TaskDetail> = Object.fromEntries(
+  fixtureTasks.map((task) => [
+    task.id,
+    taskDetailSchema.parse({
+      ...task,
+      manualSourcePath: task.kind === 'manual_edit' ? 'documents/project-overview.md' : null,
+      outputPaths: task.kind === 'manual_edit' ? ['documents/project-overview.md'] : [],
+      discussionSeq: 0,
+      inputs: [],
+      createdAt: task.updatedAt,
+    }),
+  ]),
+);
