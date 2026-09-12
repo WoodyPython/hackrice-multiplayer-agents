@@ -7,6 +7,7 @@ import {
 import { isUniqueViolation, type Db } from '../db/client.js';
 import type { DraftFileRow } from '../db/types.js';
 import { toIso } from '../http/serialize.js';
+import { assertTaskMutable, invalidateTaskReviews } from '../tasks/mutation-guard.js';
 
 /**
  * B05: collaborative snapshot persistence (design sections 7.1 to 7.3, 11.3).
@@ -35,6 +36,21 @@ export interface LoadedDraft {
 
 export class PgDraftStore {
   constructor(private readonly deps: DraftStoreDeps) {}
+
+  async openTaskDraft(workspaceId: string, taskId: string, path: string): Promise<DraftFile> {
+    return this.deps.db.transaction().execute(async (db) => {
+      const task = await db.selectFrom('tasks').select(['id', 'status'])
+        .where('id', '=', taskId).where('workspace_id', '=', workspaceId).forUpdate().executeTakeFirst();
+      if (!task) throw new ApiError('TASK_NOT_FOUND');
+      if (task.status === 'completed') throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+      await assertTaskMutable(db, taskId);
+      const store = new PgDraftStore({ db });
+      const existing = await store.findActive(taskId, path);
+      const draft = await store.openForTask(workspaceId, taskId, path);
+      if (!existing) await invalidateTaskReviews(db, taskId, `draft_opened:${draft.id}`);
+      return draft;
+    });
+  }
 
   // -------------------------------------------------------------------------
   // Opening

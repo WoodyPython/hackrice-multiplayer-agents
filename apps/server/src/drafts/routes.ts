@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { openDraftRequestSchema, uuidSchema } from '@app/contracts';
+import { draftFileSchema, openDraftRequestSchema, uuidSchema } from '@app/contracts';
 import { parseOrThrow } from '../http/errors.js';
 import type { PgDraftStore } from './store.js';
 
@@ -25,6 +25,11 @@ export async function registerDraftRoutes(
   app: FastifyInstance,
   deps: DraftRouteDeps,
 ): Promise<void> {
+  app.post('/api/workspaces/:workspaceId/tasks/:taskId/drafts', async (request, reply) => {
+    const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
+    const { path } = parseOrThrow(openDraftRequestSchema.pick({ path: true }).strict(), request.body);
+    return reply.code(200).send(draftFileSchema.parse(await deps.drafts.openTaskDraft(workspaceId, taskId, path)));
+  });
   /**
    * "Edit together" (section 2.5). Find-or-create, so concurrent clicks on the
    * same file converge on one editing task rather than forking the draft.

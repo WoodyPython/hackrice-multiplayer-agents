@@ -191,6 +191,21 @@ export class LocalGitService implements Pick<GitService,
     return this.files(value.workspaceId, async (files) => gitReadTextResultSchema.parse(await files.read(value.target, path)));
   }
 
+  async listApprovedFiles(workspaceId: string) {
+    return this.files(uuidSchema.parse(workspaceId), async (files, repo) => ({
+      mainSha: repo.mainSha,
+      files: [...await files.tree(repo.mainSha)].map(([path, entry]) => ({ path, hash: entry.hash }))
+        .sort((a, b) => a.path.localeCompare(b.path)),
+    }));
+  }
+
+  async readApprovedFile(workspaceId: string, rawPath: string) {
+    const path = filePath(rawPath);
+    return this.files(uuidSchema.parse(workspaceId), async (files, repo) => ({
+      mainSha: repo.mainSha, ...await files.read({ kind: 'commit', commitSha: repo.mainSha }, path),
+    }));
+  }
+
   async checkpoint(input: Parameters<GitService['checkpoint']>[0]) {
     const value = parse(gitCheckpointRequestSchema, input);
     const batch = checkpointFiles(value.files);

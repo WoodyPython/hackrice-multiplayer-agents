@@ -1,5 +1,5 @@
 import {
-  ORCHESTRATOR_AGENT_KEY, isReadOnlyPreset, isSupportedTextExtension, orchestratorPlanSchema, repoPathSchema,
+  ORCHESTRATOR_AGENT_KEY, isReadOnlyPreset, orchestratorPlanSchema, workspaceFilePathSchema,
   type AgentPlan, type PlanValidationError,
 } from '@app/contracts';
 
@@ -11,14 +11,8 @@ export type PlanValidationResult =
  * resolved path, expected hash and live execution state at the mutation gate.
  */
 export function isPermittedWritePath(path: string): boolean {
-  if (!repoPathSchema.safeParse(path).success || !isSupportedTextExtension(path) || path !== path.normalize('NFC') ||
-      /[<>:"\\|?*\u0000-\u001f\u007f]/u.test(path)) return false;
-  const parts = path.split('/');
-  if (!['documents', 'code'].includes(parts[0]!) || parts.length < 2) return false;
-  return parts.every((part) => part !== '' && part !== '.' && part !== '..' &&
-    part === part.trim() && !part.endsWith('.') &&
-    !['.git', '.gitattributes', '.gitmodules', 'hooks'].includes(part.toLowerCase()) && !/~\d/.test(part) &&
-    !/^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(part));
+  const parsed = workspaceFilePathSchema.safeParse(path);
+  return parsed.success && parsed.data === path;
 }
 
 /** No model output reaches storage or dispatch before this gate succeeds. */

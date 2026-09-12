@@ -42,6 +42,8 @@ export type Run = z.infer<typeof runSchema>;
  * Section 3.3. The exact inputs a run was built from, captured once at Start.
  */
 export const contextManifestSchema = z.object({
+  selectedDrafts: z.array(z.object({ draftFileId: z.string().uuid(), taskId: z.string().uuid(),
+    path: repoPathSchema, checkpointSha: shaSchema, hash: shaSchema })).optional(),
   savedOutputs: z.array(capturedSavedOutputSchema.omit({ text: true })).optional(),
   taskVersion: z.number().int().positive(),
   guidanceVersion: z.number().int().positive(),
@@ -230,7 +232,7 @@ export const planningContextSchema = z.object({
   sources: z.array(z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('material'), materialId: z.string().uuid(), sha256: z.string(), text: z.string() }),
     z.object({ kind: z.literal('approved'), path: repoPathSchema, text: z.string() }),
-    z.object({ kind: z.literal('draft'), path: repoPathSchema, text: z.string() }),
+    z.object({ kind: z.literal('draft'), path: repoPathSchema, text: z.string(), draftFileId: z.string().uuid().optional() }),
   ])),
 });
 export type PlanningContext = z.infer<typeof planningContextSchema>;

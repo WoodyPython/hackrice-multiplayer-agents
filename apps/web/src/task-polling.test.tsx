@@ -40,10 +40,10 @@ it('rescans paginated mutable questions without mutating the last good thread on
 
 it('keeps unavailable selected inputs until explicitly removed', () => {
   const onSubmit = vi.fn();
-  const form = render(<RequirementForm options={[]} initial={{ title: 'Keep context', inputs: [{ approvedPath: 'docs/old.md', sourceVersion: 'pinned-sha' }] }} onSubmit={onSubmit} onCancel={() => {}} />);
+  const form = render(<RequirementForm options={[]} initial={{ title: 'Keep context', inputs: [{ approvedPath: 'documents/old.md', sourceVersion: 'pinned-sha' }] }} onSubmit={onSubmit} onCancel={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: 'Post task' }));
-  expect(onSubmit.mock.calls[0]![0].inputs).toEqual([{ approvedPath: 'docs/old.md', sourceVersion: 'pinned-sha' }]);
-  form.rerender(<RequirementForm options={[{ label: 'Now listed', category: 'Approved file', value: { approvedPath: 'docs/old.md' } }]} onSubmit={onSubmit} onCancel={() => {}} />);
+  expect(onSubmit.mock.calls[0]![0].inputs).toEqual([{ approvedPath: 'documents/old.md', sourceVersion: 'pinned-sha' }]);
+  form.rerender(<RequirementForm options={[{ label: 'Now listed', category: 'Approved file', value: { approvedPath: 'documents/old.md' } }]} onSubmit={onSubmit} onCancel={() => {}} />);
   expect(screen.getAllByRole('checkbox')).toHaveLength(1);
   expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true);
   fireEvent.click(screen.getByRole('checkbox'));

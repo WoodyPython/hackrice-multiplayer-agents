@@ -1,5 +1,7 @@
 import {
   ApiError,
+  approvedFilesSchema,
+  approvedFileContentSchema,
   OWNER_KEY_HEADER,
   answerQuestionResponseSchema,
   apiErrorBodySchema,
@@ -640,6 +642,16 @@ export class WorkspaceApi {
 
   // --- materials -----------------------------------------------------------
 
+  async listApprovedFiles(workspaceId: string, signal?: AbortSignal) {
+    uuidSchema.parse(workspaceId);
+    return approvedFilesSchema.parse(await this.request(`/${workspaceId}/files`, "GET", undefined, workspaceId, signal));
+  }
+
+  async readApprovedFile(workspaceId: string, path: string, signal?: AbortSignal) {
+    uuidSchema.parse(workspaceId);
+    return approvedFileContentSchema.parse(await this.request(`/${workspaceId}/files/content?path=${encodeURIComponent(path)}`, "GET", undefined, workspaceId, signal));
+  }
+
   async listMaterials(
     workspaceId: string,
     signal?: AbortSignal,
@@ -735,6 +747,11 @@ export class WorkspaceApi {
   }
 
   // --- drafts --------------------------------------------------------------
+
+  async openTaskDraft(workspaceId: string, taskId: string, path: string) {
+    uuidSchema.parse(workspaceId); uuidSchema.parse(taskId);
+    return draftFileSchema.parse(await this.request(`/${workspaceId}/tasks/${taskId}/drafts`, "POST", { path }, workspaceId));
+  }
 
   async listWorkspaceDrafts(
     workspaceId: string,

@@ -1,4 +1,4 @@
-import type { DraftFile, Material, TaskInputLink } from "@app/contracts";
+import type { ApprovedFile, DraftFile, Material, TaskInputLink } from "@app/contracts";
 
 /**
  * One selectable context source for a task (design §2.1, §3.3).
@@ -16,13 +16,7 @@ export type TaskInputOption = {
 /**
  * Build the picker's options from what the workspace actually holds.
  *
- * §2.1 names three categories: reference materials, approved files, and shared
- * drafts. Only two are buildable. **Approved files cannot be listed** — the Git
- * service exposes `readText(path)` for a single known path and has no tree or
- * list operation, so nothing in the system can enumerate what is on main. The
- * picker therefore offers materials and drafts, and the caller tells the user
- * plainly that approved files are not selectable yet rather than showing an
- * empty category that reads like "there are none".
+ * All three categories come from authoritative workspace reads.
  *
  * Materials come first because they are the category people arrive with; a
  * draft only exists once someone has started editing.
@@ -30,6 +24,7 @@ export type TaskInputOption = {
 export function inputOptionsFrom(
   materials: Material[],
   drafts: DraftFile[],
+  approved: ApprovedFile[] = [],
 ): TaskInputOption[] {
   return [
     ...materials
@@ -44,6 +39,7 @@ export function inputOptionsFrom(
       category: "Shared draft",
       value: { draftFileId: draft.id },
     })),
+    ...approved.map((file) => ({ label: file.path, category: "Approved file", value: { approvedPath: file.path } })),
   ];
 }
 

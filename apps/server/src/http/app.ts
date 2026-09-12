@@ -243,6 +243,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     onError: (error) => app.log.warn({ err: error }, 'event pump sweep failed'),
   });
   app.decorate('eventPump', pump);
+  app.addHook('onListen', async () => { await pump.start(); });
   app.addHook('onClose', async () => { await pump.stop(); });
 
   return app;

@@ -158,10 +158,12 @@ function validateContext(context: PlanningContext): void {
     ...manifest.materials.map((m) => [`material:${m.materialId}`, m.sha256] as const),
     ...manifest.approvedPaths.map((p) => [`approved:${p}`, undefined] as const),
     ...Object.keys(manifest.draftFileHashes).map((p) => [`draft:${p}`, undefined] as const),
+    ...(manifest.selectedDrafts ?? []).map((draft) => [`draft:${draft.draftFileId}:${draft.path}`, undefined] as const),
   ]);
   const seen = new Set<string>();
   for (const source of context.sources) {
-    const key = source.kind === 'material' ? `material:${source.materialId}` : `${source.kind}:${source.path}`;
+    const key = source.kind === 'material' ? `material:${source.materialId}`
+      : source.kind === 'draft' && source.draftFileId ? `draft:${source.draftFileId}:${source.path}` : `${source.kind}:${source.path}`;
     if (!selected.has(key) || seen.has(key) || (source.kind === 'material' && selected.get(key) !== source.sha256)) {
       throw new PlanningError('context_mismatch');
     }

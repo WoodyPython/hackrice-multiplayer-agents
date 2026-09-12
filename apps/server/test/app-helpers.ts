@@ -1,4 +1,6 @@
 import { Writable } from 'node:stream';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { FastifyInstance } from 'fastify';
 import { NullOrchestrationHook, NullWorkspaceLifecycleHook } from '@app/contracts';
 import type { BlobStore } from '../src/materials/blob-store.js';
@@ -25,7 +27,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     WORKSPACE_CREATE_WINDOW: '1 minute',
     bootId: BOOT_ID,
     isProduction: false,
-    gitDataRoot: '/tmp/test-git-root',
+    gitDataRoot: join(tmpdir(), 'test-git-root'),
     ...overrides,
   };
 }
