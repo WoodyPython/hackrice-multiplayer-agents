@@ -6,18 +6,34 @@ import {
   uuidSchema,
   type DraftFile,
   type Material,
+  type TaskAttempt,
   type TaskDetail as Task,
+  type TaskEvent,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
 import { inputOptionsFrom, type TaskInputOption } from "../task-inputs";
+import { Assignments } from "../components/Assignments";
 import { Discussion, useDiscussion } from "../components/Discussion";
+import { RunOutcome } from "../components/RunOutcome";
 import { EmptyState } from "../components/EmptyState";
 import { RequirementForm, type TaskFields } from "../components/RequirementForm";
 import { TaskDetail, type TaskTab } from "./TaskDetail";
 
 const ACTIVE = ["planning", "working", "needs_input"];
 const RETRYABLE = ["incomplete", "interrupted", "canceled"];
+
+/**
+ * Poll faster while an attempt is live.
+ *
+ * §5 makes durable events authoritative and realtime a latency optimisation
+ * over polling, so the interval is a comfort setting rather than a correctness
+ * one. Five seconds is fine for a posted task that changes when someone types;
+ * it is too coarse while agents are running, where planning → working →
+ * needs_input can all happen inside one tick and the screen looks stuck.
+ */
+const POLL_ACTIVE_MS = 2000;
+const POLL_IDLE_MS = 5000;
 
 /**
  * The live task screen (design §2.1–2.4, §4.2).
@@ -42,7 +58,12 @@ export function TaskDetailPage({ workspaceId }: { workspaceId: string }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [nonce, setNonce] = useState(0);
+  const [attempts, setAttempts] = useState<TaskAttempt[]>([]);
+  const [events, setEvents] = useState<TaskEvent[]>([]);
   const startId = useRef(crypto.randomUUID());
+  // Read inside the polling loop, which must not restart every time the task
+  // status changes — a restarting interval is how a poll ends up firing twice.
+  const live = useRef(false);
 
   const valid = uuidSchema.safeParse(taskId).success;
   const reload = useCallback(() => setNonce((value) => value + 1), []);
@@ -60,15 +81,23 @@ export function TaskDetailPage({ workspaceId }: { workspaceId: string }) {
     let stopped = false;
     const pull = async () => {
       try {
-        const [detail, mats, drafted] = await Promise.all([
+        const [detail, mats, drafted, runs, log] = await Promise.all([
           api.readTask(workspaceId, taskId, controller.signal),
           api.listMaterials(workspaceId, controller.signal),
           api.listWorkspaceDrafts(workspaceId, controller.signal),
+          api.listTaskAgents(workspaceId, taskId, controller.signal),
+          api.listTaskEvents(workspaceId, taskId, undefined, controller.signal),
         ]);
         if (controller.signal.aborted || stopped) return;
         setTask(detail);
         setMaterials(mats);
         setDrafts(drafted);
+        setAttempts(runs);
+        // Read whole rather than from a cursor: the outcome panel needs the
+        // LATEST start-phase reason, and a cursor-advanced read would hold only
+        // whatever arrived since the last poll.
+        setEvents(log.events);
+        live.current = ACTIVE.includes(detail.status);
         setStatus("ready");
       } catch (error) {
         if (controller.signal.aborted || stopped) return;
@@ -79,7 +108,10 @@ export function TaskDetailPage({ workspaceId }: { workspaceId: string }) {
         );
       } finally {
         if (!controller.signal.aborted && !stopped)
-          timer = setTimeout(() => void pull(), 5000);
+          timer = setTimeout(
+            () => void pull(),
+            live.current ? POLL_ACTIVE_MS : POLL_IDLE_MS,
+          );
       }
     };
     void pull();
@@ -263,17 +295,7 @@ export function TaskDetailPage({ workspaceId }: { workspaceId: string }) {
         );
       }
       case "Agents":
-        // Honest rather than empty-looking: the data does not exist yet. C06
-        // supplies the orchestration hook that creates assignments at all, and
-        // no route serves `AgentProgress` even once it does. Saying "no agents
-        // have run" here would be a claim we cannot support.
-        return (
-          <EmptyState title="Agent progress is not available yet">
-            Assignments, dependencies, and token usage will appear here once
-            orchestration (C06) is connected and the progress endpoint exists.
-            Starting a task today records the attempt but runs no agents.
-          </EmptyState>
-        );
+        return <Assignments attempts={attempts} />;
       case "Changes":
         return (
           <EmptyState title="Review is not connected yet">
@@ -333,6 +355,7 @@ export function TaskDetailPage({ workspaceId }: { workspaceId: string }) {
       task={task}
       base={base}
       options={options}
+      banner={<RunOutcome events={events} status={task.status} />}
       action={action}
       renderTab={renderTab}
       onEditRequirements={

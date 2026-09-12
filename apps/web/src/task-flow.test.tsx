@@ -154,6 +154,10 @@ function server(overrides: Record<string, (call: Call) => Response> = {}) {
         return json({ drafts: [draft] });
       case `GET /tasks/${taskId}/discussion`:
         return json({ entries: [entry()], latestSeq: 1, activeRunCutoffSeq: null });
+      case `GET /tasks/${taskId}/agents`:
+        return json({ attempts: [] });
+      case `GET /tasks/${taskId}/events`:
+        return json({ events: [], latestId: null });
       default:
         return json({}, 500);
     }
@@ -488,5 +492,160 @@ describe("files", () => {
     // Nothing can enumerate main. "No approved files" would be a claim we
     // cannot support; "not available yet" is the one we can.
     expect(screen.getByText("Not available yet")).toBeTruthy();
+  });
+});
+
+const runId = "70000000-0000-4000-8000-000000000ff1";
+
+const assignment = (over: Record<string, unknown> = {}) => ({
+  id: crypto.randomUUID(),
+  runId,
+  taskId,
+  agentKey: "facts",
+  assignmentKey: "facts",
+  preset: "analyst",
+  status: "completed",
+  instructionSummary: "Extract the facts.",
+  writePaths: [],
+  dependsOn: [],
+  baseSha: null,
+  resultSha: null,
+  startedAt: at,
+  deadlineAt: null,
+  endedAt: at,
+  ...over,
+});
+
+const attempt = (over: Record<string, unknown> = {}) => ({
+  runId,
+  attempt: 1,
+  status: "working",
+  taskVersion: 2,
+  createdAt: at,
+  endedAt: null,
+  assignments: [],
+  ...over,
+});
+
+const startEvent = (reason: string, payload: Record<string, unknown> = {}) => ({
+  id: crypto.randomUUID(),
+  taskId,
+  runId,
+  type: "agent.waiting",
+  payload: { phase: "start", reason, ...payload },
+  createdAt: at,
+});
+
+describe("agent progress", () => {
+  async function openAgents(overrides: Parameters<typeof server>[0]) {
+    const user = userEvent.setup();
+    const { transport, calls } = server(overrides);
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    await user.click(await screen.findByRole("tab", { name: "Agents" }));
+    return { user, calls };
+  }
+
+  it("lays assignments out in dependency waves so parallel work is visible", async () => {
+    const facts = assignment({ assignmentKey: "facts" });
+    const faq = assignment({ assignmentKey: "faq", preset: "writer", dependsOn: [facts.id], writePaths: ["documents/faq.md"] });
+    const announce = assignment({ assignmentKey: "announce", preset: "writer", dependsOn: [facts.id], writePaths: ["documents/announce.md"] });
+    const review = assignment({ assignmentKey: "review", preset: "reviewer", dependsOn: [faq.id, announce.id] });
+    await openAgents({
+      [`GET /tasks/${taskId}/agents`]: () =>
+        json({ attempts: [attempt({ assignments: [facts, faq, announce, review] })] }),
+    });
+
+    // §4.5: "Parallel workers are visibly distinct." faq and announce depend on
+    // facts and on nothing else, so they are the one wave that can run at once.
+    expect(await screen.findByText("2 in parallel")).toBeTruthy();
+    expect(screen.getByText("documents/faq.md")).toBeTruthy();
+    expect(screen.getByText("documents/announce.md")).toBeTruthy();
+  });
+
+  it("keeps a failed attempt inspectable after a retry", async () => {
+    await openAgents({
+      [`GET /tasks/${taskId}/agents`]: () =>
+        json({
+          attempts: [
+            attempt({ attempt: 2, assignments: [assignment({ assignmentKey: "second" })] }),
+            attempt({ runId: "70000000-0000-4000-8000-000000000ff2", attempt: 1, status: "incomplete", endedAt: at,
+                      assignments: [assignment({ assignmentKey: "first", status: "timed_out" })] }),
+          ],
+        }),
+    });
+
+    // §4.7: an incomplete task shows preserved output. A retry must not make
+    // the earlier attempt's work unreachable.
+    expect(await screen.findByRole("region", { name: "Attempt 1" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Attempt 2" })).toBeTruthy();
+    expect(screen.getByText("timed out")).toBeTruthy();
+  });
+
+  it("says no attempt has run rather than implying agents failed", async () => {
+    await openAgents({});
+    expect(await screen.findByText("No attempt has run yet")).toBeTruthy();
+  });
+});
+
+describe("why an attempt ended", () => {
+  it("names the files behind a snapshot conflict without showing the raw code", async () => {
+    const { transport } = server({
+      [`GET /tasks/${taskId}`]: () => json({ ...task, status: "conflict" }),
+      [`GET /tasks/${taskId}/events`]: () =>
+        json({
+          events: [startEvent("context_captured"), startEvent("snapshot_conflict", { paths: ["documents/faq.md"] })],
+          latestId: "9",
+        }),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+
+    expect(
+      await screen.findByText(/could not be combined/),
+    ).toBeTruthy();
+    expect(screen.getByText("documents/faq.md")).toBeTruthy();
+    // The interface note is explicit: never show these codes raw as the
+    // primary message. They are stable identifiers, not copy.
+    expect(screen.queryByText("snapshot_conflict")).toBeNull();
+  });
+
+  it("surfaces inputs that were selected but never reached the agents", async () => {
+    const { transport } = server({
+      [`GET /tasks/${taskId}/events`]: () =>
+        json({
+          events: [startEvent("context_captured", { omitted: ["brief.md"] })],
+          latestId: "9",
+        }),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+
+    // The easiest payload to ignore and the most damaging to: without it a
+    // contributor believes the agents read a document they never saw.
+    expect(await screen.findByText(/were not included/)).toBeTruthy();
+    expect(screen.getByText("brief.md")).toBeTruthy();
+  });
+
+  it("still explains an unrecognised reason instead of rendering nothing", async () => {
+    const { transport } = server({
+      [`GET /tasks/${taskId}`]: () => json({ ...task, status: "incomplete" }),
+      [`GET /tasks/${taskId}/events`]: () =>
+        json({ events: [startEvent("some_reason_added_later")], latestId: "9" }),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+
+    // "the codes are stable, the set is not closed" — a new one must not
+    // render as a blank panel.
+    expect(await screen.findByText("This attempt did not complete")).toBeTruthy();
+  });
+
+  it("shows no outcome panel while the attempt is still running", async () => {
+    const { transport } = server({
+      [`GET /tasks/${taskId}`]: () => json({ ...task, status: "working", activeRunId: runId }),
+      [`GET /tasks/${taskId}/events`]: () =>
+        json({ events: [startEvent("context_captured")], latestId: "9" }),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+
+    await screen.findByRole("tab", { name: "Agents" });
+    expect(screen.queryByText(/did not complete/)).toBeNull();
   });
 });

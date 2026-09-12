@@ -368,31 +368,33 @@ Show token usage per task per agent as read-only information if useful. Do not e
 
 Time left may be displayed for a running agent; its deadline is always fixed by the backend.
 
-**Assignment rows still have no route, though the data now exists.** Since C05
-and C06 a Start really does plan and dispatch, so `agent_instances` rows are
-written and carry every required field above — preset, status, instruction,
-write paths, dependencies, `startedAt` and `deadlineAt`. What is missing is only
-an endpoint. `agentProgressSchema` is defined in `@app/contracts`, and task
-events carry `{ agentId }`, which is enough to know something happened and not
-enough to render a row.
+**`GET /tasks/:t/agents` serves this, grouped by attempt.** Every attempt on the
+task is returned newest first with its own assignments, rather than only the
+latest: this section's sibling 4.7 requires an incomplete task to show preserved
+output, so a retry must not make the failed attempt's work unreachable. It is
+addressed by task rather than by run because `TaskDetail.activeRunId` is null
+once a run ends, and a finished attempt is exactly what someone inspecting an
+incomplete task wants.
 
-The gap is small and worth stating precisely, because it decides how much of
-this section is buildable:
+Two things the response deliberately omits:
 
-- Everything this section *requires* comes from `AgentInstance`, and Role B's
-  `PgRunStore.listInstances(runId)` already returns exactly that. A read route
-  over it is the whole job.
-- Token usage is the one field that needs more — it lives in
-  `task_agent_budgets` behind Role C's ledger, which has no read method. This
-  section already marks that display optional ("if useful"), so it need not
-  block the rest.
-- Address the route by task rather than by run. `TaskDetail.activeRunId` is null
-  once a run ends, and the assignments of a finished attempt are exactly what
-  someone reviewing an `incomplete` task needs to look at.
+- **The instruction in full.** A worker instruction runs to tens of thousands of
+  characters; the browser receives a summary. Sending it whole would also put
+  the model's complete brief in front of anyone holding the link.
+- **Token figures, for now.** They live in `task_agent_budgets` behind Role C's
+  ledger, which has no read method. They are absent rather than zero — a zero
+  reads as a measurement rather than a missing one. This section already marks
+  that display optional ("if useful"), and the token-exhaustion state in 4.7
+  comes from agent *status*, not from a count, so nothing depends on it.
 
-Until the route exists the Agents tab says so, rather than showing an empty
-list: "no agents have run" is a claim the frontend cannot support, and is now
-usually false.
+The response is validated against its schema on the way out, which makes the
+schema a whitelist: a column added to `agent_instances` later cannot reach the
+browser by accident.
+
+**Assignments are laid out in dependency waves.** "Parallel workers are visibly
+distinct" is a property of the graph, not of a list — assignments whose
+prerequisites are all satisfied in the same wave genuinely can run at once, and
+rendering them as a flat list shows the same data while hiding that fact.
 
 ### 4.6 Review
 

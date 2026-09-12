@@ -25,6 +25,7 @@ export function TaskDetail({
   base,
   options,
   action,
+  banner,
   renderTab,
   onEditRequirements,
 }: {
@@ -32,6 +33,8 @@ export function TaskDetail({
   base: string;
   options: TaskInputOption[];
   action?: ReactNode;
+  /** Run-level explanation (§4.7), shown above the panels rather than in a tab. */
+  banner?: ReactNode;
   renderTab: (tab: TaskTab) => ReactNode;
   onEditRequirements?: () => void;
 }) {
@@ -54,6 +57,7 @@ export function TaskDetail({
         </div>
         {action}
       </header>
+      {banner}
       <div className="detail-grid">
         <section className="panel requirements">
           <div className="section-heading">

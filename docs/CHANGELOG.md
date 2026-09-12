@@ -2,6 +2,63 @@
 
 Newest first. One entry per landed ticket.
 
+## A05 — Execution and agent progress
+**Landed:** 2026-09-12 · Role A
+**Affects:** everyone. One additive Role B route; no migration, no dependency.
+**Action required:** Pull and `npm run build` (the contracts package gained
+schemas). Role C: one optional request in [your interface](interfaces/role-c.md).
+
+- **New route, `GET /tasks/:t/agents`** (Role B, `src/tasks/routes.ts` over
+  `PgRunStore.listAttemptsForTask`). Returns every attempt newest-first with its
+  assignments. Every attempt, not just the latest: §4.7 requires an incomplete
+  task to show preserved output, so a retry must leave the failed attempt
+  inspectable. Task-scoped, not run-scoped, because `activeRunId` is null once a
+  run ends.
+- **Agents tab** renders assignments in **dependency waves**. §4.5's "parallel
+  workers are visibly distinct" is a property of the graph; a flat list shows
+  the same data and hides the fact. Assignments sharing a wave genuinely can run
+  at once.
+- **Run outcomes are explained**, using C06's start-phase reason codes
+  (`agent.waiting` with `payload.phase === 'start'`). Each known code maps to a
+  sentence this repo owns; an unknown one still renders an explanation, because
+  the interface notes say the codes are stable but the set is not closed.
+  `payload.omitted[]` is surfaced prominently — it lists selected inputs that
+  could not be captured, and without it a contributor believes the agents read a
+  document they never saw.
+- **Polling adapts**: 2s while an attempt is live, 5s otherwise. §5 makes
+  polling authoritative and realtime a latency optimisation, so this is a
+  comfort setting. 5s was too coarse for a run — planning → working →
+  needs_input can happen inside one tick and the screen looks stuck.
+- **Deadline display** is derived from `deadlineAt` for running agents only, and
+  past zero says the deadline passed rather than that the agent stopped. Those
+  are different, and only `status` knows the second.
+
+**Deliberately not built:**
+
+- **Token figures are absent, not zero.** The ledger has no read method; a zero
+  would read as a measurement rather than a missing one. §4.5 marks the display
+  optional and §4.7's exhaustion state comes from agent `status`, so nothing is
+  blocked. Requested from Role C.
+- The response is **schema-validated outbound**, which makes the schema a
+  whitelist: a column added to `agent_instances` later cannot reach the browser
+  by accident. Do not replace that parse with a cast.
+- `agentProgressSchema` is untouched; `assignmentProgressSchema` is a sibling.
+  The contracts package is additive-only, and the token fields on the original
+  are required.
+
+Verified: `npm run build`, the full web suite (**45 tests**, up from 38), and the
+backend suites this touches — `runs`, `tasks`, `drafts`, `events` (**106**, with
+`runs` up from 27 to 33). The full backend suite was **not** run: nothing here
+reaches the Git or orchestration suites, and `git-integration.test.ts` alone now
+costs 17 minutes (see the previous entry — it also has a failing test that needs
+Role C or D).
+
+Four properties were mutation-checked by breaking them until the test failed:
+the dependency-wave layout, the omitted-inputs panel, instruction summarisation,
+and workspace scoping on the new route.
+
+---
+
 ## Docs — A05 re-scoped against C05/C06, and the agents gap narrowed
 **Landed:** 2026-09-12 · Role A
 **Affects:** whoever starts A05, and whoever adds the agents route

@@ -9,7 +9,9 @@ import {
   draftFileSchema,
   isSupportedTextExtension,
   listDiscussionResponseSchema,
+  listTaskAgentsResponseSchema,
   materialSchema,
+  taskEventSchema,
   openDraftResponseSchema,
   postTaskRequestSchema,
   startTaskResponseSchema,
@@ -27,6 +29,8 @@ import {
   type DraftFile,
   type ListDiscussionResponse,
   type Material,
+  type TaskAttempt,
+  type TaskEvent,
   type OpenDraftResponse,
   type PostDiscussionRequest,
   type PostTaskRequest,
@@ -260,6 +264,63 @@ export class WorkspaceApi {
         workspaceId,
       ),
     );
+  }
+
+  /**
+   * Assignments for every attempt on a task (§4.5).
+   *
+   * Task-scoped rather than run-scoped because `TaskDetail.activeRunId` goes
+   * null the moment a run ends, and the assignments of a finished attempt are
+   * exactly what someone inspecting an `incomplete` task needs to look at.
+   */
+  async listTaskAgents(
+    workspaceId: string,
+    taskId: string,
+    signal?: AbortSignal,
+  ): Promise<TaskAttempt[]> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(taskId);
+    return listTaskAgentsResponseSchema.parse(
+      await this.request(
+        `/${workspaceId}/tasks/${taskId}/agents`,
+        "GET",
+        undefined,
+        workspaceId,
+        signal,
+      ),
+    ).attempts;
+  }
+
+  /**
+   * Durable task events (§11.5) — the authoritative progress record.
+   *
+   * A refresh hint is only a prompt to come here, so this has to be correct
+   * with no hint ever arriving. Cursor-paginated by `id`, which makes a refetch
+   * additive and therefore safe to trigger as often as anything asks.
+   */
+  async listTaskEvents(
+    workspaceId: string,
+    taskId: string,
+    afterId?: string,
+    signal?: AbortSignal,
+  ): Promise<{ events: TaskEvent[]; latestId: string | null }> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(taskId);
+    const query = afterId ? `?afterId=${encodeURIComponent(afterId)}` : "";
+    return z
+      .object({
+        events: z.array(taskEventSchema),
+        latestId: z.string().nullable(),
+      })
+      .parse(
+        await this.request(
+          `/${workspaceId}/tasks/${taskId}/events${query}`,
+          "GET",
+          undefined,
+          workspaceId,
+          signal,
+        ),
+      );
   }
 
   // --- discussion ----------------------------------------------------------

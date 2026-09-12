@@ -288,6 +288,63 @@ export class PgRunStore {
     return rows.map((row) => toAgentInstance(row, deps));
   }
 
+  /**
+   * Every attempt on a task, newest first, each with its assignments
+   * (section 4.5).
+   *
+   * Workspace-scoped in the query rather than checked afterwards: section 11.4
+   * makes the workspace in the path the access check, and a task in another
+   * workspace must read as absent, never as forbidden.
+   *
+   * Previous attempts are included on purpose. Section 4.7 requires an
+   * incomplete task to show preserved output, which means a retry must not make
+   * the failed attempt's assignments unreachable.
+   *
+   * Two queries rather than one per run: the number of attempts is unbounded in
+   * principle, and a per-run query inside a loop is how a Retry-heavy task turns
+   * one screen into thirty round trips.
+   */
+  async listAttemptsForTask(
+    workspaceId: string,
+    taskId: string,
+  ): Promise<
+    Array<{
+      run: RunRow;
+      assignments: AgentInstance[];
+    }>
+  > {
+    const runs = await this.deps.db
+      .selectFrom('runs')
+      .selectAll()
+      .where('workspace_id', '=', workspaceId)
+      .where('task_id', '=', taskId)
+      .orderBy('attempt', 'desc')
+      .execute();
+    if (runs.length === 0) return [];
+
+    const runIds = runs.map((run) => run.id);
+    const [rows, deps] = await Promise.all([
+      this.deps.db
+        .selectFrom('agent_instances')
+        .selectAll()
+        .where('run_id', 'in', runIds)
+        .orderBy('created_at')
+        .execute(),
+      this.deps.db
+        .selectFrom('agent_dependencies')
+        .selectAll()
+        .where('run_id', 'in', runIds)
+        .execute(),
+    ]);
+
+    return runs.map((run) => ({
+      run,
+      assignments: rows
+        .filter((row) => row.run_id === run.id)
+        .map((row) => toAgentInstance(row, deps)),
+    }));
+  }
+
   // -------------------------------------------------------------------------
   // Startup (section 14.4)
   // -------------------------------------------------------------------------

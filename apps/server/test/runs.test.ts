@@ -313,6 +313,118 @@ describe('run records', () => {
   });
 });
 
+describe('assignments for the Agents tab', () => {
+  /**
+   * Section 4.5. The properties that matter are what the response does NOT
+   * carry as much as what it does: no instruction in full, no model ID, and no
+   * invented token figures.
+   */
+  async function agents(taskId: string) {
+    return t.app.inject({
+      method: 'GET',
+      url: `/api/workspaces/${workspaceId}/tasks/${taskId}/agents`,
+    });
+  }
+
+  it('returns every attempt newest first, each with its own assignments', async () => {
+    const taskId = await makeTask();
+    const first = await makeRun(taskId, 1);
+    await materialise(first);
+    await runs.settle(first, 'incomplete', 'an agent timed out');
+    const second = await makeRun(taskId, 2);
+    await materialise(second);
+
+    const body = (await agents(taskId)).json();
+    expect(body.attempts.map((a: { attempt: number }) => a.attempt)).toEqual([2, 1]);
+    // Section 4.7 requires an incomplete task to show preserved output, so a
+    // retry must not make the failed attempt's assignments unreachable.
+    expect(body.attempts[1].status).toBe('incomplete');
+    expect(body.attempts[1].assignments).toHaveLength(4);
+    expect(body.attempts[0].assignments).toHaveLength(4);
+    // Assignments belong to their own run, never pooled across attempts.
+    const runIds = new Set(
+      body.attempts[0].assignments.map((a: { runId: string }) => a.runId),
+    );
+    expect([...runIds]).toEqual([second]);
+  });
+
+  it('carries the dependency graph, so parallel work can be laid out', async () => {
+    const taskId = await makeTask();
+    const runId = await makeRun(taskId);
+    const created = await materialise(runId);
+    // createInstance returns the raw row, so the key is snake_case here.
+    const byKey = new Map(created.map((agent) => [agent.assignment_key, agent.id]));
+
+    const attempt = (await agents(taskId)).json().attempts[0];
+    const find = (key: string) =>
+      attempt.assignments.find((a: { assignmentKey: string }) => a.assignmentKey === key);
+
+    expect(find('facts').dependsOn).toEqual([]);
+    expect(find('faq').dependsOn).toEqual([byKey.get('facts')]);
+    // Two assignments depending on the same prerequisite and on nothing else is
+    // exactly the parallelism section 4.5 asks to be made visible.
+    expect(find('announce').dependsOn).toEqual([byKey.get('facts')]);
+    expect(new Set(find('review').dependsOn)).toEqual(
+      new Set([byKey.get('faq'), byKey.get('announce')]),
+    );
+  });
+
+  it('summarises the instruction and never sends it whole', async () => {
+    const taskId = await makeTask();
+    const runId = await makeRun(taskId);
+    const long = `Draft the FAQ. ${'x'.repeat(5000)}`;
+    await ledger.createInstance({
+      runId, agentKey: 'long', assignmentKey: 'long', preset: 'writer',
+      modelId: 'gemini-2.5-flash', instruction: long, writePaths: ['documents/faq.md'],
+    });
+
+    const assignment = (await agents(taskId)).json().attempts[0].assignments[0];
+    expect(assignment.instruction).toBeUndefined();
+    expect(assignment.instructionSummary.length).toBeLessThanOrEqual(280);
+    expect(assignment.instructionSummary.startsWith('Draft the FAQ.')).toBe(true);
+    expect(assignment.instructionSummary).not.toContain('x'.repeat(300));
+  });
+
+  it('exposes no model, provider, budget, or token figure', async () => {
+    const taskId = await makeTask();
+    const runId = await makeRun(taskId);
+    await materialise(runId);
+
+    const raw = (await agents(taskId)).body;
+    // Section 4.5: "Do not expose model selection, provider settings, budget
+    // settings, or timeout controls." The instances were created with a real
+    // model ID, so this fails the moment the row is serialised wholesale.
+    expect(raw).not.toContain('gemini');
+    expect(raw).not.toContain('modelId');
+    // Absent, not zero. A zero would read as a measurement rather than a
+    // missing one, and the ledger has no read method yet.
+    expect(raw).not.toContain('tokensConsumed');
+    expect(raw).not.toContain('tokenBudget');
+  });
+
+  it('reports a task from another workspace as absent, not empty', async () => {
+    const taskId = await makeTask();
+    await makeRun(taskId);
+    const other = (await createWorkspaceViaApi(t.app, { name: 'Elsewhere' })).workspaceId;
+
+    const res = await t.app.inject({
+      method: 'GET',
+      url: `/api/workspaces/${other}/tasks/${taskId}/agents`,
+    });
+    // Section 11.4: the workspace in the path IS the access check, and there is
+    // no identity to deny, so a foreign task is 404 and never 403.
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('TASK_NOT_FOUND');
+  });
+
+  it('returns an empty attempt list for a task that never started', async () => {
+    const taskId = await makeTask();
+    const res = await agents(taskId);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().attempts).toEqual([]);
+  });
+});
+
 describe('startup reconciliation', () => {
   it('marks work from a previous boot interrupted and frees the task', async () => {
     // Section 14.4 step 2.

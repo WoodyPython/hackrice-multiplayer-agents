@@ -192,6 +192,37 @@ never as a permission. A forged hint should at worst cause a wasted refetch.
 Missed and duplicate hints are both normal. If your refetch is idempotent, you
 have handled every case the transport can produce.
 
+## Agents
+
+`GET /tasks/:t/agents` returns `{ attempts: TaskAttempt[] }`, newest attempt
+first. Each attempt carries its `runId`, `attempt` number, run `status`, the
+`taskVersion` it ran against, and its `assignments[]`.
+
+Every attempt is returned, not just the latest. §4.7 requires an incomplete task
+to show preserved output, so a retry must leave the failed attempt inspectable.
+
+An assignment is `AssignmentProgress`: preset, status, `instructionSummary`,
+`writePaths`, `dependsOn` (agent instance IDs within the same run), `baseSha`,
+`resultSha`, `startedAt`, `deadlineAt`, `endedAt`.
+
+- **`dependsOn` is a DAG, not an order.** Assignments whose prerequisites are
+  all satisfied in the same wave can run simultaneously — that is what §4.5's
+  "parallel workers are visibly distinct" is about, and a flat list hides it.
+- **No token figures yet.** Absent rather than zero, because a zero reads as a
+  measurement. The exhaustion state comes from an agent's `status`
+  (`token_exhausted`), not from a count, so nothing is blocked. Requested from
+  Role C in [their interface](role-c.md).
+- **No model ID, provider setting, budget setting, or timeout control**, ever —
+  §4.5. The response is schema-validated outbound, so that is enforced by shape
+  rather than by discipline.
+- **`deadlineAt` is display only.** It is fixed by the backend and never
+  extended by waiting, retrying or replanning. Past it, the honest statement is
+  that the deadline passed — whether the agent stopped is what `status` says.
+
+An empty `attempts` array means nothing has been started, not that agents failed.
+
+---
+
 ## Drafts
 
 `GET /workspaces/:w/drafts` lists every **active** document in the workspace —
@@ -217,7 +248,6 @@ people click the same file, not a collision to report.
 
 | Needed | For | Owner |
 |---|---|---|
-| A route serving `AgentProgress` | A05's Agents tab (§4.5) only. The rest of A05 is buildable today — see below | **B** (see note) |
 | A `reviewId` on task detail, or a read path to the current review | A06 — `POST /tasks/:t/review` is a mutation, and nothing else exposes the ID. C07 added `GET /reviews/:id/evidence` and `POST /reviews/:id/assess`, but both need an ID you cannot obtain without mutating | B |
 | An approved-file **listing** (Git has `readText(path)` only — no tree op) | A07's Files view and the approved-file input picker (§2.1, §4.1) | D, then B |
 | A workspace-wide `apply_operations` listing + route | History (§4.1). Table and store already exist; empty until D07 | B |
@@ -226,7 +256,10 @@ people click the same file, not a collision to report.
 `applyReviewResponseSchema` are all already in `@app/contracts` with no route
 behind them. The shapes are agreed; the endpoints are not built.
 
-**The agents route is smaller than it was.** Before C05/C06 there were no
+**The agents route now exists** — `GET /tasks/:t/agents`, see below. What
+follows is why it took the shape it did.
+
+**It was smaller than it looked.** Before C05/C06 there were no
 assignments to serve; now every Start writes them. Everything §4.5 *requires* —
 preset, status, instruction, write paths, dependencies, `startedAt`,
 `deadlineAt` — is on `AgentInstance`, and `PgRunStore.listInstances(runId)`
