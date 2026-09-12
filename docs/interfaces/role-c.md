@@ -1,6 +1,6 @@
 # For Role C — orchestration against the data layer
 
-**Reflects:** B07, C02 · **Owner:** Role B (data), Role C (execution)
+**Reflects:** B07, C02, C03 · **Owner:** Role B (data), Role C (execution)
 
 > **Resolved: `PgAgentLedger` is the ledger.** B07 briefly shipped a second one,
 > `PgBudgetLedger` under `src/runs`; it has been deleted. Yours won on three
@@ -8,6 +8,7 @@
 > output allowance from the remaining budget as §9.3 step 3 actually requires
 > (mine took a caller-supplied number), and you own the deadline sweep. There is
 > now one writer to `task_agent_budgets` and one path that creates an instance.
+
 
 ## C02 execution and accounting
 
@@ -149,21 +150,35 @@ late usage stays permitted, per §9.2. You will see a `check_violation` naming
 up your own `assertActive` rather than replacing it: the trigger catches a write
 that reached the database through some path that forgot to ask.
 
+
 ---
 
 ## Plan validation
 
-`agentPlanSchema` in `@app/contracts` parses model output. Zod covers shape
-only. The remaining design §8.3 checks are graph properties it cannot express
-and must run before dispatch:
+`OrchestratorPlanner` implements the new `OrchestratorPlanningService` seam in
+`@app/contracts`. C06 supplies the existing planning instance and frozen
+`PlanningContext`; C03 does not read current task text or capture live documents.
+See [C03 integration notes](../../apps/server/src/orchestration/README.md).
 
-- dependency IDs exist
-- the graph is acyclic
-- reviewer and analyst assignments declare no write paths
-- assignments with overlapping write scopes have an ordering between them
+`orchestratorPlanSchema` rejects misspelled/unknown fields. `validatePlan` checks
+unique IDs, known presets, dependencies, cycles, read-only analyst/reviewer
+scopes, safe exact paths, and transitive ordering of shared-file writers.
+Neither assignments nor dependencies have a fixed count limit. Repairs and
+provider retries retain C02's original budget and fixed deadline.
 
-The `max(64)` on assignments is a parser bound against a runaway generation, not
-a product limit — design §9.4 explicitly rejects a fixed step count.
+The validated plan, context digest and input snapshot SHA are stored in the
+planning instance's `agent.completed` event in the same guarded transaction that
+completes the instance. C05/C06 must revalidate the artifact and instantiate the
+pending worker graph before dispatch. C06 still owns the outer
+`AgentService.plan({ runId, manifest })` integration and run finalization.
+
+The B07 handoff is tested: create instances through `PgAgentLedger`, call
+`PgRunStore.linkDependencies`, then consult `readyInstances`. Linking must finish
+before any worker scope opens. No second budget ledger is used by C03.
+
+Fatal planning failures emit the additive `agent.failed` event. C03 stores the
+agent failure and marks the task incomplete; C06 must terminalize the run and
+clear `active_run_id`. Local `cancel()` must accompany durable task cancellation.
 
 ---
 

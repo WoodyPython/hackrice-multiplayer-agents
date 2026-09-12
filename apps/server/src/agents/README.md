@@ -39,8 +39,9 @@ try {
 }
 ```
 
-B07's broader metadata service and C06 dispatch are not yet implemented in this
-checkout. This module supplies the C02 persistence operations directly. It does
+B07's `PgRunStore` now supplies run metadata, dependency linking and ready-set
+reads. `PgAgentLedger` remains the sole budget/instance lifecycle surface after
+the B07 consolidation. C06 dispatch is not yet implemented: this module does
 not replace the current `NullOrchestrationHook` or start agents on HTTP requests.
 The coordinator must retain each scope across its entire tool loop, including
 `execution.run(signal => ...)` for tool work, backoff, and human-answer waits.

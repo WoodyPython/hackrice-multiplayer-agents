@@ -113,22 +113,25 @@ export const agentPlanSchema = z.object({
       z.object({
         id: z.string().trim().min(1).max(120),
         preset: workerPresetSchema,
-        dependsOn: z.array(z.string().min(1).max(120)).max(50).default([]),
-        writePaths: z.array(repoPathSchema).max(50).default([]),
+        dependsOn: z.array(z.string().min(1).max(120)).default([]),
+        writePaths: z.array(repoPathSchema).default([]),
         instruction: z.string().min(1).max(20000),
       }),
     )
-    .min(1)
-    /**
-     * Not a product rule. Section 9.4 explicitly rejects "three assignments per
-     * plan" as a fixed limit; this is only a parser bound against a runaway
-     * generation, set far above any plausible plan.
-     */
-    .max(64),
+    // Execution tokens/deadline bound generation; there is no step-count quota.
+    .min(1),
 });
 export type AgentPlan = z.infer<typeof agentPlanSchema>;
 
-/** Why a plan was rejected, returned to the orchestrator for one repair pass. */
+/** Strict provider output: misspelled fields must not silently become defaults. */
+export const orchestratorPlanSchema = agentPlanSchema.extend({
+  assignments: z.array(agentPlanSchema.shape.assignments.element.extend({
+    dependsOn: agentPlanSchema.shape.assignments.element.shape.dependsOn.removeDefault(),
+    writePaths: agentPlanSchema.shape.assignments.element.shape.writePaths.removeDefault(),
+  }).strict()).min(1),
+}).strict();
+
+/** Why a plan was rejected. Repairs share the original budget and deadline. */
 export const planValidationErrorSchema = z.object({
   kind: z.enum([
     'duplicate_assignment_id',
@@ -137,11 +140,34 @@ export const planValidationErrorSchema = z.object({
     'invalid_path',
     'reviewer_write_scope',
     'unordered_write_overlap',
+    'invalid_shape',
+    'invalid_preset',
+    'analyst_write_scope',
+    'reserved_assignment_id',
+    'duplicate_dependency',
+    'path_collision',
   ]),
   assignmentIds: z.array(z.string()),
   message: z.string(),
 });
 export type PlanValidationError = z.infer<typeof planValidationErrorSchema>;
+
+/** C06 supplies an immutable captured context, never fresh live task reads. */
+export const planningContextSchema = z.object({
+  task: z.object({
+    id: taskIdSchema, version: z.number().int().positive(), title: z.string(),
+    outcome: z.string(), criteria: z.array(z.string()), outputPaths: z.array(repoPathSchema),
+  }),
+  guidance: z.string(),
+  manifest: contextManifestSchema,
+  discussion: z.array(z.object({ seq: z.number().int().nonnegative(), body: z.string() })),
+  sources: z.array(z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('material'), materialId: z.string().uuid(), sha256: z.string(), text: z.string() }),
+    z.object({ kind: z.literal('approved'), path: repoPathSchema, text: z.string() }),
+    z.object({ kind: z.literal('draft'), path: repoPathSchema, text: z.string() }),
+  ])),
+});
+export type PlanningContext = z.infer<typeof planningContextSchema>;
 
 // --- token accounting (section 9.3) ----------------------------------------
 

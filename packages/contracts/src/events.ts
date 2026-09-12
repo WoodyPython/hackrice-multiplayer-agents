@@ -17,6 +17,7 @@ export const TASK_EVENT_TYPES = [
   'agent.waiting',
   'agent.question_answered',
   'agent.completed',
+  'agent.failed',
   'agent.timed_out',
   'agent.token_exhausted',
   'draft.checkpointed',

@@ -2,6 +2,26 @@
 
 Newest first. One entry per landed ticket.
 
+## C03 — Orchestrator plan and graph validation
+**Status:** Implemented locally 2026-09-12; commit pending · Role C
+**Affects:** Roles B, C, and D
+**Action required:** C06 must supply captured `PlanningContext` and a planning instance; C05/C06 instantiate workers from the saved validated plan. Read [C03 integration notes](../apps/server/src/orchestration/README.md). No migration or new dependency is required.
+
+- Added strict structured planning, graph and exact-path validation, and repairs
+  through the existing token/deadline ledger. Removed fixed assignment and
+  dependency parser caps.
+- Atomically stores the validated plan and capture identity with planning
+  completion. Rejects late, canceled, or snapshot-mismatched results.
+- Adds shared `PlanningContext`, `OrchestratorPlanningService`, validation error
+  kinds, and `agent.failed`; existing contract fields remain available.
+- Worker dispatch and the HTTP orchestration hook remain C05/C06 work.
+- Integrated the B07 ledger consolidation and D02 updates from main; compatibility
+  tests exercise B07 dependency linking and D02's portable path rules.
+- Validation: build passed; 397 backend and eight frontend tests passed,
+  including 68 C03 planning/validation checks.
+
+---
+
 Every entry carries **Action required**, so you can skim the entries since your
 last pull and know in one line whether any of them need anything from you.
 
@@ -29,6 +49,7 @@ writer to `task_agent_budgets`, one path that creates an instance.
 What stayed in `src/runs`: run capture and settlement, the assignment graph
 (`linkDependencies`, `readyInstances`), startup reconciliation, reviews, and
 apply operations. None of it overlaps the ledger.
+
 
 ---
 
