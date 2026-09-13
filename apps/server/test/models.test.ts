@@ -5,7 +5,7 @@ import {
   createGeminiAdapter, GeminiAdapter, FakeModelAdapter, ModelAdapterError,
   type AgentRequest, type AgentResponse, type GeminiClient,
 } from '../src/models/index.js';
-import { normalizeUsage } from '../src/models/gemini.js';
+import { normalizeUsage, setProviderDiagnostic } from '../src/models/gemini.js';
 
 const config = {
   GEMINI_API_KEY: 'test-only-secret',
@@ -314,5 +314,74 @@ describe('scripted fake adapter', () => {
     await expect(fake.generate(request, allowance, controller.signal)).rejects.toMatchObject({ code: 'aborted' });
     expect(fake.calls).toHaveLength(0);
     expect(await fake.generate(request, allowance, signal())).toEqual(answer);
+  });
+});
+
+
+describe('a provider failure is diagnosable', () => {
+  /**
+   * `ModelAdapterError` is safe to report anywhere, so it carries no provider
+   * text. That left a failed Start with `provider_error` and nothing else — a
+   * rejected key, an unavailable model and a malformed request were one
+   * indistinguishable code, and the run died in under a second with no way to
+   * tell which. The provider's own account now reaches the process log.
+   */
+  const reported: Array<{ model: string; status: number | undefined; detail: string }> = [];
+  afterEach(() => setProviderDiagnostic(undefined));
+
+  function failing(error: unknown): GeminiClient {
+    return { models: {
+      generateContent: async () => { throw error },
+      countTokens: async () => { throw error },
+    } } as unknown as GeminiClient;
+  }
+
+  it('reports the status and the provider message, and still returns a safe error', async () => {
+    reported.length = 0;
+    setProviderDiagnostic((info) => reported.push(info));
+    const upstream = Object.assign(new Error('API key not valid. Please pass a valid API key.'), { status: 400 });
+    const adapter = new GeminiAdapter(config, failing(upstream));
+
+    await expect(adapter.generate(request, allowance, signal())).rejects.toMatchObject({
+      code: 'provider_error',
+    });
+
+    expect(reported).toHaveLength(1);
+    expect(reported[0]!.status).toBe(400);
+    expect(reported[0]!.model).toBe('gemini-2.5-flash');
+    // The whole point: the cause is readable rather than collapsed.
+    expect(reported[0]!.detail).toContain('API key not valid');
+  });
+
+  it('never lets a credential through into the log', async () => {
+    reported.length = 0;
+    setProviderDiagnostic((info) => reported.push(info));
+    const leaky = Object.assign(
+      new Error('request failed: https://generativelanguage.googleapis.com/v1/models?key=AIzaSyA1234567890abcdefGHIJK'),
+      { status: 403 },
+    );
+    await expect(
+      new GeminiAdapter(config, failing(leaky)).generate(request, allowance, signal()),
+    ).rejects.toBeInstanceOf(ModelAdapterError);
+
+    const detail = reported[0]!.detail;
+    // Google echoes the request in some errors. Section 13.3 is about the
+    // browser, but a key in a log file is still a key.
+    expect(detail).not.toContain('AIzaSyA1234567890abcdefGHIJK');
+    expect(detail).toContain('[redacted]');
+  });
+
+  it('leaves an already-safe error alone and reports nothing', async () => {
+    reported.length = 0;
+    setProviderDiagnostic((info) => reported.push(info));
+    const adapter = new GeminiAdapter(config, failing(
+      new ModelAdapterError('invalid_response', 'Gemini returned no candidate or block reason.'),
+    ));
+
+    await expect(adapter.generate(request, allowance, signal())).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+    // Already classified: there is no raw provider text to recover.
+    expect(reported).toHaveLength(0);
   });
 });

@@ -1,6 +1,6 @@
 import type { Server } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type { AppConfig } from '../config.js';
 import { createDb, type DbHandle } from '../db/client.js';
 import { buildApp, defaultBlobStore, type AppDeps } from '../http/app.js';
@@ -14,7 +14,7 @@ import { PgCheckpointStore } from '../collaboration/checkpoint-store.js';
 import { registerCheckpointRoutes } from '../collaboration/routes.js';
 import { PgMaterialService } from '../materials/service.js';
 import { PgAgentLedger } from '../agents/ledger.js';
-import { createGeminiAdapter } from '../models/gemini.js';
+import { createGeminiAdapter, setProviderDiagnostic } from '../models/gemini.js';
 import { ModelAdapterError, type ModelAdapter } from '../models/types.js';
 import { OrchestratorPlanner, ParallelAssignmentScheduler, StartOrchestrator,
   ReviewAssessor, ReviewEvidenceComposer } from '../orchestration/index.js';
@@ -99,7 +99,7 @@ export async function startRuntime(options: RuntimeOptions) {
     collaboration = new LiveDocumentCoordinator(liveDeps, {
       drafts, git, checkpoints: new PgCheckpointStore(db.db),
     });
-    const adapter = options.modelAdapter ?? configuredAdapter(config);
+    const adapter = options.modelAdapter ?? configuredAdapter(config, app?.log);
     orchestration = buildOrchestration({
       config, db: db.db, git, drafts, collaboration, adapter,
       onBackgroundError: (error) => app?.log.error({ err: error }, 'orchestration failed outside a request'),
@@ -191,7 +191,22 @@ function buildOrchestration(deps: {
  * better than refusing to boot, and far better than a silent hook that leaves
  * every started run sitting in `planning` with nothing behind it.
  */
-function configuredAdapter(config: AppConfig): ModelAdapter {
+function configuredAdapter(config: AppConfig, log?: FastifyBaseLogger): ModelAdapter {
+  /*
+   * Send the provider's own account of a failure to the process log.
+   *
+   * Without this a rejected key, an unavailable model and a malformed request
+   * are one indistinguishable `provider_error`, and a Start that dies in a
+   * quarter of a second leaves nothing to read. Server-side only: section 13.3
+   * is about what reaches the browser, and `redactProviderDetail` strips
+   * anything credential-shaped before this is called.
+   */
+  if (log) {
+    setProviderDiagnostic(({ model, status, detail }) => {
+      log.error({ model, status, detail }, 'gemini request failed');
+    });
+  }
+
   try {
     return createGeminiAdapter(config);
   } catch {

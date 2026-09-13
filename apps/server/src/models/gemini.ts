@@ -36,6 +36,29 @@ const MODEL_PROFILES: Record<string, { minThinking: number; maxThinking: number;
   'gemini-2.5-flash': { minThinking: 0, maxThinking: 24576, maxOutput: 65536 },
 };
 
+/**
+ * What the provider actually said, for the server log only.
+ *
+ * `ModelAdapterError` is documented as safe to report anywhere, so it keeps no
+ * provider text — which left a failed Start with nothing but `provider_error`
+ * and no way to tell a rejected key from an unavailable model from a malformed
+ * request. Section 13.3 forbids provider text reaching the *browser*; it does
+ * not ask us to destroy it. This reports it to the process log instead, with
+ * anything key-shaped removed.
+ */
+export type ProviderDiagnostic = (info: {
+  model: string;
+  status: number | undefined;
+  detail: string;
+}) => void;
+
+let reportProviderError: ProviderDiagnostic | undefined;
+
+/** Set once at runtime assembly. Absent in tests, which assert on codes. */
+export function setProviderDiagnostic(sink: ProviderDiagnostic | undefined): void {
+  reportProviderError = sink;
+}
+
 export function createGeminiAdapter(config: ModelConfig): ModelAdapter {
   if (!config.GEMINI_API_KEY?.trim()) {
     throw new ModelAdapterError('configuration', 'GEMINI_API_KEY is required for agent execution.');
@@ -153,7 +176,7 @@ export class GeminiAdapter implements ModelAdapter {
       }
       return response.totalTokens;
     } catch (error) {
-      throw safeError(error, signal);
+      throw safeError(error, signal, this.routing[request.preset === 'orchestrator' ? 'orchestrator' : 'worker']);
     }
   }
 
@@ -192,9 +215,25 @@ export class GeminiAdapter implements ModelAdapter {
       // using the live deadline/status; an abort does not erase provider usage.
       return normalizeResponse(response, prepared.model);
     } catch (error) {
-      throw safeError(error, signal);
+      throw safeError(error, signal, prepared.model);
     }
   }
+}
+
+/**
+ * The provider's own message, with anything that looks like a credential gone.
+ *
+ * Google echoes the request in some errors, so this strips `key=` query values
+ * and any long opaque token before the text reaches the log.
+ */
+function redactProviderDetail(error: unknown): string {
+  const raw = error instanceof Error ? error.message
+    : typeof error === 'string' ? error
+      : (() => { try { return JSON.stringify(error); } catch { return String(error); } })();
+  return raw
+    .replace(/key=[^&\s"']+/gi, 'key=[redacted]')
+    .replace(/AIza[0-9A-Za-z_-]{10,}/g, '[redacted]')
+    .slice(0, 600);
 }
 
 function isTokenCount(value: unknown): value is number {
@@ -251,11 +290,13 @@ function normalizeResponse(response: GenerateContentResponse, model: string): Ag
   };
 }
 
-function safeError(error: unknown, signal?: AbortSignal): ModelAdapterError {
+function safeError(error: unknown, signal?: AbortSignal, model = 'unknown'): ModelAdapterError {
   if (error instanceof ModelAdapterError) return error;
   if (signal?.aborted) return new ModelAdapterError('aborted', 'Model operation was canceled.');
   const status = typeof error === 'object' && error !== null && 'status' in error &&
     typeof error.status === 'number' ? error.status : undefined;
+  // Report the real cause to the log before it is collapsed into a code.
+  reportProviderError?.({ model, status, detail: redactProviderDetail(error) });
   if (status === 429) return new ModelAdapterError('rate_limited', 'Gemini request was rate limited.', true, status);
   return new ModelAdapterError('provider_error', 'Gemini request failed.',
     status === undefined || status === 408 || status >= 500, status);
