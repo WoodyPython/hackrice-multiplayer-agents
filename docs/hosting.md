@@ -19,7 +19,9 @@ providers. Review the price shown by Render before creating the service.
 5. Confirm the 512 MB service and 1 GB disk charges, then create the Blueprint.
 
 The build explicitly includes development dependencies because TypeScript and
-the migration CLI need them. Pending migrations run before each deployment;
+the migration CLI need them. Its Node heap is limited to 4 GB on Render's 8 GB
+build worker to accommodate Monaco bundling. This override applies only to the
+build, not the 512 MB application runtime. Pending migrations run before each deployment;
 Git data is initialized only at runtime when `/data` is mounted. The frontend,
 API, and live-document WebSocket use the same public origin. `PUBLIC_APP_URL`
 defaults to `RENDER_EXTERNAL_URL`; set an explicit override for a custom domain.
