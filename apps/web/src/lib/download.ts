@@ -30,10 +30,13 @@ export function downloadText(path: string, text: string): void {
 export function filenameFor(path: string): string {
   const last = path.split(/[\\/]/).filter(Boolean).pop() ?? "";
   const safe = last
-    // The dash is last inside the class on purpose. Put first, `[ -<...]` reads
-    // like a tidy set and is really the range space-to-"<", which silently
-    // eats digits and full stops out of the filename.
-    .replace(/[<>:"\\|?* -]/g, "")
+    // Only what a filesystem actually refuses. Spaces and hyphens are legal in
+    // a filename and belong to the author, so they stay.
+    //
+    // Written as an explicit list because the tidy-looking `[ -<>:"|?*]` is a
+    // range, space-to-"<", and silently eats every digit and full stop:
+    // `report-2026.md` came out as `report2026md`. Twice now.
+    .replace(/[<>:"\\|?*\u0000-\u001f]/g, "")
     // A leading dot would save the file hidden.
     .replace(/^\.+/, "");
   return safe || "download.txt";
