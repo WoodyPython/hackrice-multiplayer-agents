@@ -59,7 +59,7 @@ unsettled reservation remains held until usage can be reconciled.
 ## Accounting guarantees
 
 - Budgets are keyed by `(task_id, agent_key)`. Creating an instance inserts a
-  64,000-token budget only if it is missing. Manual attempts and model switches
+  256,000-token budget only if it is missing. Manual attempts and model switches
   retain consumed tokens and outstanding reservations.
 - Counting and generation receive identical private snapshots, including the
   system instruction, tools, schema, tool history, and provider state.

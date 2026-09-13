@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { TASK_AGENT_TOKEN_BUDGET } from '@app/contracts';
 import { buildTestApp, createWorkspaceViaApi, type TestApp } from './app-helpers.js';
 import { signInAs } from './helpers.js';
 
@@ -496,8 +497,8 @@ describe('retry', () => {
         workspace_id: workspaceId,
         task_id: task.id,
         agent_key: 'orchestrator',
-        token_budget: 64_000,
-        consumed_tokens: 64_000,
+        token_budget: TASK_AGENT_TOKEN_BUDGET,
+        consumed_tokens: TASK_AGENT_TOKEN_BUDGET,
       })
       .execute();
 
@@ -522,7 +523,7 @@ describe('retry', () => {
       .where('task_id', '=', task.id)
       .where('agent_key', '=', 'orchestrator')
       .executeTakeFirstOrThrow();
-    expect(budget.consumed_tokens).toBe(64_000);
+    expect(budget.consumed_tokens).toBe(TASK_AGENT_TOKEN_BUDGET);
   });
 });
 

@@ -5,22 +5,23 @@ import { AgentExecutionError, PgAgentLedger } from './ledger.js';
  * Output ceiling a caller gets when it does not ask for one.
  *
  * `reserve` holds `inputTokens + maxOutputTokens`, and with no ceiling that is
- * the model's own maximum — 65536 against a 64000 task budget, so the FIRST
- * call of any agent reserves the entire budget. Measured against a live run,
- * the calls that produced a working plan and a written file counted 521–1472
- * input tokens and billed 1311–2306 total. Reserving 64000 for that is a
- * factor of roughly forty-five.
+ * the model's own maximum. Before the task budget was expanded, a 65536-token
+ * model allowance could reserve an agent's entire 64000-token budget on its
+ * first call. Measured against a live run, the calls that produced a working
+ * plan and a written file counted 521–1472 input tokens and billed 1311–2306
+ * total, making that reservation disproportionately large.
  *
  * It cost a run whenever a call failed in a way that could have been billed:
  * the hold is kept, the agent's remaining budget is zero, and every later
  * attempt dies as `token_exhausted` without reaching the provider at all —
  * which is exactly the three-attempt failure this was found from.
  *
- * 8192 is ~3.5x the largest total observed, leaves room for the planner's own
- * backoff loop, and keeps a single stranded reservation survivable. A caller
- * that genuinely needs more still passes `maxOutputTokens` explicitly.
+ * 32768 leaves substantial room for long worker outputs while the 256000-token
+ * task-agent budget still keeps multiple calls and a stranded reservation
+ * survivable. A caller that genuinely needs more still passes
+ * `maxOutputTokens` explicitly.
  */
-export const DEFAULT_OUTPUT_ALLOWANCE = 8192;
+export const DEFAULT_OUTPUT_ALLOWANCE = 32_768;
 
 /**
  * How long to wait before retrying a refused request.

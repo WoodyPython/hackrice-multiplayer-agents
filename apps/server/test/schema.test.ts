@@ -4,6 +4,7 @@ import {
   ACTIVE_RUN_STATUSES,
   AGENT_STATUSES,
   RUN_STATUSES,
+  TASK_AGENT_TOKEN_BUDGET,
   TASK_STATUSES,
   TERMINAL_TASK_STATUSES,
 } from '@app/contracts';
@@ -608,7 +609,7 @@ describe('agent graph', () => {
     await insertBudget(db, ws, task, 'faq');
     await db
       .updateTable('task_agent_budgets')
-      .set({ consumed_tokens: 64_000 })
+      .set({ consumed_tokens: TASK_AGENT_TOKEN_BUDGET })
       .where('task_id', '=', task)
       .where('agent_key', '=', 'faq')
       .execute();
@@ -624,7 +625,7 @@ describe('agent graph', () => {
       .where('task_id', '=', task)
       .where('agent_key', '=', 'faq')
       .executeTakeFirstOrThrow();
-    expect(budget.consumed_tokens).toBe(64_000);
+    expect(budget.consumed_tokens).toBe(TASK_AGENT_TOKEN_BUDGET);
   });
 
   it('gives the same agent an independent budget on another task', async () => {
@@ -635,7 +636,7 @@ describe('agent graph', () => {
     await insertBudget(db, ws, taskB, 'faq');
     await db
       .updateTable('task_agent_budgets')
-      .set({ consumed_tokens: 64_000 })
+      .set({ consumed_tokens: TASK_AGENT_TOKEN_BUDGET })
       .where('task_id', '=', taskA)
       .execute();
 

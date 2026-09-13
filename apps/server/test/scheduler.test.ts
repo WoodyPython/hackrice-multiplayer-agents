@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { sql } from 'kysely';
-import { NullWorkerResultIntegrationService, planningContextSchema,
+import { NullWorkerResultIntegrationService, TASK_AGENT_TOKEN_BUDGET, planningContextSchema,
   type AgentPlan, type PlanningContext, type WorkerExecutionService, type WorkerResultIntegrationService } from '@app/contracts';
 import { PgAgentLedger } from '../src/agents/ledger.js';
 import { ParallelAssignmentScheduler, PgPlanStore } from '../src/orchestration/index.js';
@@ -83,7 +83,7 @@ describe('parallel assignment scheduler', () => {
     const wait = gate();
     const r = runtime(f, { beforeFinish: async (id, key) => {
       if (key === 'peer') { await wait.promise; return; }
-      await f.ledger.reserve({ agentInstanceId: id, requestKey: 'too-large', inputTokens: 64000,
+      await f.ledger.reserve({ agentInstanceId: id, requestKey: 'too-large', inputTokens: TASK_AGENT_TOKEN_BUDGET,
         profile: new FakeModelAdapter([]).getModel('analyst') });
     } });
     const running = r.scheduler.schedule(f.input);

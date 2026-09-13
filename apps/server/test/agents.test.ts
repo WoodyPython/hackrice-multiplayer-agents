@@ -62,8 +62,8 @@ describe('persistent reservations and reconciliation', () => {
     const b = await fixture();
     const peer = await ledger.createInstance({ runId: a.runId, agentKey: 'reviewer', assignmentKey: 'reviewer', preset: 'reviewer', modelId: 'fake' });
     await Promise.all([ledger.start(a.agent.id), ledger.start(b.agent.id), ledger.start(peer.id)]);
-    await reserve(a.agent.id, 'a', 100, 63900);
-    await ledger.recordUsage({ agentInstanceId: a.agent.id, requestKey: 'a', usage: { status: 'reported', totalTokens: 64000 } });
+    await reserve(a.agent.id, 'a', TASK_AGENT_TOKEN_BUDGET - profile.maxOutputTokens, profile.maxOutputTokens);
+    await ledger.recordUsage({ agentInstanceId: a.agent.id, requestKey: 'a', usage: { status: 'reported', totalTokens: TASK_AGENT_TOKEN_BUDGET } });
     await expect(reserve(a.agent.id, 'exhausted')).rejects.toMatchObject({ code: 'token_exhausted' });
     await expect(reserve(b.agent.id)).resolves.toMatchObject({ reservedTokens: 120 });
     await expect(reserve(peer.id)).resolves.toMatchObject({ reservedTokens: 120 });
@@ -76,10 +76,11 @@ describe('persistent reservations and reconciliation', () => {
       const f = await fixture();
       const peer = await ledger.createInstance({ runId: f.runId, agentKey: 'writer', assignmentKey: 'same-budget', preset: 'writer', modelId: 'fake' });
       await Promise.all([ledger.start(f.agent.id), ledger.start(peer.id)]);
-      const reservations = await Promise.allSettled(Array.from({ length: 8 }, (_, i) => reserve(i % 2 ? peer.id : f.agent.id, `r${i}`, 1000, 31000)));
+      const reservations = await Promise.allSettled(Array.from({ length: 8 }, (_, i) =>
+        reserve(i % 2 ? peer.id : f.agent.id, `r${i}`, 64_000, 64_000)));
       const accepted = reservations.filter((r) => r.status === 'fulfilled');
       expect(accepted).toHaveLength(2);
-      expect(await budget(f.taskId)).toMatchObject({ reserved_tokens: 64000, consumed_tokens: 0 });
+      expect(await budget(f.taskId)).toMatchObject({ reserved_tokens: TASK_AGENT_TOKEN_BUDGET, consumed_tokens: 0 });
     }
   });
 
@@ -107,8 +108,8 @@ describe('persistent reservations and reconciliation', () => {
 
   it('records over-budget late billing and prevents another call', async () => {
     const f = await fixture(); await ledger.start(f.agent.id); await reserve(f.agent.id, 'r');
-    await ledger.recordUsage({ agentInstanceId: f.agent.id, requestKey: 'r', usage: { status: 'reported', totalTokens: 65000 } });
-    expect((await budget(f.taskId)).consumed_tokens).toBe(65000);
+    await ledger.recordUsage({ agentInstanceId: f.agent.id, requestKey: 'r', usage: { status: 'reported', totalTokens: TASK_AGENT_TOKEN_BUDGET + 1_000 } });
+    expect((await budget(f.taskId)).consumed_tokens).toBe(TASK_AGENT_TOKEN_BUDGET + 1_000);
     await expect(reserve(f.agent.id)).rejects.toMatchObject({ code: 'token_exhausted' });
     expect((await handle.db.selectFrom('tasks').select('status').where('id', '=', f.taskId).executeTakeFirstOrThrow()).status).toBe('incomplete');
   });
@@ -123,10 +124,10 @@ describe('persistent reservations and reconciliation', () => {
 
   it('derives a combined output allowance from remaining tokens and verified model bounds', async () => {
     const f = await fixture(); await ledger.start(f.agent.id);
-    const allowance = await reserve(f.agent.id, 'first', 63900, 1000);
-    expect(allowance).toEqual({ maxOutputTokens: 100, reservedTokens: 64000 });
+    const allowance = await reserve(f.agent.id, 'first', TASK_AGENT_TOKEN_BUDGET - 100, 1000);
+    expect(allowance).toEqual({ maxOutputTokens: 100, reservedTokens: TASK_AGENT_TOKEN_BUDGET });
     const g = await fixture(); await ledger.start(g.agent.id);
-    await expect(ledger.reserve({ agentInstanceId: g.agent.id, requestKey: 'pro', inputTokens: 63872,
+    await expect(ledger.reserve({ agentInstanceId: g.agent.id, requestKey: 'pro', inputTokens: TASK_AGENT_TOKEN_BUDGET - 128,
       profile: { ...profile, minOutputTokens: 129 } })).rejects.toMatchObject({ code: 'token_exhausted' });
     expect((await budget(g.taskId)).reserved_tokens).toBe(0);
   });
@@ -161,7 +162,7 @@ describe('persistent reservations and reconciliation', () => {
 
   it('keeps an exhausted logical agent exhausted in a fresh manual attempt', async () => {
     const f = await fixture(); await ledger.start(f.agent.id); await reserve(f.agent.id, 'r');
-    await ledger.recordUsage({ agentInstanceId: f.agent.id, requestKey: 'r', usage: { status: 'reported', totalTokens: 64000 } });
+    await ledger.recordUsage({ agentInstanceId: f.agent.id, requestKey: 'r', usage: { status: 'reported', totalTokens: TASK_AGENT_TOKEN_BUDGET } });
     await expect(reserve(f.agent.id)).rejects.toMatchObject({ code: 'token_exhausted' });
     await handle.db.updateTable('runs').set({ status: 'incomplete' }).where('id', '=', f.runId).execute();
     const nextRun = await insertRun(handle.db, workspaceId, f.taskId, { attempt: 2, status: 'working' });
@@ -171,7 +172,7 @@ describe('persistent reservations and reconciliation', () => {
     const scope = await open(retry.id, new FakeModelAdapter([{ inputTokens: 1, result: result() }]));
     expect(scope.deadlineAt).toBe(clock + AGENT_TIMEOUT_MS);
     await expect(scope.generate('retry', request)).rejects.toMatchObject({ code: 'token_exhausted' });
-    expect(await budget(f.taskId)).toMatchObject({ consumed_tokens: 64000, reserved_tokens: 0 });
+    expect(await budget(f.taskId)).toMatchObject({ consumed_tokens: TASK_AGENT_TOKEN_BUDGET, reserved_tokens: 0 });
   });
 });
 
@@ -290,7 +291,10 @@ describe('budgeted model execution', () => {
   });
 
   it('counts the exact immutable request and derives the generation allowance', async () => {
-    const f = await fixture(); const adapter = new FakeModelAdapter([{ inputTokens: 63000, result: result(63200) }]);
+    const f = await fixture(); const adapter = new FakeModelAdapter([{
+      inputTokens: TASK_AGENT_TOKEN_BUDGET - 1_000,
+      result: result(TASK_AGENT_TOKEN_BUDGET - 800),
+    }]);
     const scope = await open(f.agent.id, adapter);
     const original: AgentRequest = { ...structuredClone(request), systemInstruction: 'system',
       tools: [{ name: 'read', description: 'Read a source', parameters: { type: 'object' } }], responseJsonSchema: { type: 'object' } };
@@ -300,7 +304,7 @@ describe('budgeted model execution', () => {
     await expect(pending).resolves.toMatchObject({ text: 'Done.' });
     expect(adapter.counts).toEqual([expected]);
     expect(adapter.calls).toEqual([{ request: expected, limits: { maxOutputTokens: 1000 } }]);
-    expect(await budget(f.taskId)).toMatchObject({ consumed_tokens: 63200, reserved_tokens: 0 });
+    expect(await budget(f.taskId)).toMatchObject({ consumed_tokens: TASK_AGENT_TOKEN_BUDGET - 800, reserved_tokens: 0 });
   });
 
   it('recounts repeated context and retains budget/deadline across provider retries', async () => {
@@ -323,7 +327,7 @@ describe('budgeted model execution', () => {
      * refused: a 429 does no work and bills nothing.
      *
      * It mattered because `reserve` takes input plus the whole remaining
-     * allowance, so in production one transient 503 stranded ~62000 of a 64000
+     * allowance, so in production one transient 503 stranded nearly the whole
      * budget and the planner's next attempt died as `token_exhausted`. The
      * README puts backoff in application code, which cannot work if every
      * refused attempt permanently burns its share.
@@ -356,7 +360,7 @@ describe('budgeted model execution', () => {
   });
 
   it('never generates if counting fails or consumes the remaining allowance', async () => {
-    const f = await fixture(); const adapter = new FakeModelAdapter([{ inputTokens: 64000, result: result() }]);
+    const f = await fixture(); const adapter = new FakeModelAdapter([{ inputTokens: TASK_AGENT_TOKEN_BUDGET, result: result() }]);
     const scope = await open(f.agent.id, adapter);
     const count = vi.spyOn(adapter, 'countInput').mockRejectedValueOnce(new ModelAdapterError('provider_error', 'count failed'));
     await expect(scope.generate('count-fail', request)).rejects.toMatchObject({ code: 'provider_error' });

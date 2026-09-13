@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AGENT_TIMEOUT_MS, eventKeys, type AgentPlan, type PlanningContext } from '@app/contracts';
+import { AGENT_TIMEOUT_MS, TASK_AGENT_TOKEN_BUDGET, eventKeys, type AgentPlan, type PlanningContext } from '@app/contracts';
 import { PgAgentLedger } from '../src/agents/index.js';
 import { OrchestratorPlanner, PgPlanStore } from '../src/orchestration/index.js';
 import { FakeModelAdapter, ModelAdapterError, type AgentResponse } from '../src/models/index.js';
@@ -189,7 +189,7 @@ describe('orchestrator planning with real persistence and budget accounting', ()
   });
 
   it('stops repairs when the cumulative task-agent budget is exhausted', async () => {
-    const f = await fixture(); const bad = { ...response({ invalid: true }), usage: { status: 'reported' as const, totalTokens: 64000 } };
+    const f = await fixture(); const bad = { ...response({ invalid: true }), usage: { status: 'reported' as const, totalTokens: TASK_AGENT_TOKEN_BUDGET } };
     const adapter = new FakeModelAdapter([{ inputTokens: 20, result: bad }, { inputTokens: 20, result: response() }]);
     await expect(planner(adapter).plan(f)).rejects.toMatchObject({ code: 'token_exhausted' });
     expect(adapter.calls).toHaveLength(1); expect(await agentStatus(f.agentInstanceId)).toBe('token_exhausted');
