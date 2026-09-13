@@ -12,6 +12,7 @@ import {
   type TaskEvent,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { refreshLoop } from "../realtime";
 import { readEventPages } from "../task-polling";
 import { apiMessage } from "../workspace-api";
 import { inputOptionsFrom, type TaskInputOption } from "../task-inputs";
@@ -26,15 +27,7 @@ import { TaskDetail, tabs, type TaskTab } from "./TaskDetail";
 
 const RETRYABLE = ["incomplete", "interrupted", "canceled"];
 
-/**
- * Poll faster while an attempt is live.
- *
- * §5 makes durable events authoritative and realtime a latency optimisation
- * over polling, so the interval is a comfort setting rather than a correctness
- * one. Five seconds is fine for a posted task that changes when someone types;
- * it is too coarse while agents are running, where planning → working →
- * needs_input can all happen inside one tick and the screen looks stuck.
- */
+// Push handles normal updates; polling repairs missed hints and older servers.
 const POLL_ACTIVE_MS = 2000;
 const POLL_IDLE_MS = 5000;
 
@@ -113,7 +106,6 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
       return;
     }
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
     const pull = async () => {
       try {
@@ -151,19 +143,14 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
             ? "missing"
             : "error",
         );
-      } finally {
-        if (!controller.signal.aborted && !stopped)
-          timer = setTimeout(
-            () => void pull(),
-            live.current ? POLL_ACTIVE_MS : POLL_IDLE_MS,
-          );
       }
     };
-    void pull();
+    const stopRefresh = refreshLoop(workspaceId, taskId, pull,
+      () => live.current ? POLL_ACTIVE_MS : POLL_IDLE_MS);
     return () => {
       stopped = true;
       controller.abort();
-      if (timer) clearTimeout(timer);
+      stopRefresh();
     };
   }, [api, workspaceId, taskId, nonce, valid]);
 

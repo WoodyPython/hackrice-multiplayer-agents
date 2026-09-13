@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { TaskSummary, Workspace } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { refreshLoop } from "../realtime";
 import { apiMessage } from "../workspace-api";
 import { EmptyState } from "../components/EmptyState";
 import { TaskBoard } from "./TaskBoard";
@@ -13,10 +14,7 @@ import { TaskBoard } from "./TaskBoard";
  * that "dragging a card cannot mark work approved", so there is no drag
  * affordance at all rather than one that is refused on drop.
  *
- * Polled rather than pushed. §5 makes durable events authoritative and realtime
- * a latency optimisation over exactly this, so the board is correct with the
- * subscription absent — which it currently is, since nobody has verified a hint
- * arriving in a browser.
+ * Refresh hints fetch authoritative state; polling repairs missed hints.
  */
 export function TaskBoardPage({
   workspace,
@@ -35,7 +33,6 @@ export function TaskBoardPage({
 
   useEffect(() => {
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
     const pull = async () => {
       try {
@@ -48,15 +45,14 @@ export function TaskBoardPage({
       } finally {
         if (!controller.signal.aborted && !stopped) {
           setLoading(false);
-          timer = setTimeout(() => void pull(), 5000);
         }
       }
     };
-    void pull();
+    const stopRefresh = refreshLoop(workspace.id, undefined, pull, () => 5000);
     return () => {
       stopped = true;
       controller.abort();
-      if (timer) clearTimeout(timer);
+      stopRefresh();
     };
   }, [api, workspace.id, nonce]);
 

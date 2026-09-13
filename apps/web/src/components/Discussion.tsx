@@ -6,6 +6,7 @@ import {
   type Material,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { refreshLoop } from "../realtime";
 import { readDiscussionPages } from "../task-polling";
 import { apiMessage } from "../workspace-api";
 import { EmptyState } from "./EmptyState";
@@ -336,7 +337,6 @@ export function useDiscussion(workspaceId: string, taskId: string | undefined) {
   useEffect(() => {
     if (!taskId) return;
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
 
     const pull = async () => {
@@ -352,15 +352,14 @@ export function useDiscussion(workspaceId: string, taskId: string | undefined) {
       } finally {
         if (!controller.signal.aborted && !stopped) {
           setLoading(false);
-          timer = setTimeout(() => void pull(), 5000);
         }
       }
     };
-    void pull();
+    const stopRefresh = refreshLoop(workspaceId, taskId, pull, () => 5000);
     return () => {
       stopped = true;
       controller.abort();
-      if (timer) clearTimeout(timer);
+      stopRefresh();
     };
   }, [api, workspaceId, taskId, nonce]);
 

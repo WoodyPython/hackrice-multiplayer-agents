@@ -42,6 +42,54 @@ async function makeTask(title = 'Event task'): Promise<string> {
 // ---------------------------------------------------------------------------
 
 describe('durable events', () => {
+  it('pushes an API chat write to two connected readers before the polling interval', async () => {
+    const runtime = await buildTestApp();
+    const abort = new AbortController();
+    try {
+      const workspace = await createWorkspaceViaApi(runtime.app, { name: 'Stream integration' });
+      const root = `/api/workspaces/${workspace.workspaceId}`;
+      const task = (await runtime.app.inject({ method: 'POST', url: `${root}/tasks`,
+        payload: { title: 'Chat latency', creatorGuestLabel: 'Guest Cedar' } })).json();
+      const base = await runtime.app.listen({ port: 0, host: '127.0.0.1' });
+      const readers = await Promise.all([0, 1].map(async () => {
+        const response = await fetch(`${base}${root}/realtime/stream`, { signal: abort.signal });
+        const reader = response.body!.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toContain('event: ready');
+        return reader;
+      }));
+      const started = performance.now();
+      const response = await fetch(`${base}${root}/tasks/${task.id}/discussion`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: 'Two peer delivery', guestLabel: 'Guest Cedar',
+          materialIds: [], clientRequestId: randomUUID() }), signal: abort.signal,
+      });
+      expect(response.status).toBeLessThan(300);
+      for (const reader of readers) {
+        expect(new TextDecoder().decode((await reader.read()).value)).toContain('discussion.posted');
+      }
+      const elapsed = Math.round(performance.now() - started);
+      expect(elapsed).toBeLessThan(1500);
+      const thread = await fetch(`${base}${root}/tasks/${task.id}/discussion`, { signal: abort.signal });
+      expect((await thread.json()).entries.at(-1).body).toBe('Two peer delivery');
+      console.info(`Chat POST to both refresh streams: ${elapsed} ms (local database)`);
+    } finally { abort.abort(); await runtime.close(); }
+  });
+
+  it('records one refresh event for a chat message, including an idempotent retry', async () => {
+    const taskId = await makeTask();
+    const clientRequestId = randomUUID();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await t.app.inject({
+        method: 'POST', url: `/api/workspaces/${workspaceId}/tasks/${taskId}/discussion`,
+        payload: { body: 'Realtime regression', guestLabel: 'Guest Cedar', materialIds: [], clientRequestId },
+      });
+      expect(response.statusCode).toBeLessThan(300);
+    }
+    const page = await events.listForTask(workspaceId, taskId, { limit: 100 });
+    expect(page.events.filter((event) => event.type === 'discussion.posted')).toHaveLength(1);
+    expect(JSON.stringify(page.events)).not.toContain('Realtime regression');
+  });
+
   it('records what posting a task did', async () => {
     const taskId = await makeTask();
     const res = await t.app.inject({

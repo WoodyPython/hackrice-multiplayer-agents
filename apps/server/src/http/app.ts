@@ -25,7 +25,8 @@ import { PgDraftStore } from '../drafts/store.js';
 import { registerDraftRoutes } from '../drafts/routes.js';
 import { TaskEventService } from '../events/service.js';
 import { registerEventRoutes } from '../events/routes.js';
-import { RecordingBroadcaster, SupabaseBroadcaster, type Broadcaster } from '../events/broadcaster.js';
+import type { Broadcaster } from '../events/broadcaster.js';
+import { RefreshStream, registerRefreshStream } from '../events/stream.js';
 import { TaskEventPump } from '../events/pump.js';
 import type { BlobStore } from '../materials/blob-store.js';
 import { LocalDiskBlobStore, SupabaseBlobStore } from '../materials/blob-store.js';
@@ -58,8 +59,8 @@ export interface AppDeps {
    */
   blobs?: BlobStore;
   /**
-   * Refresh-hint transport. Defaults to a recorder when no Supabase project is
-   * configured, which is every local run; clients poll instead (section 5).
+   * Optional additional refresh-hint transport (primarily for test recording).
+   * Same-origin streaming is always enabled.
    */
   broadcaster?: Broadcaster;
   /**
@@ -92,8 +93,6 @@ export function defaultBlobStore(config: AppConfig): BlobStore {
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { config } = deps;
-  const serverKey = supabaseServerKey(config);
-
   const app = Fastify({
     logger: {
       ...(deps.logStream ? { stream: deps.logStream } : {}),
@@ -225,14 +224,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const drafts = new PgDraftStore({ db: deps.db });
   await registerDraftRoutes(app, { drafts });
 
-  const broadcaster =
-    deps.broadcaster ??
-    (config.SUPABASE_URL && serverKey
-      ? new SupabaseBroadcaster(
-          { url: config.SUPABASE_URL, serviceRoleKey: serverKey },
-          (error) => app.log.warn({ err: error }, 'refresh hint broadcast failed'),
-        )
-      : new RecordingBroadcaster());
+  const stream = new RefreshStream();
+  registerRefreshStream(app, stream);
+  const broadcaster: Broadcaster = {
+    async hint(hint) {
+      await stream.hint(hint);
+      await deps.broadcaster?.hint(hint);
+    },
+  };
 
   const events = new TaskEventService({ db: deps.db, broadcaster });
   await registerEventRoutes(app, { events, config });
@@ -246,6 +245,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     onError: (error) => app.log.warn({ err: error }, 'event pump sweep failed'),
   });
   app.decorate('eventPump', pump);
+  // Routes have completed their transactions by response time. Wake the pump
+  // without delaying the writer; the periodic sweep still covers agent writes.
+  app.addHook('onResponse', async (request, reply) => {
+    if (request.method !== 'GET' && request.method !== 'HEAD' && request.method !== 'OPTIONS'
+      && reply.statusCode < 400) void pump.flush();
+  });
   app.addHook('onListen', async () => { await pump.start(); });
   app.addHook('onClose', async () => { await pump.stop(); });
 
