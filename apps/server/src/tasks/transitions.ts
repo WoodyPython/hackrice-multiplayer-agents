@@ -44,18 +44,19 @@ const ALLOWED: Record<TaskStatus, readonly TaskStatus[]> = {
   ],
 
   // Result available for the owner.
-  ready_for_review: ['conflict', 'completed', 'planning', 'canceled', 'incomplete'],
+  ready_for_review: ['posted', 'conflict', 'awaiting_confirmation', 'planning', 'canceled', 'incomplete'],
 
   // Needs explicit resolution; a revision is a new attempt.
-  conflict: ['ready_for_review', 'planning', 'completed', 'canceled'],
+  conflict: ['posted', 'ready_for_review', 'planning', 'completed', 'canceled'],
 
   // Retryable failure states (section 2.4: "manual retry").
-  incomplete: ['planning', 'canceled', 'completed'],
-  interrupted: ['planning', 'canceled', 'completed'],
-  canceled: ['planning'],
+  incomplete: ['posted', 'planning', 'canceled', 'completed'],
+  interrupted: ['posted', 'planning', 'canceled', 'completed'],
+  canceled: ['posted', 'planning'],
 
-  // Section 2.4: "Read result/history, create another task." Read-only.
-  completed: [],
+  // Published work stays saved when a task is confirmed, reopened, or rerun.
+  awaiting_confirmation: ['completed', 'posted', 'ready_for_review', 'planning'],
+  completed: ['awaiting_confirmation', 'posted', 'ready_for_review', 'planning'],
 };
 
 export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
@@ -81,14 +82,14 @@ export function assertTransition(
  *
  * Section 2.3 explicitly permits this during execution: "Existing execution may
  * finish, but its result is labeled against the older version and cannot be
- * applied without review against the updated requirements." So the only bar is
- * `completed`, which section 2.4 defines as read-only.
+ * applied without review against the updated requirements." Applied work must
+ * move back to Posted or In review before its brief can change.
  */
 export function assertRevisable(status: TaskStatus): void {
-  if (status !== 'completed') return;
+  if (status !== 'completed' && status !== 'awaiting_confirmation') return;
   throw new ApiError(
     'INVALID_STATE',
-    'This task was applied and is read-only. Create another task instead.',
+    'Move this task to Posted or In review before changing its brief.',
     { currentStatus: status },
   );
 }

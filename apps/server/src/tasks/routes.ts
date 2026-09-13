@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
+  OWNER_KEY_HEADER,
+  taskStatusSchema,
   answerQuestionRequestSchema,
   cancelTaskRequestSchema,
   retryTaskRequestSchema,
@@ -17,6 +19,7 @@ import {
   updateTaskRequestSchema,
   uuidSchema,
 } from '@app/contracts';
+import { readOwnerKeyHeader } from '../workspaces/owner-key.js';
 import { parseOrThrow } from '../http/errors.js';
 import type { PgDiscussionService } from '../discussion/service.js';
 import type { PgReviewStore } from '../runs/review-store.js';
@@ -201,6 +204,13 @@ export async function registerTaskRoutes(
   app.get('/api/workspaces/:workspaceId/tasks/:taskId/saved-outputs', async (request) => {
     const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
     return { outputs: await deps.tasks.savedOutputs(workspaceId, taskId) };
+  });
+
+  app.patch('/api/workspaces/:workspaceId/tasks/:taskId/status', async (request) => {
+    const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
+    const body = parseOrThrow(z.object({ expectedStatus: taskStatusSchema,
+      status: z.enum(['posted', 'ready_for_review', 'awaiting_confirmation', 'completed', 'unmark']) }), request.body);
+    return deps.tasks.move(workspaceId, taskId, body, readOwnerKeyHeader(request.headers[OWNER_KEY_HEADER]));
   });
 
   // --- discussion ----------------------------------------------------------

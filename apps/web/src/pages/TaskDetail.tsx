@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { FileText, PencilLine, Square } from "lucide-react";
+// `Square` went with the acceptance-criteria list; `useEffect` drives the tab sync.
+import { FileText, PencilLine } from "lucide-react";
 import { type TaskDetail as Task } from "@app/contracts";
 import { statusPresentation } from "../board";
 import { inputLabel, type TaskInputOption } from "../task-inputs";
@@ -39,17 +40,22 @@ export function TaskDetail({
   options,
   action,
   banner,
+  taskFiles,
   renderTab,
   onEditRequirements,
   initialTab,
   attention,
+  backTo,
 }: {
   task: Task;
   base: string;
+  backTo?: string;
   options: TaskInputOption[];
   action?: ReactNode;
   /** Run-level explanation (§4.7), shown above the panels rather than in a tab. */
   banner?: ReactNode;
+  /** Direct task attachments and the upload affordance. */
+  taskFiles?: ReactNode;
   renderTab: (tab: TaskTab) => ReactNode;
   onEditRequirements?: () => void;
   /**
@@ -79,7 +85,7 @@ export function TaskDetail({
 
   return (
     <>
-      <BackLink to={base}>All tasks</BackLink>
+      <BackLink to={backTo ?? base}>{backTo ? "Back to history" : "All tasks"}</BackLink>
 
       <PageHeading
         badge={
@@ -94,7 +100,7 @@ export function TaskDetail({
         title={task.title}
         description={
           <>
-            Posted by {task.creatorGuestLabel} · Version {task.version}
+            Posted by {task.creatorGuestLabel}
             {task.kind === "manual_edit" && " · Manual edit"}
           </>
         }
@@ -130,27 +136,6 @@ export function TaskDetail({
             {task.outcome || "No outcome added yet."}
           </p>
 
-          <SectionLabel>Acceptance criteria</SectionLabel>
-          {task.criteria.length ? (
-            <ul className="space-y-2">
-              {task.criteria.map((criterion, index) => (
-                <li key={index} className="flex gap-2.5">
-                  <Square
-                    aria-hidden="true"
-                    className="mt-[3px] size-3.5 shrink-0 text-muted-foreground/70"
-                  />
-                  <span className="text-[13px] leading-relaxed">
-                    {criterion}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-[13px] text-muted-foreground">
-              No criteria added yet.
-            </p>
-          )}
-
           <SectionLabel>Selected inputs</SectionLabel>
           {task.inputs.length ? (
             <ul className="space-y-1.5">
@@ -174,6 +159,8 @@ export function TaskDetail({
               No inputs selected.
             </p>
           )}
+
+          {taskFiles}
 
           <SectionLabel>Intended output paths</SectionLabel>
           {task.outputPaths.length ? (

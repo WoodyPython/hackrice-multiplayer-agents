@@ -208,7 +208,7 @@ export class PgReviewStore {
         return { operation: existing, created: false };
       }
       if (review.status !== 'ready' || review.candidate_sha !== input.candidateSha || review.main_sha !== input.expectedMainSha ||
-          task.active_run_id || ['completed', 'canceled'].includes(task.status) || task.version !== review.task_version ||
+          task.active_run_id || ['completed', 'awaiting_confirmation', 'canceled'].includes(task.status) || task.version !== review.task_version ||
           workspace.guidance_version !== review.guidance_version) throw new ApiError('REVIEW_STALE');
       const pending = await db.selectFrom('apply_operations as a').innerJoin('reviews as r', 'r.id', 'a.review_id')
         .select('a.id').where('r.task_id', '=', scoped.task_id).where('a.status', 'in', ['pending', 'ambiguous']).executeTakeFirst();

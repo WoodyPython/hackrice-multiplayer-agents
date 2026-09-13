@@ -70,32 +70,38 @@ export function Changes({
   const [failure, setFailure] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const applyId = useRef(crypto.randomUUID());
+  const appliedReview = useRef<string | null>(null);
+  const readEpoch = useRef(0);
   const reload = useCallback(() => setNonce((value) => value + 1), []);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     void (async () => {
+      const epoch = readEpoch.current;
       try {
         const list = await api.listTaskReviews(
           task.workspaceId,
           task.id,
           controller.signal,
         );
-        if (controller.signal.aborted) return;
-        setReviews(list);
-        const current = currentReview(list);
+        if (controller.signal.aborted || epoch !== readEpoch.current) return;
+        const reconciled = appliedReview.current
+          ? list.map((item) => item.id === appliedReview.current ? { ...item, status: "applied" as const } : item)
+          : list;
+        setReviews(reconciled);
+        const current = currentReview(reconciled);
         // A building review has no candidate SHA, and reading its detail means
         // reading a Git artifact that does not exist yet.
-        setDetail(
-          current && current.status !== "building"
+        const nextDetail = current && current.status !== "building"
             ? await api.readReview(
                 task.workspaceId,
                 current.id,
                 controller.signal,
               )
-            : null,
-        );
+            : null;
+        if (controller.signal.aborted || epoch !== readEpoch.current) return;
+        setDetail(nextDetail);
         setFailure(null);
       } catch (error) {
         if (!controller.signal.aborted) setFailure(apiMessage(error));
@@ -104,13 +110,15 @@ export function Changes({
       }
     })();
     return () => controller.abort();
-  }, [api, task.workspaceId, task.id, nonce, staleSignal]);
+  }, [api, task.workspaceId, task.id, nonce, staleSignal, task.status, task.activeRunId]);
 
-  async function act(run: () => Promise<unknown>) {
+  async function act<T>(run: () => Promise<T>, commit?: (result: T) => void) {
+    readEpoch.current += 1;
     setBusy(true);
     setFailure(null);
     try {
-      await run();
+      const result = await run();
+      commit?.(result);
       reload();
     } catch (error) {
       setFailure(apiMessage(error));
@@ -146,7 +154,13 @@ export function Changes({
               variant="primary"
               disabled={busy}
               onClick={() =>
-                void act(() => api.prepareReview(task.workspaceId, task.id))
+                void act(
+                  () => api.prepareReview(task.workspaceId, task.id),
+                  (next) => {
+                    setReviews((current) => [next.review, ...(current ?? []).filter((item) => item.id !== next.review.id)]);
+                    setDetail(next);
+                  },
+                )
               }
             >
               {busy ? "Preparing…" : "Prepare review"}
@@ -171,9 +185,6 @@ export function Changes({
           <Dot tone={tone} live={current.status === "building"} />
           {humanizeStatus(current.status)}
         </Badge>
-        <small className="text-[11.5px] text-muted-foreground">
-          Against task version {current.source.taskVersion}
-        </small>
       </header>
 
       {current.status === "building" && (
@@ -194,7 +205,13 @@ export function Changes({
             variant="primary"
             disabled={busy}
             onClick={() =>
-              void act(() => api.prepareReview(task.workspaceId, task.id))
+              void act(
+                () => api.prepareReview(task.workspaceId, task.id),
+                (next) => {
+                  setReviews((items) => [next.review, ...(items ?? []).filter((item) => item.id !== next.review.id)]);
+                  setDetail(next);
+                },
+              )
             }
           >
             {busy ? "Refreshing…" : "Refresh review"}
@@ -205,9 +222,18 @@ export function Changes({
       {current.status === "applied" && (
         <Notice role="status" title="These changes were applied">
           <p>
-            This is the record of what went onto the approved files. Nothing
-            further is needed.
+            {task.status === "awaiting_confirmation"
+              ? "Your changes are saved. Anyone can choose Mark as Complete above."
+              : "These changes are saved in your workspace. You can find them in History anytime."}
           </p>
+          {task.activeRunId === null && (task.status === "ready_for_review" || (task.kind === "manual_edit" && task.status === "posted")) && (
+            <Button disabled={busy} onClick={() => void act(() => api.prepareReview(task.workspaceId, task.id), (next) => {
+              setReviews((items) => [next.review, ...(items ?? []).filter((item) => item.id !== next.review.id)]);
+              setDetail(next);
+            })}>
+              Prepare new review
+            </Button>
+          )}
         </Notice>
       )}
 
@@ -218,11 +244,15 @@ export function Changes({
               detail={detail}
               busy={busy}
               onResolve={(resolutions) =>
-                void act(() =>
-                  api.resolveReview(task.workspaceId, current.id, {
-                    expectedCandidateSha: detail.candidateSha,
-                    resolutions,
-                  }),
+                void act(
+                  () => api.resolveReview(task.workspaceId, current.id, {
+                      expectedCandidateSha: detail.candidateSha,
+                      resolutions,
+                    }),
+                  (next) => {
+                    setReviews((items) => (items ?? []).map((item) => item.id === next.review.id ? next.review : item));
+                    setDetail(next);
+                  },
                 )
               }
             />
@@ -261,25 +291,30 @@ export function Changes({
 
           {current.status === "ready" && (
             <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-muted/30 p-4">
-                <Button
-                  variant="primary"
-                  disabled={busy || detail.conflicts.length > 0}
-                  onClick={() =>
-                    void act(async () => {
-                      await api.applyReview(
-                        task.workspaceId,
-                        current.id,
-                        detail.candidateSha,
-                        applyId.current,
-                      );
-                      applyId.current = crypto.randomUUID();
-                      onApplied();
-                    })
-                  }
-                >
-                  <ShieldCheck aria-hidden="true" />
-                  {busy ? "Applying…" : "Apply these changes"}
-                </Button>
+              <Button
+                variant="primary"
+                disabled={busy || detail.conflicts.length > 0}
+                onClick={() =>
+                  void act(async () => {
+                    const result = await api.applyReview(
+                      task.workspaceId,
+                      current.id,
+                      detail.candidateSha,
+                      applyId.current,
+                    );
+                    if (result.status !== "applied") return;
+                    appliedReview.current = current.id;
+                    setReviews((items) => (items ?? []).map((item) =>
+                      item.id === current.id ? { ...item, status: "applied" as const, updatedAt: new Date().toISOString() } : item,
+                    ));
+                    applyId.current = crypto.randomUUID();
+                    onApplied();
+                  })
+                }
+              >
+                <ShieldCheck aria-hidden="true" />
+                {busy ? "Applying…" : "Apply these changes"}
+              </Button>
               {detail.conflicts.length > 0 ? (
                 <small className="text-[11.5px] text-muted-foreground">
                   Resolve the decisions above before applying.

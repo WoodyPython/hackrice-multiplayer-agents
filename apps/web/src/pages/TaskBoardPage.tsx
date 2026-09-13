@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Plus, TriangleAlert } from "lucide-react";
 import type { TaskSummary, Workspace } from "@app/contracts";
 import { useBrowser } from "../browser-context";
@@ -13,26 +13,38 @@ import { TaskBoard } from "./TaskBoard";
 /**
  * The live board (design §4.3).
  *
- * Placement is state-derived and nothing here can move a card: §4.3 is explicit
- * that "dragging a card cannot mark work approved", so there is no drag
- * affordance at all rather than one that is refused on drop.
+ * Owners move settled tasks from task details; live runs update their own status.
  *
  * Refresh hints fetch authoritative state; polling repairs missed hints.
  */
 export function TaskBoardPage({
   workspace,
-  share,
 }: {
   workspace: Workspace;
-  share: ReactNode;
 }) {
   const { api } = useBrowser();
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const hiddenKey = `coflow.hidden-tasks.${workspace.id}`;
+  const [hiddenIds, setHiddenIds] = useState<string[]>(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(hiddenKey) ?? "[]");
+      return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+    } catch { return []; }
+  });
+  const [showHidden, setShowHidden] = useState(false);
   const reload = useCallback(() => setNonce((value) => value + 1), []);
   const base = `/w/${workspace.id}`;
+
+  function toggleHidden(taskId: string) {
+    setHiddenIds((current) => {
+      const next = current.includes(taskId) ? current.filter((id) => id !== taskId) : [...current, taskId];
+      try { localStorage.setItem(hiddenKey, JSON.stringify(next)); } catch { /* Remains hidden for this session. */ }
+      return next;
+    });
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -71,7 +83,6 @@ export function TaskBoardPage({
             <Plus aria-hidden="true" />
             Post a task
           </ButtonLink>
-          {share}
         </>
       }
     />
@@ -120,7 +131,15 @@ export function TaskBoardPage({
           {failure}
         </ErrorText>
       )}
-      <TaskBoard tasks={tasks} base={base} heading={heading} />
+      <TaskBoard
+        tasks={tasks}
+        base={base}
+        heading={heading}
+        hiddenIds={hiddenIds}
+        showHidden={showHidden}
+        onToggleHidden={toggleHidden}
+        onToggleShowHidden={() => setShowHidden((value) => !value)}
+      />
     </>
   );
 }

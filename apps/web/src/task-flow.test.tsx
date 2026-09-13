@@ -170,6 +170,8 @@ function server(overrides: Record<string, (call: Call) => Response> = {}) {
           return json({ drafts: [draft] });
         case `GET /tasks/${taskId}/saved-outputs`:
           return json({ outputs: [] });
+        case `GET /tasks/${taskId}/materials`:
+          return json({ materials: [material] });
         case "GET /history":
           return json({ entries: [] });
         case `GET /tasks/${taskId}/events`:
@@ -234,6 +236,18 @@ describe("the board", () => {
     expect(screen.queryByText(/Writer/)).toBeNull();
     expect(screen.queryByText(/first draft/)).toBeNull();
     expect(within(working).getByText("Agents are working")).toBeTruthy();
+  });
+
+  it("hides and restores a task without deleting it", async () => {
+    const user = userEvent.setup();
+    const { transport, calls } = server();
+    open(`/w/${workspaceId}`, transport);
+    await user.click(await screen.findByRole("button", { name: `Hide ${task.title}` }));
+    expect(screen.queryByRole("link", { name: new RegExp(task.title) })).toBeNull();
+    expect(calls.some((call) => call.method !== "GET")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Show hidden tasks" }));
+    await user.click(screen.getByRole("button", { name: `Show ${task.title}` }));
+    expect(screen.getByRole("link", { name: new RegExp(task.title) })).toBeTruthy();
   });
 });
 
@@ -478,7 +492,48 @@ describe("starting and revising", () => {
   });
 });
 
+describe("task details", () => {
+  it("adds a file directly to task context and keeps versions out of the UI", async () => {
+    const user = userEvent.setup();
+    const added = {
+      ...material,
+      id: "30000000-0000-4000-8000-000000000bb2",
+      filename: "notes.md",
+      sha256: "b".repeat(64),
+    };
+    const { transport, calls } = server({
+      "POST /materials": () => json({ material: added, created: true }, 201),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    expect(await screen.findByRole("heading", { name: task.title })).toBeTruthy();
+    expect(screen.queryByText(/Version 2/)).toBeNull();
+    expect(screen.queryByLabelText("Acceptance criteria")).toBeNull();
+    await user.upload(screen.getByLabelText("Add file"), new File(["notes"], "notes.md", { type: "text/markdown" }));
+    await waitFor(() => expect(calls.some((call) => call.method === "POST" && call.url.endsWith("/materials"))).toBe(true));
+    const upload = calls.find((call) => call.method === "POST" && call.url.endsWith("/materials"))!;
+    expect(upload.body).toMatchObject({ taskId, file: "notes.md" });
+  });
+});
+
 describe("files", () => {
+  it("opens approved content on a dedicated file screen", async () => {
+    const user = userEvent.setup();
+    const path = "documents/guide.md";
+    const { transport } = server({
+      "GET /files": () => json({ mainSha: "a".repeat(40), files: [{ path, hash: "b".repeat(40) }] }),
+      "GET /files/content": () => json({ path, hash: "b".repeat(40), mainSha: "a".repeat(40), text: "A dedicated page" }),
+    });
+    open(`/w/${workspaceId}/files`, transport);
+    // Files is a tree now, so the path is reached as a leaf under its folder
+    // and the dedicated screen is an explicit action rather than the row
+    // itself. The subject is unchanged: that screen is reachable from Files.
+    await user.click(await screen.findByRole("button", { name: /guide\.md/ }));
+    await user.click(await screen.findByRole("link", { name: "Open full page" }));
+    expect((await screen.findByRole("heading", { level: 1 })).textContent).toContain(path);
+    expect(screen.getByText("A dedicated page")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "All files" })).toBeTruthy();
+  });
+
   it("rejects a binary before the request leaves the browser", async () => {
     const { transport, calls } = server();
     open(`/w/${workspaceId}/files`, transport);
@@ -860,7 +915,7 @@ async function openChanges(
       <App session={session} api={api} />
     </MemoryRouter>,
   );
-  await user.click(await screen.findByRole("tab", { name: "Changes" }));
+  await user.click(await screen.findByRole("tab", { name: /Changes/ }));
   return { user, calls };
 }
 
@@ -968,6 +1023,9 @@ describe("review", () => {
     await user.click(
       screen.getByRole("button", { name: "Apply these changes" }),
     );
+
+    expect(await screen.findByText("These changes were applied")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Apply these changes" })).toBeNull();
 
     await waitFor(() =>
       expect(calls.some((c) => c.url.endsWith("/apply"))).toBe(true),
@@ -1148,12 +1206,12 @@ describe("deep links", () => {
     const { transport } = server({
       [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [] }),
     });
-    open(`/w/${workspaceId}/tasks/${taskId}?tab=Changes`, transport);
+    open(`/w/${workspaceId}/tasks/${taskId}?tab=Changes&from=history`, transport);
 
     // Request review says it will show you the review; this is what makes that
     // true rather than landing on the task and leaving the reader to hunt.
     expect(
-      (await screen.findByRole("tab", { name: "Changes" })).getAttribute(
+      (await screen.findByRole("tab", { name: /Changes/ })).getAttribute(
         "aria-selected",
       ),
     ).toBe("true");
@@ -1322,7 +1380,7 @@ describe("history", () => {
     });
     // §4.1: "Applied changes and associated tasks" -- the task is half of it.
     expect(link.getAttribute("href")).toBe(
-      `/w/${workspaceId}/tasks/${taskId}?tab=Changes`,
+      `/w/${workspaceId}/tasks/${taskId}?tab=Changes&from=history`,
     );
     expect(screen.getByText("Applied")).toBeTruthy();
   });
@@ -1482,7 +1540,7 @@ describe("A08 cross-flow integration", () => {
         </MemoryRouter>,
       );
       const user = userEvent.setup();
-      await user.click(await screen.findByRole("tab", { name: "Changes" }));
+      await user.click(await screen.findByRole("tab", { name: /Changes/ }));
       expect(
         await screen.findByRole("button", { name: "Apply these changes" }),
       ).toBeTruthy();
@@ -1573,4 +1631,70 @@ describe("A08 cross-flow integration", () => {
       await screen.findByText(/owner access cannot be recovered/i),
     ).toBeTruthy();
   });
+});
+
+
+describe("finishing and rerunning tasks", () => {
+  it.each(["completed", "ready_for_review", "awaiting_confirmation"])("can rerun and stop %s work", async (initialStatus) => {
+    let current = { ...task, status: initialStatus, activeRunId: null as string | null };
+    const runId = "70000000-0000-4000-8000-000000000ff1";
+    const { transport, calls } = server({
+      [`GET /tasks/${taskId}`]: () => json(current),
+      [`POST /tasks/${taskId}/start`]: () => {
+        current = { ...current, status: "planning", activeRunId: runId };
+        return json({ runId, attempt: 2, taskStatus: "planning", idempotentReplay: false }, 202);
+      },
+      [`POST /tasks/${taskId}/cancel`]: () => {
+        current = { ...current, status: "canceled", activeRunId: null };
+        return json(current);
+      },
+    });
+    const user = userEvent.setup();
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    await user.click(await screen.findByRole("button", { name: "Run again" }));
+    await user.click(await screen.findByRole("button", { name: "Stop this attempt" }));
+    await screen.findByRole("button", { name: "Run again" });
+    expect(calls.some((call) => call.url.endsWith("/cancel"))).toBe(true);
+  });
+
+  it.each(["posted", "ready_for_review", "awaiting_confirmation"])("lets a contributor complete and unmark a %s task", async (initialStatus) => {
+    let current = { ...task, status: initialStatus };
+    const session = new BrowserSession();
+    const { transport } = server({
+      "GET ": () => json({ ...workspace, isOwner: false }),
+      [`GET /tasks/${taskId}`]: () => json(current),
+      [`PATCH /tasks/${taskId}/status`]: (call) => {
+        const body = call.body as { status: string; expectedStatus: string };
+        expect(body.expectedStatus).toBe(current.status);
+        current = { ...current, status: body.status === "unmark" ? initialStatus : body.status };
+        return json(current);
+      },
+    });
+    render(<MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
+      <App session={session} api={new WorkspaceApi(session, transport)} />
+    </MemoryRouter>);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Mark as Complete" }));
+    await user.click(await screen.findByRole("button", { name: "Unmark as Complete" }));
+    await screen.findByRole("button", { name: "Mark as Complete" });
+    expect(current.status).toBe(initialStatus);
+  });
+
+  it("returns task details to History", async () => {
+    const { transport } = server();
+    open(`/w/${workspaceId}/tasks/${taskId}?from=history`, transport);
+    expect((await screen.findByRole("link", { name: "Back to history" })).getAttribute("href"))
+      .toBe(`/w/${workspaceId}/history`);
+  });
+});
+
+
+it("offers a new review for rerun results while preserving the applied review", async () => {
+  const { user, calls } = await openChanges({
+    [`GET /tasks/${taskId}`]: () => json({ ...task, status: "ready_for_review" }),
+    [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow({ status: "applied" })] }),
+    [`POST /tasks/${taskId}/review`]: () => json(reviewDetail()),
+  });
+  await user.click(await screen.findByRole("button", { name: "Prepare new review" }));
+  expect(calls.some((call) => call.method === "POST" && call.url.endsWith("/review"))).toBe(true);
 });

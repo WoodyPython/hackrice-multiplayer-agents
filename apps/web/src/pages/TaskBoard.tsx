@@ -3,6 +3,8 @@ import { TASK_STATUSES, type TaskSummary } from "@app/contracts";
 import { useState, type ReactNode } from "react";
 import {
   HelpCircle,
+  Eye,
+  EyeOff,
   Paperclip,
   Plus,
   Search,
@@ -17,13 +19,11 @@ import { Button, ButtonLink } from "../components/ui/button";
 import { Input, Select } from "../components/ui/field";
 import { Avatar } from "../components/ui/misc";
 
-function TaskCard({ task, base }: { task: TaskSummary; base: string }) {
+function TaskCard({ task, base, hidden, onToggleHidden }: { task: TaskSummary; base: string; hidden: boolean; onToggleHidden: () => void }) {
   const presentation = statusPresentation[task.status];
   return (
-    <Link
-      to={`${base}/tasks/${task.id}`}
-      className="group block rounded-xl border border-border bg-card p-3.5 shadow-xs transition-all duration-150 hover:-translate-y-0.5 hover:border-navy-300 hover:shadow-md focus-visible:-translate-y-0.5 dark:hover:border-navy-600"
-    >
+    <article className="group relative rounded-xl border border-border bg-card shadow-xs transition-all duration-150 hover:-translate-y-0.5 hover:border-navy-300 hover:shadow-md dark:hover:border-navy-600">
+      <Link to={`${base}/tasks/${task.id}`} className="block p-3.5 pr-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <Badge tone={presentation.tone} size="sm">
         <Dot
           tone={presentation.tone}
@@ -60,7 +60,18 @@ function TaskCard({ task, base }: { task: TaskSummary; base: string }) {
           </span>
         )}
       </div>
-    </Link>
+      </Link>
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        className="absolute top-2.5 right-2.5"
+        aria-label={hidden ? `Show ${task.title}` : `Hide ${task.title}`}
+        title={hidden ? "Show on board" : "Hide from board"}
+        onClick={onToggleHidden}
+      >
+        {hidden ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
+      </Button>
+    </article>
   );
 }
 
@@ -68,18 +79,27 @@ export function TaskBoard({
   tasks,
   base,
   heading,
+  hiddenIds = [],
+  showHidden = false,
+  onToggleHidden,
+  onToggleShowHidden,
 }: {
   tasks: TaskSummary[];
   base: string;
   /** Replaces the default header, so a live workspace can show its own name. */
   heading?: ReactNode;
+  hiddenIds?: string[];
+  showHidden?: boolean;
+  onToggleHidden?: (taskId: string) => void;
+  onToggleShowHidden?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
-  const filtered = tasks.filter(
+  const visibleTasks = showHidden ? tasks : tasks.filter((task) => !hiddenIds.includes(task.id));
+  const filtered = visibleTasks.filter(
     (task) =>
       task.title.toLowerCase().includes(query.toLowerCase()) &&
-      (status === "all" || task.status === status),
+      (status === "all" || task.status === status || (status === "ready_for_review" && task.status === "awaiting_confirmation")),
   );
   const filtering = query !== "" || status !== "all";
 
@@ -105,10 +125,16 @@ export function TaskBoard({
             Task board
           </h2>
           <Badge size="sm" className="tabular-nums">
-            {tasks.length}
+            {filtered.length}
           </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {hiddenIds.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={onToggleShowHidden}>
+              {showHidden ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+              {showHidden ? "Hide hidden tasks" : `Show hidden (${hiddenIds.length})`}
+            </Button>
+          )}
           <label className="sr-only" htmlFor="search">
             Search tasks
           </label>
@@ -137,7 +163,7 @@ export function TaskBoard({
               className="h-9 pl-8.5 text-[12.5px]"
             >
               <option value="all">All statuses</option>
-              {TASK_STATUSES.map((value) => (
+              {TASK_STATUSES.filter((value) => value !== "awaiting_confirmation").map((value) => (
                 <option value={value} key={value}>
                   {statusPresentation[value].label}
                 </option>
@@ -166,25 +192,25 @@ export function TaskBoard({
         </EmptyState>
       ) : filtered.length === 0 ? (
         <EmptyState
-          title="No matching tasks"
+          title={visibleTasks.length === 0 ? "All tasks are hidden" : "No matching tasks"}
           icon={Search}
           action={
             <Button
               onClick={() => {
-                setQuery("");
-                setStatus("all");
+                if (visibleTasks.length === 0) onToggleShowHidden?.();
+                else { setQuery(""); setStatus("all"); }
               }}
             >
-              Clear filters
+              {visibleTasks.length === 0 ? "Show hidden tasks" : "Clear filters"}
             </Button>
           }
         >
-          Try a different title or status.
+          {visibleTasks.length === 0 ? "Hidden tasks stay available in this browser." : "Try a different title or status."}
         </EmptyState>
       ) : (
         <div className="-mx-4 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0">
-          <div className="grid min-w-[900px] grid-cols-5 gap-4 lg:min-w-0">
-            {groupTasks(filtered).map((column) => {
+          <div className={cn("grid gap-4", status !== "all" && "max-w-sm")} style={{ gridTemplateColumns: `repeat(${status === "all" ? 5 : 1}, minmax(210px, 1fr))` }}>
+            {groupTasks(filtered).filter((column) => status === "all" || column.tasks.length > 0).map((column) => {
               const meta = columnPresentation[column.name];
               return (
                 <section
@@ -197,7 +223,7 @@ export function TaskBoard({
                     title={meta.hint}
                   >
                     <Dot tone={meta.tone} />
-                    <span className="truncate">{column.name}</span>
+                    <span>{column.name}</span>
                     <Badge
                       size="sm"
                       className="ml-auto shrink-0 tabular-nums"
@@ -208,7 +234,13 @@ export function TaskBoard({
                   </h3>
                   <div className="grid content-start gap-2.5">
                     {column.tasks.map((task) => (
-                      <TaskCard key={task.id} task={task} base={base} />
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        base={base}
+                        hidden={hiddenIds.includes(task.id)}
+                        onToggleHidden={() => onToggleHidden?.(task.id)}
+                      />
                     ))}
                     {column.tasks.length === 0 && (
                       <p
@@ -229,8 +261,8 @@ export function TaskBoard({
       )}
 
       <p className="mt-6 text-[11.5px] text-muted-foreground">
-        Tasks move as the work progresses. Every change gets a review before it
-        reaches the approved files.
+        Open a task to mark it complete or unmark it. Anyone in the workspace can
+        update completion, and you can run tasks again whenever you need to.
       </p>
     </>
   );

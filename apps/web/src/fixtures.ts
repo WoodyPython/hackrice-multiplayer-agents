@@ -51,6 +51,7 @@ const titles = [
   "Build the getting-started guide",
   "Clarify the launch audience",
   "Review the landing page copy",
+  "Give the launch checklist a final look",
   "Resolve the introduction edits",
   "Finish the accessibility checklist",
   "Resume the release notes",

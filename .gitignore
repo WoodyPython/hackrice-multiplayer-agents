@@ -33,3 +33,4 @@ desktop.ini
 .vitest/
 .vite/
 __pycache__/
+.npm-cache/

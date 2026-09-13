@@ -50,6 +50,9 @@ export class SweepModel implements ModelAdapter {
       return reference?.id ? [reference.id] : [];
     })))];
     return response([{ name: 'finish_assignment', arguments: { summary: `Finished ${input.instruction}`,
-      references, limitations: [], outputPaths: paths } }]);
+      references, limitations: [],
+      // A rerun may propose identical content. Report only paths actually changed.
+      outputPaths: [...new Set(toolTurns.flatMap((turn) => turn.results.flatMap((result) =>
+        result.name === 'propose_changes' ? (result.result.changedPaths as string[] ?? []) : [])))], } }]);
   }
 }

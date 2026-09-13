@@ -128,8 +128,7 @@ export function WorkspaceSettings({
             maxLength={20000}
           />
           <small className="block text-[11.5px] text-muted-foreground">
-            Guidance version {workspace.guidanceVersion}. Display names do not
-            grant owner access.
+            Display names do not grant owner access.
           </small>
         </div>
 

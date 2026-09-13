@@ -85,7 +85,7 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
     const newerRun = await db.selectFrom('runs').select('id').where('task_id', '=', review.taskId)
       .where('created_at', '>', operation.created_at).executeTakeFirst();
     if (newerRun) return false;
-    if (task.status === 'completed') return review.status === 'applied';
+    if (task.status === 'completed' || task.status === 'awaiting_confirmation') return review.status === 'applied';
     try {
       const current = await this.inputs(operation.workspace_id, review.taskId, db);
       return current.run?.id === (review.runId ?? undefined) && digest({ ...current.context, draft: context.draft }) === review.source.contextHash;
@@ -99,7 +99,7 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
     const now = new Date();
     await db.updateTable('apply_operations').set({ status: 'applied', settled_at: now, error_code: null }).where('id', '=', operation.id).execute();
     await db.updateTable('reviews').set({ status: 'applied', updated_at: now }).where('id', '=', review.id).where('status', '=', 'ready').execute();
-    await db.updateTable('tasks').set({ status: 'completed', active_run_id: null, updated_at: now }).where('id', '=', review.taskId).execute();
+    await db.updateTable('tasks').set({ status: 'awaiting_confirmation', active_run_id: null, updated_at: now }).where('id', '=', review.taskId).execute();
     await db.updateTable('draft_files').set({ status: 'closed', updated_at: now }).where('task_id', '=', review.taskId).where('status', '=', 'active').execute();
     await appendEvent(db, { workspaceId: operation.workspace_id, taskId: review.taskId, runId: review.runId,
       type: 'task.applied', eventKey: eventKeys.taskApplied(operation.id),
@@ -115,7 +115,7 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
       const task = await db.selectFrom('tasks').selectAll().where('workspace_id', '=', workspaceId)
         .where('id', '=', taskId).executeTakeFirst();
       if (!task) throw new ApiError('TASK_NOT_FOUND', 'No such task in this workspace.');
-      if (task.active_run_id || ['completed', 'canceled'].includes(task.status) ||
+      if (task.active_run_id || ['completed', 'awaiting_confirmation', 'canceled'].includes(task.status) ||
         (task.kind === 'manual_edit' && ['planning', 'working', 'needs_input'].includes(task.status))) {
         throw new ApiError('INVALID_STATE', 'Finish the current task execution before requesting review.');
       }
@@ -373,7 +373,7 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
         .where('id', '=', review.taskId).forUpdate().executeTakeFirstOrThrow();
       const workspace = await db.selectFrom('workspaces').select('guidance_version').where('id', '=', workspaceId).executeTakeFirstOrThrow();
       if (task.version !== review.source.taskVersion || workspace.guidance_version !== review.source.guidanceVersion || task.active_run_id ||
-        ['completed', 'canceled'].includes(task.status)) {
+        ['completed', 'awaiting_confirmation', 'canceled'].includes(task.status)) {
         throw new ApiError('REVIEW_STALE', 'The task changed while preparing this candidate. Request review again.');
       }
       // Atomic candidate + state transition: there is never an intermediate ready conflict.

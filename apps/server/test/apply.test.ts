@@ -115,7 +115,7 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     for (const result of results) expect(result.statusCode, result.body).toBe(200);
     expect(results.map((r) => r.json().alreadyApplied).sort()).toEqual([false, true, true]);
     expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(review.candidateSha);
-    expect((await db.db.selectFrom('tasks').select('status').where('id', '=', taskId).executeTakeFirstOrThrow()).status).toBe('completed');
+    expect((await db.db.selectFrom('tasks').select('status').where('id', '=', taskId).executeTakeFirstOrThrow()).status).toBe('awaiting_confirmation');
     expect((await new PgReviewStore({ db: db.db }).read(review.review.id))!.status).toBe('applied');
     expect(await db.db.selectFrom('apply_operations').select('id').where('review_id', '=', review.review.id).execute()).toHaveLength(1);
     expect(await db.db.selectFrom('task_events').select('id').where('task_id', '=', taskId).where('type', '=', 'task.applied').execute()).toHaveLength(1);
@@ -323,7 +323,13 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
       expect(attachment.statusCode, attachment.body).toBe(409);
       expect(attachment.json().error.code).toBe('RUN_INTERRUPTED');
       expect(await db.db.selectFrom('material_links').select('id').where('task_id', '=', taskId).execute()).toEqual([]);
-      await expect(runtime.collaboration.acquire({ workspaceId, taskId, draftFileId: peer.draft.id, epoch: peer.draft.epoch })).rejects.toMatchObject({ code: 'DOCUMENT_EPOCH_CLOSED' });
+      // Still refused, which is this test's subject -- but the reason changed
+      // with `admitReopenedTask`: a closed task is now re-admitted if it is
+      // writable, so `assertWritable` runs first and reports the unreconciled
+      // apply operation before the closed epoch is ever considered. That is the
+      // more specific of the two answers. If reopening was NOT meant to take
+      // priority here, this assertion is the place that says so.
+      await expect(runtime.collaboration.acquire({ workspaceId, taskId, draftFileId: peer.draft.id, epoch: peer.draft.epoch })).rejects.toMatchObject({ code: 'RUN_INTERRUPTED' });
     } finally {
       await db.pool.query('drop trigger d07_fail_apply on task_events'); await db.pool.query('drop function d07_fail_apply()');
     }

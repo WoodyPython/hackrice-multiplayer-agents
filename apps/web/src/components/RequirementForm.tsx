@@ -93,7 +93,7 @@ export function RequirementForm({
     const fields = {
       title: String(data.get("title") ?? ""),
       outcome: String(data.get("outcome") ?? ""),
-      criteria: lines("criteria"),
+      criteria: initial?.criteria ?? [],
       outputPaths: lines("outputPaths"),
       inputs: selected,
     };
@@ -182,31 +182,6 @@ export function RequirementForm({
             defaultValue={initial?.outcome ?? ""}
             placeholder="What should be different when this is done?"
           />
-        </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="criteria">Acceptance criteria</Label>
-          <Textarea
-            id="criteria"
-            name="criteria"
-            rows={3}
-            defaultValue={(initial?.criteria ?? []).join("\n")}
-            placeholder={
-              "One criterion per line\nExample: Include a clear next step"
-            }
-            aria-invalid={!!errors.criteria}
-            aria-describedby="criteria-hint"
-          />
-          <small
-            id="criteria-hint"
-            className={cn(
-              "block text-[11.5px]",
-              errors.criteria ? "text-destructive" : "text-muted-foreground",
-            )}
-          >
-            {errors.criteria ??
-              "One criterion per line. These guide the review."}
-          </small>
         </div>
 
         <fieldset className="space-y-2.5">

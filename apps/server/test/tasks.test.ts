@@ -654,3 +654,43 @@ describe('task list', () => {
     expect(res.json().tasks[0].title).toBe('Still posted');
   });
 });
+
+
+describe('completion and reruns', () => {
+  it.each(['posted', 'ready_for_review', 'awaiting_confirmation', 'incomplete', 'canceled'] as const)('lets anyone complete and restore %s tasks', async (initialStatus) => {
+    const ws = await createWorkspaceViaApi(t.app);
+    const task = await postTask(t.app, ws.workspaceId);
+    await t.handle.db.updateTable('tasks').set({ status: initialStatus }).where('id', '=', task.id).execute();
+    const url = `/api/workspaces/${ws.workspaceId}/tasks/${task.id}/status`;
+    const move = (expectedStatus: string, status: string) => t.app.inject({
+      method: 'PATCH', url, payload: { expectedStatus, status },
+    });
+    const completed = await move(initialStatus, 'completed');
+    expect(completed.statusCode, completed.body).toBe(200);
+    expect(completed.json().status).toBe('completed');
+    expect((await move(initialStatus, 'completed')).statusCode).toBe(409);
+    const restored = await move('completed', 'unmark');
+    expect(restored.statusCode, restored.body).toBe(200);
+    expect(restored.json().status).toBe(initialStatus);
+    expect((await move(initialStatus, 'unmark')).statusCode).toBe(409);
+    expect((await move(initialStatus, 'posted')).statusCode).toBe(403);
+  });
+
+  it('refuses to complete a running task', async () => {
+    const task = await postTask(t.app, workspaceId);
+    await startTask(t.app, workspaceId, task.id, { expectedVersion: task.version, clientRequestId: randomUUID() });
+    const response = await t.app.inject({ method: 'PATCH', url: `/api/workspaces/${workspaceId}/tasks/${task.id}/status`,
+      payload: { expectedStatus: 'planning', status: 'completed' } });
+    expect(response.statusCode).toBe(409);
+  });
+
+  it.each(['completed', 'ready_for_review', 'awaiting_confirmation'] as const)('reruns and stops %s work', async (status) => {
+    const task = await postTask(t.app, workspaceId);
+    await t.handle.db.updateTable('tasks').set({ status }).where('id', '=', task.id).execute();
+    const response = await startTask(t.app, workspaceId, task.id, { expectedVersion: task.version, clientRequestId: randomUUID() });
+    expect(response.statusCode, response.body).toBe(202);
+    const stop = await t.app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/tasks/${task.id}/cancel`, payload: {} });
+    expect(stop.statusCode, stop.body).toBe(200);
+    expect(stop.json().status).toBe('canceled');
+  });
+});

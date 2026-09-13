@@ -2,6 +2,20 @@
 
 Newest first. One entry per landed ticket.
 
+## UI follow-up — responsive actions and simpler task/file flows
+**Landed:** 2026-09-13 · frontend
+
+- Mutation responses now update task and review screens immediately, and reads
+  started before an action cannot overwrite the newer state when they finish.
+- Approved files open on a dedicated, linkable viewer screen.
+- Contributors can add a text file directly to task context.
+- Tasks can be hidden and restored per browser without deleting shared work.
+- The task form and detail keep one plain-language brief field (Desired
+  outcome); acceptance criteria and internal version numbers are no longer
+  shown. Version checks remain in API requests to prevent lost updates.
+
+---
+
 ## Fix — subagents could not create files: the worker model's free tier is 20 requests **per day**
 **Landed:** 2026-09-13 · Role B (in Role C files)
 **Affects:** every agent call

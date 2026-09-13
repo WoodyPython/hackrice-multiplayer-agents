@@ -10,7 +10,7 @@ export class PgCheckpointStore {
     const task = await this.db.selectFrom('tasks').select('status')
       .where('workspace_id', '=', workspaceId).where('id', '=', taskId).executeTakeFirst();
     if (!task) throw new ApiError('TASK_NOT_FOUND');
-    if (task.status === 'completed') throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+    if ((task.status === 'completed' || task.status === 'awaiting_confirmation')) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
   }
 
   async record(workspaceId: string, capture: DraftCapture): Promise<void> {
@@ -19,7 +19,7 @@ export class PgCheckpointStore {
         .where('workspace_id', '=', workspaceId).where('id', '=', capture.taskId)
         .forUpdate().executeTakeFirst();
       if (!task) throw new ApiError('TASK_NOT_FOUND');
-      if (task.status === 'completed') throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+      if ((task.status === 'completed' || task.status === 'awaiting_confirmation')) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
       const drafts = await trx.selectFrom('draft_files').select(['id', 'status', 'persisted_revision'])
         .where('workspace_id', '=', workspaceId).where('task_id', '=', capture.taskId)
         .forShare().execute();

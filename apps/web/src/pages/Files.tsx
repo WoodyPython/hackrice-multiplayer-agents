@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Download,
   FileCheck2,
   FilePlus2,
+  ExternalLink,
   FileText,
   PencilRuler,
   Upload,
@@ -387,6 +388,15 @@ function Detail({
               <PencilRuler aria-hidden="true" />
               Edit together
             </Button>
+            {/* The pane below is for peeking while you browse; this is the
+                linkable full-page reader, so a file can be sent to someone. */}
+            <Link
+              to={`/w/${workspaceId}/files/view?path=${encodeURIComponent(entry.file.path)}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-[12.5px] font-medium transition-colors hover:bg-muted"
+            >
+              <ExternalLink aria-hidden="true" className="size-3.5" />
+              Open full page
+            </Link>
           </div>
           {preview && (
             <section className="space-y-2 rounded-lg border border-border bg-muted/30 p-3.5">

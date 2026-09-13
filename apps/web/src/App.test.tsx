@@ -87,10 +87,7 @@ describe("A01 workspace shell", () => {
       screen.getByLabelText("Desired outcome"),
       "Make onboarding welcoming.",
     );
-    await user.type(
-      screen.getByLabelText("Acceptance criteria"),
-      "Include setup\nInclude examples",
-    );
+    expect(screen.queryByLabelText("Acceptance criteria")).toBeNull();
     await user.click(screen.getByLabelText(/Launch brief.md/));
     await user.click(screen.getByLabelText(/README.md/));
     await user.click(screen.getByLabelText(/Landing copy.md/));
@@ -110,7 +107,7 @@ describe("A01 workspace shell", () => {
       "Write a contributor guide",
     );
     expect(screen.getByText("Posted", { exact: true })).toBeTruthy();
-    expect(screen.getByText("Include examples")).toBeTruthy();
+    expect(screen.queryByText(/Version 1/)).toBeNull();
     expect(screen.getByText("README.md")).toBeTruthy();
     expect(screen.getByText("documents/contributing.md")).toBeTruthy();
     expect(
@@ -196,4 +193,29 @@ describe("A01 workspace shell", () => {
       screen.getByRole("heading", { name: "Workspace guidance" }),
     ).toBeTruthy();
   });
+});
+
+
+it("shows only completed tasks and their column when filtered", async () => {
+  const user = userEvent.setup();
+  open();
+  await user.selectOptions(screen.getByLabelText("Filter by status"), "completed");
+  expect(screen.getByRole("region", { name: "Completed" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Working" })).toBeNull();
+  expect(screen.queryByRole("link", { name: /Write the launch announcement/ })).toBeNull();
+});
+
+
+it("keeps saved changes in Review and lets demo users toggle completion", async () => {
+  const user = userEvent.setup();
+  open();
+  expect(screen.queryByRole("region", { name: "Final confirmation" })).toBeNull();
+  expect(within(screen.getByRole("region", { name: "Review" })).getByText("Give the launch checklist a final look")).toBeTruthy();
+  await user.selectOptions(screen.getByLabelText("Filter by status"), "ready_for_review");
+  expect(screen.getByText("Give the launch checklist a final look")).toBeTruthy();
+  await user.selectOptions(screen.getByLabelText("Filter by status"), "all");
+  await user.click(screen.getByRole("link", { name: /Write the launch announcement/ }));
+  await user.click(screen.getByRole("button", { name: "Mark as Complete" }));
+  await user.click(screen.getByRole("button", { name: "Unmark as Complete" }));
+  expect(screen.getByRole("button", { name: "Mark as Complete" })).toBeTruthy();
 });

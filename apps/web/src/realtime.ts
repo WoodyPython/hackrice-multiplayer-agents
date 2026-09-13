@@ -88,8 +88,8 @@ export function refreshLoop(workspaceId: string, taskId: string | undefined,
     finally {
       running = false;
       if (!stopped) {
-        const connected = streams.get(workspaceId)?.source.readyState === 1;
-        const delay = dirty ? 0 : connected ? Math.max(30000, interval()) : interval();
+        // A healthy stream can still miss hints when transactions commit out of order.
+        const delay = dirty ? 0 : interval();
         dirty = false;
         timer = setTimeout(() => void run(), delay);
       }
@@ -100,6 +100,7 @@ export function refreshLoop(workspaceId: string, taskId: string | undefined,
   });
   const wake = () => { if (document.visibilityState !== 'hidden') void run(); };
   window.addEventListener('online', wake);
+  window.addEventListener('focus', wake);
   document.addEventListener('visibilitychange', wake);
   void run();
   return () => {
@@ -107,6 +108,7 @@ export function refreshLoop(workspaceId: string, taskId: string | undefined,
     if (timer) clearTimeout(timer);
     unsubscribe();
     window.removeEventListener('online', wake);
+    window.removeEventListener('focus', wake);
     document.removeEventListener('visibilitychange', wake);
   };
 }

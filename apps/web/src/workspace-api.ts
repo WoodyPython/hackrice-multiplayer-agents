@@ -82,6 +82,12 @@ export class WorkspaceApi {
     private transport: typeof fetch = (...args) => fetch(...args),
   ) {}
 
+  async moveTask(workspaceId: string, taskId: string, expectedStatus: TaskDetail['status'],
+    status: 'posted' | 'ready_for_review' | 'awaiting_confirmation' | 'completed' | 'unmark'): Promise<TaskDetail> {
+    return taskDetailSchema.parse(await this.request(`/${workspaceId}/tasks/${taskId}/status`,
+      'PATCH', { expectedStatus, status }, workspaceId));
+  }
+
   private async request(
     path: string,
     method: string,
@@ -255,14 +261,16 @@ export class WorkspaceApi {
     workspaceId: string,
     taskId: string,
     clientRequestId: string,
-  ): Promise<void> {
+  ): Promise<TaskDetail> {
     uuidSchema.parse(workspaceId);
     uuidSchema.parse(taskId);
-    await this.request(
-      `/${workspaceId}/tasks/${taskId}/cancel`,
-      "POST",
-      { clientRequestId },
-      workspaceId,
+    return taskDetailSchema.parse(
+      await this.request(
+        `/${workspaceId}/tasks/${taskId}/cancel`,
+        "POST",
+        { clientRequestId },
+        workspaceId,
+      ),
     );
   }
 

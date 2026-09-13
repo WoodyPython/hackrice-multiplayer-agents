@@ -193,8 +193,8 @@ function SidebarBody({
             className="size-4 text-navy-600 dark:text-navy-300"
           />
           <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
-            Shape the work together, then let the agents run it. Nothing ships
-            without a review.
+            Plan together, let agents help, and review the result. You decide
+            when it is done.
           </p>
         </div>
         <div className="flex items-center gap-2.5 px-1">
@@ -208,7 +208,7 @@ function SidebarBody({
             </span>
           </span>
         </div>
-        <ThemeToggle className="self-start" />
+
       </div>
     </div>
   );
@@ -314,6 +314,7 @@ export function AppShell({
           <div className="flex min-w-0 flex-1 items-center gap-2 text-[12px] text-muted-foreground">
             {breadcrumb}
           </div>
+          <ThemeToggle />
           {topbarEnd}
         </header>
 

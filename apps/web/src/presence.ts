@@ -63,13 +63,17 @@ export function usePresence(
     // Best-effort departure so the room updates immediately rather than after
     // the server's sweep. keepalive lets it survive the unload.
     const leave = () => {
+      // Both arms matter: fetch can throw synchronously on a bad URL and can
+      // reject asynchronously on a dead network, and a `void`ed promise escapes
+      // the try block entirely -- which surfaced as an unhandled rejection on
+      // unload. The TTL sweep is the guarantee; this is only the fast path.
       try {
         void fetch(
           `/api/workspaces/${encodeURIComponent(workspaceId)}/presence/${presenceId}`,
           { method: "DELETE", keepalive: true },
-        );
+        ).catch(() => {});
       } catch {
-        /* The TTL sweep is the guarantee; this is only the fast path. */
+        /* Nothing to retry: the sweep removes this browser either way. */
       }
     };
     window.addEventListener("pagehide", leave);
