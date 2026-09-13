@@ -14,6 +14,10 @@ import type { AppConfig } from '../config.js';
 import type { Db } from '../db/client.js';
 import { PgWorkspaceService } from '../workspaces/service.js';
 import { registerWorkspaceRoutes } from '../workspaces/routes.js';
+import { registerAuthorization } from '../auth/authorize.js';
+import { registerAuthRoutes } from '../auth/routes.js';
+import { SessionStore } from '../auth/sessions.js';
+import { createSupabaseVerifier, type IdentityVerifier } from '../auth/supabase.js';
 import { PgDiscussionService } from '../discussion/service.js';
 import { PgTaskService } from '../tasks/service.js';
 import { PgReviewStore } from '../runs/review-store.js';
@@ -63,6 +67,13 @@ export interface AppDeps {
    * Same-origin streaming is always enabled.
    */
   broadcaster?: Broadcaster;
+  /**
+   * Verifies a provider access token. Defaults to a live Supabase call.
+   *
+   * Injectable so the permission tests can mint identities without a network
+   * round trip -- the thing under test is our authorization, not Supabase's.
+   */
+  verifyIdentity?: IdentityVerifier;
   /**
    * Capture log output instead of writing to stdout. Exists so the redaction
    * rules below can be asserted rather than assumed: a test drives an owner
@@ -147,7 +158,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     origin: config.isProduction ? false : [config.PUBLIC_APP_URL, /^http:\/\/localhost:\d+$/],
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['content-type', OWNER_KEY_HEADER],
-    credentials: false,
+    // Required for the session cookie. Safe here only because `origin` above is
+    // an explicit allowlist and never a reflection of the caller's Origin.
+    credentials: true,
     maxAge: 86_400,
   });
 
@@ -187,8 +200,34 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   });
 
+  /**
+   * Authentication and authorization, before any workspace route is declared.
+   *
+   * The `preHandler` runs for every route whose registered pattern begins
+   * `/api/workspaces/:workspaceId`, which is all of them but workspace
+   * creation and `/health`. Registering it here rather than inside each router
+   * is the point: a route added later is covered without anyone remembering.
+   */
+  const sessions = new SessionStore({
+    db: deps.db,
+    verify: deps.verifyIdentity ?? createSupabaseVerifier(config),
+  });
+  registerAuthorization(app, sessions);
+  // The live-document upgrade is not a Fastify route, so it authorizes itself
+  // against this same store rather than a second source of truth.
+  app.decorate('sessions', sessions);
+  await registerAuthRoutes(app, {
+    db: deps.db,
+    sessions,
+    // A cookie marked Secure is dropped by the browser over plain HTTP, which
+    // is exactly how local development is served.
+    secureCookies: config.isProduction,
+    signInRateLimit: { max: 30, timeWindow: '1 minute' },
+  });
+
   await registerWorkspaceRoutes(app, {
     workspaces,
+    sessions,
     createRateLimit: {
       max: config.WORKSPACE_CREATE_MAX,
       timeWindow: config.WORKSPACE_CREATE_WINDOW,

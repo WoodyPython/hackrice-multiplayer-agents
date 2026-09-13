@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildTestApp, createWorkspaceViaApi, type TestApp } from './app-helpers.js';
+import { signInAs } from './helpers.js';
 
 /**
  * B03 acceptance (design sections 2.1 to 2.6, 11.2, 12.1).
@@ -662,8 +663,12 @@ describe('completion and reruns', () => {
     const task = await postTask(t.app, ws.workspaceId);
     await t.handle.db.updateTable('tasks').set({ status: initialStatus }).where('id', '=', task.id).execute();
     const url = `/api/workspaces/${ws.workspaceId}/tasks/${task.id}/status`;
+    // As an ordinary member, not the workspace owner: "anyone" is the subject
+    // of this test, and running it as the owner would prove nothing about the
+    // 403 below.
+    const { cookie } = await signInAs(t.handle.db, { workspaceId: ws.workspaceId, role: 'member' });
     const move = (expectedStatus: string, status: string) => t.app.inject({
-      method: 'PATCH', url, payload: { expectedStatus, status },
+      method: 'PATCH', url, payload: { expectedStatus, status }, headers: { cookie },
     });
     const completed = await move(initialStatus, 'completed');
     expect(completed.statusCode, completed.body).toBe(200);

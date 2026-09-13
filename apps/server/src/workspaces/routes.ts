@@ -8,7 +8,8 @@ import {
   uuidSchema,
 } from '@app/contracts';
 import { parseOrThrow } from '../http/errors.js';
-import { readOwnerKeyHeader } from './owner-key.js';
+import { readSessionCookie, requireAuth } from '../auth/authorize.js';
+import type { SessionStore } from '../auth/sessions.js';
 import type { PgWorkspaceService } from './service.js';
 
 /**
@@ -28,6 +29,7 @@ const workspaceParams = z.object({ workspaceId: uuidSchema });
 
 export interface WorkspaceRouteDeps {
   workspaces: PgWorkspaceService;
+  sessions: SessionStore;
   createRateLimit: { max: number; timeWindow: string };
 }
 
@@ -51,20 +53,36 @@ export async function registerWorkspaceRoutes(
     { config: { rateLimit: deps.createRateLimit } },
     async (request, reply) => {
       const body = parseOrThrow(createWorkspaceRequestSchema, request.body ?? {});
-      const created = await deps.workspaces.create(body);
+      // Sign-in is required to create. Anonymous creation would mint a
+      // workspace whose only credential is a key in one browser -- the thing
+      // accounts exist to replace -- and nobody could later be invited to it.
+      const identity = await deps.sessions.resolve(readSessionCookie(request.headers.cookie));
+      if (!identity) throw new ApiError('AUTH_REQUIRED', 'Sign in to create a workspace.');
+      const created = await deps.workspaces.create({ ...body, ownerUserId: identity.userId });
       return reply.status(201).send(created);
     },
   );
 
-  /** Read. Anyone with the link; the key only decides `isOwner`. */
+  /**
+   * Read. Members and link holders alike; membership decides `isOwner`.
+   *
+   * The authorization hook has already resolved the caller's access, so this
+   * handler does not re-derive it and cannot disagree with the gate.
+   */
   app.get('/api/workspaces/:workspaceId', async (request, reply) => {
     const { workspaceId } = parseOrThrow(workspaceParams, request.params);
-    const ownerKey = readOwnerKeyHeader(request.headers[OWNER_KEY_HEADER]);
+    const auth = requireAuth(request);
 
-    const workspace = await deps.workspaces.resolve(workspaceId, ownerKey);
+    const workspace = await deps.workspaces.resolve(workspaceId, auth.access === 'owner');
     if (!workspace) throw new ApiError('WORKSPACE_NOT_FOUND', 'No such workspace.');
 
-    return reply.send(workspace);
+    return reply.send({
+      ...workspace,
+      access: auth.access,
+      // Lets the UI offer "claim this workspace" instead of a dead end when
+      // somebody opens an old guest link while signed in.
+      unclaimed: await deps.workspaces.isUnclaimed(workspaceId),
+    });
   });
 
   /**
@@ -78,20 +96,11 @@ export async function registerWorkspaceRoutes(
   app.patch('/api/workspaces/:workspaceId', async (request, reply) => {
     const { workspaceId } = parseOrThrow(workspaceParams, request.params);
     const body = parseOrThrow(updateWorkspaceRequestSchema, request.body ?? {});
-    const ownerKey = readOwnerKeyHeader(request.headers[OWNER_KEY_HEADER]);
 
+    // Owner-only, enforced by the authorization hook before this runs. The
+    // not-found check stays here so an unknown ID still reports WORKSPACE_NOT_FOUND.
     const existing = await deps.workspaces.resolve(workspaceId);
     if (!existing) throw new ApiError('WORKSPACE_NOT_FOUND', 'No such workspace.');
-
-    const isOwner = await deps.workspaces.checkOwnerKey(workspaceId, ownerKey);
-    if (!isOwner) {
-      // Same code and message whether the header was absent or wrong, so a
-      // caller cannot use the response to tell one from the other.
-      throw new ApiError(
-        'OWNER_KEY_REQUIRED',
-        'This action requires the workspace owner key.',
-      );
-    }
 
     const updated = await deps.workspaces.updateGuidance(workspaceId, body);
     return reply.send(updated);

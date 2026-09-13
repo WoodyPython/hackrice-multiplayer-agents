@@ -32,24 +32,43 @@ export interface WorkspaceServiceDeps {
 export class PgWorkspaceService implements WorkspaceService {
   constructor(private readonly deps: WorkspaceServiceDeps) {}
 
-  async create(input: { name: string; purpose?: string }): Promise<{
+  /**
+   * Create a workspace owned by an account.
+   *
+   * `ownerUserId` is required in practice -- the route refuses anonymous
+   * creation -- and when it is present no owner key is minted at all. The key
+   * only ever existed to answer "is this the creator", and a membership row
+   * answers it better: it survives a cleared browser, it can be granted to a
+   * second person, and it cannot be copied out of a chat log.
+   */
+  async create(input: { name: string; purpose?: string; ownerUserId?: string }): Promise<{
     workspaceId: string;
     contributionUrl: string;
-    ownerKey: string;
+    ownerKey: string | null;
   }> {
-    // Generated here and returned exactly once. Only its hash is stored, and
-    // no endpoint can read it back (section 1.2: no recovery flow).
-    const ownerKey = generateOwnerKey();
+    // Only for the legacy anonymous path. An owned workspace has no key.
+    const ownerKey = input.ownerUserId ? null : generateOwnerKey();
 
-    const row = await this.deps.db
-      .insertInto('workspaces')
-      .values({
-        name: input.name.trim(),
-        purpose: input.purpose?.trim() ?? '',
-        owner_key_hash: hashOwnerKey(ownerKey),
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+    const row = await this.deps.db.transaction().execute(async (trx) => {
+      const created = await trx
+        .insertInto('workspaces')
+        .values({
+          name: input.name.trim(),
+          purpose: input.purpose?.trim() ?? '',
+          owner_key_hash: ownerKey ? hashOwnerKey(ownerKey) : null,
+          claimed_at: input.ownerUserId ? new Date() : null,
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      if (input.ownerUserId) {
+        // Same transaction as the workspace: a workspace that exists without
+        // its owner is one nobody can administer or invite anyone into.
+        await trx.insertInto('workspace_members').values({
+          workspace_id: created.id, user_id: input.ownerUserId, role: 'owner',
+        }).execute();
+      }
+      return created;
+    });
 
     // After the insert, never inside it. Section 1.1: repository creation must
     // not be able to fail a workspace creation request, and Role D's Git
@@ -69,15 +88,22 @@ export class PgWorkspaceService implements WorkspaceService {
   }
 
   /**
-   * `ownerKey` is optional and advisory: it only decides the `isOwner` flag the
-   * UI renders with. Every owner-only operation re-checks the key server-side
-   * (section 4.6: "The server performs the same check; hiding a button is
-   * insufficient").
+   * `isOwner` is now decided by membership, not by a browser-held key.
+   *
+   * It remains advisory in exactly the same way: it chooses what the UI draws,
+   * and every owner-only operation is re-checked server-side by the
+   * authorization hook (section 4.6: "hiding a button is insufficient").
    */
-  async resolve(workspaceId: string, ownerKey?: string): Promise<Workspace | null> {
+  async resolve(workspaceId: string, isOwner = false): Promise<Workspace | null> {
     const row = await this.findRow(workspaceId);
     if (!row) return null;
-    return toPublicWorkspace(row, ownerKeyMatches(ownerKey, row.owner_key_hash));
+    return toPublicWorkspace(row, isOwner);
+  }
+
+  /** True while a pre-accounts workspace is still waiting to be claimed. */
+  async isUnclaimed(workspaceId: string): Promise<boolean> {
+    const row = await this.findRow(workspaceId);
+    return row !== undefined && row !== null && row.owner_key_hash !== null;
   }
 
   async checkOwnerKey(workspaceId: string, ownerKey: string | undefined): Promise<boolean> {

@@ -1,4 +1,3 @@
-import { ownerKeyMatches } from '../workspaces/owner-key.js';
 import { randomUUID } from 'node:crypto';
 import type { Transaction } from 'kysely';
 import {
@@ -323,13 +322,17 @@ export class PgTaskService {
   async move(workspaceId: string, taskId: string, input: {
     expectedStatus: TaskDetail['status'];
     status: 'posted' | 'ready_for_review' | 'awaiting_confirmation' | 'completed' | 'unmark';
-  }, ownerKey?: string): Promise<TaskDetail> {
+  }, isOwner = false): Promise<TaskDetail> {
     return this.deps.db.transaction().execute(async (trx) => {
       const task = await this.lockTask(trx, workspaceId, taskId);
-      const workspace = await trx.selectFrom('workspaces').select('owner_key_hash')
-        .where('id', '=', workspaceId).executeTakeFirstOrThrow();
+      // Marking work complete is ordinary collaboration and stays open to any
+      // member; shunting a task back to an earlier state is administration.
+      // The distinction depends on the request body, which is why it lives here
+      // rather than in the route-level authorization hook.
       const completionChange = input.status === 'completed' || input.status === 'unmark';
-      if (!completionChange && !ownerKeyMatches(ownerKey, workspace.owner_key_hash)) throw new ApiError('OWNER_KEY_REQUIRED');
+      if (!completionChange && !isOwner) {
+        throw new ApiError('FORBIDDEN', 'Only a workspace owner can move a task to another state.');
+      }
       await assertTaskMutable(trx, taskId);
       if (task.active_run_id || task.status !== input.expectedStatus) {
         throw new ApiError('INVALID_STATE', 'This task changed. Reload before moving it.');

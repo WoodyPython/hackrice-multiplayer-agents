@@ -32,19 +32,33 @@ import { ApiError } from './errors.js';
 // --- Role B ----------------------------------------------------------------
 
 export interface WorkspaceService {
+  /**
+   * `ownerUserId` makes the creating account the first owner, in the same
+   * transaction. No owner key is minted for an owned workspace; the returned
+   * `ownerKey` is null in that case and non-null only on the legacy
+   * anonymous path.
+   */
   create(input: {
     name: string;
     purpose?: string;
-  }): Promise<{ workspaceId: string; contributionUrl: string; ownerKey: string }>;
+    ownerUserId?: string;
+  }): Promise<{ workspaceId: string; contributionUrl: string; ownerKey: string | null }>;
 
   /**
-   * ownerKey is advisory and only decides the returned isOwner flag, which
-   * drives what the UI renders. Every owner-only operation re-checks the key
-   * server-side (section 4.6: hiding a button is insufficient).
+   * `isOwner` is advisory and only decides the returned flag, which drives what
+   * the UI renders. Every owner-only operation is re-checked server-side by the
+   * authorization hook (section 4.6: hiding a button is insufficient).
    */
-  resolve(workspaceId: string, ownerKey?: string): Promise<Workspace | null>;
+  resolve(workspaceId: string, isOwner?: boolean): Promise<Workspace | null>;
 
-  /** Timing-safe. Returns false for a missing header and for a wrong key alike. */
+  /**
+   * Timing-safe. Returns false for a missing key and a wrong key alike, and
+   * for a workspace that has already been claimed by an account.
+   *
+   * Retained only for the claim path: possession of this key is what ownership
+   * meant before accounts, so it is the one acceptable proof for converting an
+   * existing guest workspace. It authorizes nothing else.
+   */
   checkOwnerKey(workspaceId: string, ownerKey: string | undefined): Promise<boolean>;
 
   /** Bumps guidance_version only when the guidance text actually changes. */

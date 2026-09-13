@@ -4,13 +4,19 @@ import { OWNER_KEY_HEADER } from '@app/contracts';
 import { hashOwnerKey, ownerKeyMatches } from '../src/workspaces/owner-key.js';
 import { contributionUrl } from '../src/config.js';
 import { TEST_APP_URL, buildTestApp, createWorkspaceViaApi, type TestApp } from './app-helpers.js';
+import { signInAs } from './helpers.js';
 
 /**
- * B02 acceptance (design sections 1.2, 1.4, 11.5, 12.1, 12.2, 13.3).
+ * B02 acceptance, updated for accounts.
  *
- * The behaviours under test are the ones that would be invisible if broken:
- * that the owner key is genuinely the only privilege boundary, that it never
- * leaks, and that guidance_version moves exactly when section 11.5 needs it to.
+ * The privilege boundary is now a membership row, not a browser-held owner key,
+ * so the tests that asserted the key WAS the boundary now assert that it is
+ * not. What did not change: nothing may leak a secret, and guidance_version
+ * still moves exactly when section 11.5 needs it to.
+ *
+ * Cross-workspace isolation and the role matrix live in `permissions.test.ts`,
+ * which builds its own unauthenticated callers rather than inheriting this
+ * suite's signed-in fixture owner.
  */
 
 let t: TestApp;
@@ -24,7 +30,7 @@ afterAll(async () => {
 });
 
 describe('POST /api/workspaces', () => {
-  it('creates one workspace with a private encoded owner key, stored hash and lifecycle signal', async () => {
+  it('makes the creating account the owner and mints no key at all', async () => {
     const before = t.lifecycle.created.length;
     const res = await t.app.inject({ method: 'POST', url: '/api/workspaces',
       payload: { name: 'Launch prep', purpose: 'Ship the FAQ' } });
@@ -32,20 +38,28 @@ describe('POST /api/workspaces', () => {
     const { workspaceId, contributionUrl: url, ownerKey } = res.json();
     expect(workspaceId).toMatch(/^[0-9a-f-]{36}$/);
     expect(url).toBe(contributionUrl(TEST_APP_URL, workspaceId));
-    expect(ownerKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(Buffer.from(ownerKey, 'base64url')).toHaveLength(32);
     expect(url).toContain(workspaceId);
-    expect(url).not.toContain(ownerKey);
-    const row = await t.handle.db.selectFrom('workspaces').selectAll().where('id', '=', workspaceId).executeTakeFirstOrThrow();
-    expect(row.owner_key_hash).toEqual(hashOwnerKey(ownerKey));
-    expect(JSON.stringify(row)).not.toContain(ownerKey);
+    // No key exists to leak, be copied out of a chat, or be lost with a
+    // cleared browser. Ownership is the membership row instead.
+    expect(ownerKey).toBeNull();
+    const row = await t.handle.db.selectFrom('workspaces').selectAll()
+      .where('id', '=', workspaceId).executeTakeFirstOrThrow();
+    expect(row.owner_key_hash).toBeNull();
+    expect(row.claimed_at).not.toBeNull();
+    const members = await t.handle.db.selectFrom('workspace_members').selectAll()
+      .where('workspace_id', '=', workspaceId).execute();
+    expect(members).toHaveLength(1);
+    expect(members[0]).toMatchObject({ user_id: t.ownerUserId, role: 'owner' });
     expect(t.lifecycle.created.slice(before)).toEqual([workspaceId]);
   });
 
-  it('gives different workspaces different owner keys', async () => {
-    const first = await createWorkspaceViaApi(t.app);
-    const second = await createWorkspaceViaApi(t.app);
-    expect(second.ownerKey).not.toBe(first.ownerKey);
+  it('refuses to create a workspace for a caller who is not signed in', async () => {
+    // Otherwise the workspace would exist with no owner and no way to invite
+    // anyone -- unmanageable from the moment it is created.
+    const res = await t.app.inject({ method: 'POST', url: '/api/workspaces',
+      payload: { name: 'Nobody home' }, headers: { cookie: '' } });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe('AUTH_REQUIRED');
   });
 
   it('rejects a blank name', async () => {
@@ -103,7 +117,7 @@ describe('a workspace creation failure cannot be caused by the Git service', () 
 });
 
 describe('GET /api/workspaces/:workspaceId', () => {
-  it('is readable by anyone holding the link', async () => {
+  it('is readable by anyone holding the link, as a viewer', async () => {
     const { workspaceId } = await createWorkspaceViaApi(t.app, {
       name: 'Open house',
       purpose: 'Anyone can read this',
@@ -117,7 +131,10 @@ describe('GET /api/workspaces/:workspaceId', () => {
       purpose: 'Anyone can read this',
       guidanceVersion: 1,
       status: 'active',
-      isOwner: false,
+      // The fixture caller owns it; a link holder's view is covered in
+      // permissions.test.ts, which can actually be somebody else.
+      isOwner: true,
+      access: 'owner',
     });
   });
 
@@ -128,24 +145,22 @@ describe('GET /api/workspaces/:workspaceId', () => {
     expect(res.json()).not.toHaveProperty('ownerKeyHash');
   });
 
-  it('reports isOwner only for the correct key', async () => {
+  it('reports isOwner from membership, and ignores the old header entirely', async () => {
     const a = await createWorkspaceViaApi(t.app, { name: 'A' });
-    const b = await createWorkspaceViaApi(t.app, { name: 'B' });
+    const owner = await t.app.inject({ method: 'GET', url: `/api/workspaces/${a.workspaceId}` });
+    expect(owner.json()).toMatchObject({ isOwner: true, access: 'owner' });
 
-    const withOwn = await t.app.inject({
-      method: 'GET',
-      url: `/api/workspaces/${a.workspaceId}`,
-      headers: { [OWNER_KEY_HEADER]: a.ownerKey },
-    });
-    expect(withOwn.json().isOwner).toBe(true);
+    const member = await signInAs(t.handle.db, { workspaceId: a.workspaceId, role: 'member' });
+    const asMember = await t.app.inject({ method: 'GET',
+      url: `/api/workspaces/${a.workspaceId}`, headers: { cookie: member.cookie } });
+    expect(asMember.json()).toMatchObject({ isOwner: false, access: 'member' });
 
-    // Another workspace's key is just a wrong key here.
-    const withOther = await t.app.inject({
-      method: 'GET',
-      url: `/api/workspaces/${a.workspaceId}`,
-      headers: { [OWNER_KEY_HEADER]: b.ownerKey },
-    });
-    expect(withOther.json().isOwner).toBe(false);
+    // The owner-key header is dead as an authority. Sending a well-formed one
+    // as a non-member must not promote anybody.
+    const outsider = await signInAs(t.handle.db);
+    const spoofed = await t.app.inject({ method: 'GET', url: `/api/workspaces/${a.workspaceId}`,
+      headers: { cookie: outsider.cookie, [OWNER_KEY_HEADER]: 'a'.repeat(43) } });
+    expect(spoofed.json()).toMatchObject({ isOwner: false, access: 'viewer' });
   });
 
   it('returns timestamps as real dates, not raw column values', async () => {
@@ -203,56 +218,62 @@ describe('GET /api/workspaces/:workspaceId', () => {
 });
 
 describe('PATCH /api/workspaces/:workspaceId', () => {
-  it('refuses without a key', async () => {
+  it('tells a signed-out caller to sign in, and a non-owner that it is not theirs', async () => {
     const { workspaceId } = await createWorkspaceViaApi(t.app);
-    const res = await t.app.inject({
-      method: 'PATCH',
-      url: `/api/workspaces/${workspaceId}`,
-      payload: { guidance: 'Prefer short sentences.' },
-    });
-    expect(res.statusCode).toBe(403);
-    expect(res.json().error.code).toBe('OWNER_KEY_REQUIRED');
+    const anonymous = await t.app.inject({ method: 'PATCH',
+      url: `/api/workspaces/${workspaceId}`, headers: { cookie: '' },
+      payload: { guidance: 'Prefer short sentences.' } });
+    expect(anonymous.statusCode).toBe(401);
+    expect(anonymous.json().error.code).toBe('AUTH_REQUIRED');
+
+    // A member is signed in and belongs here, but settings are the owner's.
+    // The two cases get different codes on purpose: "sign in" and "this is not
+    // yours" need different things from the reader.
+    const member = await signInAs(t.handle.db, { workspaceId, role: 'member' });
+    const denied = await t.app.inject({ method: 'PATCH',
+      url: `/api/workspaces/${workspaceId}`, headers: { cookie: member.cookie },
+      payload: { guidance: 'x' } });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe('FORBIDDEN');
   });
 
-  it('refuses a wrong key with the same response as no key', async () => {
+  it('answers a non-member identically whichever workspace they belong to', async () => {
     const a = await createWorkspaceViaApi(t.app, { name: 'A' });
     const b = await createWorkspaceViaApi(t.app, { name: 'B' });
 
-    const missing = await t.app.inject({
-      method: 'PATCH',
-      url: `/api/workspaces/${a.workspaceId}`,
-      payload: { guidance: 'x' },
-    });
-    const wrong = await t.app.inject({
-      method: 'PATCH',
-      url: `/api/workspaces/${a.workspaceId}`,
-      headers: { [OWNER_KEY_HEADER]: b.ownerKey },
-      payload: { guidance: 'x' },
-    });
+    // Belonging to some other workspace must look exactly like belonging to
+    // none, or the response becomes a way to enumerate memberships.
+    const elsewhere = await signInAs(t.handle.db, { workspaceId: b.workspaceId, role: 'owner' });
+    const stranger = await signInAs(t.handle.db);
+    const first = await t.app.inject({ method: 'PATCH', url: `/api/workspaces/${a.workspaceId}`,
+      headers: { cookie: elsewhere.cookie }, payload: { guidance: 'x' } });
+    const second = await t.app.inject({ method: 'PATCH', url: `/api/workspaces/${a.workspaceId}`,
+      headers: { cookie: stranger.cookie }, payload: { guidance: 'x' } });
 
-    expect(wrong.statusCode).toBe(missing.statusCode);
-    expect(wrong.json()).toEqual(missing.json());
+    expect(first.statusCode).toBe(second.statusCode);
+    expect(first.json()).toEqual(second.json());
   });
 
-  it('never accepts a claimed-owner flag in the body', async () => {
+  it('never accepts a claimed role in the body or an owner key in a header', async () => {
     // Section 12.2: "Do not accept an isOwner flag, guest label, or claimed
-    // creator ID instead."
+    // creator ID instead." Still exactly right; only the real proof changed.
+    const { workspaceId } = await createWorkspaceViaApi(t.app);
+    const outsider = await signInAs(t.handle.db);
+    const res = await t.app.inject({
+      method: 'PATCH',
+      url: `/api/workspaces/${workspaceId}`,
+      headers: { cookie: outsider.cookie, [OWNER_KEY_HEADER]: 'a'.repeat(43) },
+      payload: { guidance: 'x', isOwner: true, role: 'owner', creatorId: 'me' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
+  });
+
+  it('applies the update for the real owner', async () => {
     const { workspaceId } = await createWorkspaceViaApi(t.app);
     const res = await t.app.inject({
       method: 'PATCH',
       url: `/api/workspaces/${workspaceId}`,
-      payload: { guidance: 'x', isOwner: true, creatorId: 'me' },
-    });
-    expect(res.statusCode).toBe(403);
-    expect(res.json().error.code).toBe('OWNER_KEY_REQUIRED');
-  });
-
-  it('applies the update for the real owner', async () => {
-    const { workspaceId, ownerKey } = await createWorkspaceViaApi(t.app);
-    const res = await t.app.inject({
-      method: 'PATCH',
-      url: `/api/workspaces/${workspaceId}`,
-      headers: { [OWNER_KEY_HEADER]: ownerKey },
       payload: { name: 'Renamed', guidance: 'Prefer short sentences.' },
     });
 
@@ -265,15 +286,16 @@ describe('PATCH /api/workspaces/:workspaceId', () => {
     });
   });
 
-  it('404s an unknown workspace even with a well-formed key', async () => {
+  it('refuses an unknown workspace before saying whether it exists', async () => {
+    // Inverted deliberately. Authorization now runs before the handler, so a
+    // caller with no membership is refused rather than told which random UUIDs
+    // happen to be real workspaces. Nobody can administer a workspace they are
+    // not in, so a 404 here would have unlocked nothing.
     const res = await t.app.inject({
-      method: 'PATCH',
-      url: `/api/workspaces/${randomUUID()}`,
-      headers: { [OWNER_KEY_HEADER]: 'a'.repeat(43) },
-      payload: { guidance: 'x' },
+      method: 'PATCH', url: `/api/workspaces/${randomUUID()}`, payload: { guidance: 'x' },
     });
-    expect(res.statusCode).toBe(404);
-    expect(res.json().error.code).toBe('WORKSPACE_NOT_FOUND');
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
   });
 
   it('rejects an empty update', async () => {
@@ -356,14 +378,17 @@ describe('owner key primitives', () => {
     expect(ownerKeyMatches('anything', Buffer.alloc(16))).toBe(false);
   });
 
-  it('ignores a repeated header instead of picking one', async () => {
-    const { workspaceId, ownerKey } = await createWorkspaceViaApi(t.app);
-    const res = await t.app.inject({
-      method: 'GET',
-      url: `/api/workspaces/${workspaceId}`,
-      headers: { [OWNER_KEY_HEADER]: [ownerKey, 'another'] },
-    });
-    expect(res.json().isOwner).toBe(false);
+  it('grants nothing for any owner-key header, repeated or not', async () => {
+    // The header used to be the whole permission system. No route reads it now,
+    // and this is what says so: a non-member sending one -- once or twice --
+    // stays a viewer.
+    const { workspaceId } = await createWorkspaceViaApi(t.app);
+    const outsider = await signInAs(t.handle.db);
+    for (const value of ['a'.repeat(43), ['a'.repeat(43), 'another']]) {
+      const res = await t.app.inject({ method: 'GET', url: `/api/workspaces/${workspaceId}`,
+        headers: { cookie: outsider.cookie, [OWNER_KEY_HEADER]: value } });
+      expect(res.json().access).toBe('viewer');
+    }
   });
 });
 

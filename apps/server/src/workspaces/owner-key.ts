@@ -38,9 +38,12 @@ export function hashOwnerKey(key: string): Buffer {
  */
 export function ownerKeyMatches(
   candidate: string | undefined | null,
-  storedHash: Buffer | Uint8Array,
+  storedHash: Buffer | Uint8Array | null,
 ): boolean {
   if (typeof candidate !== 'string' || candidate.length === 0) return false;
+  // A claimed workspace has no key, so nothing can match it. Accounts are the
+  // only authority there, and a key someone kept from before must stay dead.
+  if (storedHash === null) return false;
 
   const stored = Buffer.isBuffer(storedHash) ? storedHash : Buffer.from(storedHash);
   if (stored.length !== 32) return false;

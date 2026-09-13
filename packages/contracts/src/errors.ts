@@ -9,6 +9,13 @@ export const API_ERROR_CODES = [
   // --- section 12.5, verbatim ---
   'WORKSPACE_NOT_FOUND',
   'OWNER_KEY_REQUIRED',
+  // --- accounts and membership ---
+  // Deliberately distinct: "sign in" and "you are signed in but this is not
+  // yours" are different things for a person to be told, and collapsing them
+  // into one banner is how an authorization bug hides as a login loop.
+  'AUTH_REQUIRED',
+  'FORBIDDEN',
+  'INVITATION_INVALID',
   'TASK_VERSION_CHANGED',
   'TASK_ALREADY_RUNNING',
   'INPUT_CONFLICT',
@@ -52,6 +59,9 @@ export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>;
 const HTTP_STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   WORKSPACE_NOT_FOUND: 404,
   OWNER_KEY_REQUIRED: 403,
+  AUTH_REQUIRED: 401,
+  FORBIDDEN: 403,
+  INVITATION_INVALID: 400,
   TASK_VERSION_CHANGED: 409,
   TASK_ALREADY_RUNNING: 409,
   INPUT_CONFLICT: 409,

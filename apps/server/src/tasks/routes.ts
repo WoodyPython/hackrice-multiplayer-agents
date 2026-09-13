@@ -19,7 +19,7 @@ import {
   updateTaskRequestSchema,
   uuidSchema,
 } from '@app/contracts';
-import { readOwnerKeyHeader } from '../workspaces/owner-key.js';
+import { requireAuth } from '../auth/authorize.js';
 import { parseOrThrow } from '../http/errors.js';
 import type { PgDiscussionService } from '../discussion/service.js';
 import type { PgReviewStore } from '../runs/review-store.js';
@@ -210,7 +210,7 @@ export async function registerTaskRoutes(
     const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);
     const body = parseOrThrow(z.object({ expectedStatus: taskStatusSchema,
       status: z.enum(['posted', 'ready_for_review', 'awaiting_confirmation', 'completed', 'unmark']) }), request.body);
-    return deps.tasks.move(workspaceId, taskId, body, readOwnerKeyHeader(request.headers[OWNER_KEY_HEADER]));
+    return deps.tasks.move(workspaceId, taskId, body, requireAuth(request).access === 'owner');
   });
 
   // --- discussion ----------------------------------------------------------

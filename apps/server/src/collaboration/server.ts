@@ -7,6 +7,19 @@ import { MAX_LIVE_MESSAGE_BYTES } from './room.js';
 
 export type { LiveDocumentDeps } from './coordinator.js';
 
+/**
+ * Authorizes a live-document upgrade, or throws.
+ *
+ * The Yjs socket is a write surface -- whoever holds it can change the shared
+ * document -- so it requires membership, exactly like a POST would. It is also
+ * the one surface a `preHandler` cannot reach, because an upgrade is not a
+ * Fastify route, which is precisely why it is easy to leave open.
+ *
+ * A browser cannot set headers on a WebSocket handshake. It does send cookies,
+ * which is why the session is a cookie rather than a bearer token.
+ */
+export type LiveAuthorizer = (input: { workspaceId: string; cookie: string | undefined }) => Promise<void>;
+
 function parseRoom(url: string | undefined): LiveRoomId {
   // Parse the raw pathname, not URL-normalized dot segments or decoded paths.
   const parts = (url ?? '').split('?')[0]!.split('/');
@@ -29,7 +42,8 @@ function reject(socket: Duplex, error: unknown): void {
 
 /** One upgrade listener and coordinator per runtime; no global Yjs state. */
 export function attachLiveDocuments(server: Server, deps: LiveDocumentDeps,
-  coordinator = new LiveDocumentCoordinator(deps)): { close(): Promise<void> } {
+  coordinator = new LiveDocumentCoordinator(deps),
+  authorize?: LiveAuthorizer): { close(): Promise<void> } {
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_LIVE_MESSAGE_BYTES, perMessageDeflate: false });
   const pending = new Set<Promise<void>>();
   let stopping = false;
@@ -42,7 +56,11 @@ export function attachLiveDocuments(server: Server, deps: LiveDocumentDeps,
       // Live edits are tiny and latency-sensitive. Disable Nagle buffering on
       // the server side of the upgraded TCP connection before any Yjs frames.
       request.socket.setNoDelay(true);
-      const acquired = await coordinator.acquire(parseRoom(request.url));
+      const room = parseRoom(request.url);
+      // Before the room is loaded, so an unauthorized caller never causes a
+      // draft to be read, seeded, or pinned open.
+      await authorize?.({ workspaceId: room.workspaceId, cookie: request.headers.cookie });
+      const acquired = await coordinator.acquire(room);
       release = acquired.release;
       if (stopping || socket.destroyed) { socket.destroy(); return; }
       const detach = release;

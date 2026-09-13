@@ -11,6 +11,7 @@ import type {
   RunStatus,
   TaskKind,
   TaskStatus,
+  WorkspaceRole,
   WorkspaceStatus,
 } from '@app/contracts';
 
@@ -50,7 +51,9 @@ export interface WorkspacesTable {
   id: Generated<string>;
   name: string;
   purpose: Generated<string>;
-  owner_key_hash: Buffer;
+  /** Legacy guest ownership. Null once an account has claimed the workspace. */
+  owner_key_hash: Buffer | null;
+  claimed_at: Timestamp | null;
   guidance: Generated<string>;
   guidance_version: Generated<number>;
   status: Generated<WorkspaceStatus>;
@@ -279,8 +282,59 @@ export interface SchemaMigrationsTable {
   applied_at: Timestamp;
 }
 
+export interface UsersTable {
+  id: Generated<string>;
+  supabase_user_id: string;
+  email: string;
+  display_name: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface SessionsTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: Buffer;
+  created_at: Timestamp;
+  last_seen_at: Timestamp;
+  expires_at: Timestamp;
+}
+
+export interface WorkspaceMembersTable {
+  workspace_id: string;
+  user_id: string;
+  role: Generated<WorkspaceRole>;
+  created_at: Timestamp;
+}
+
+export interface WorkspaceInvitationsTable {
+  id: Generated<string>;
+  workspace_id: string;
+  role: Generated<WorkspaceRole>;
+  email: string | null;
+  token_hash: Buffer;
+  invited_by: string | null;
+  created_at: Timestamp;
+  expires_at: Timestamp;
+  accepted_at: Timestamp | null;
+  accepted_by: string | null;
+  revoked_at: Timestamp | null;
+}
+
+export interface UserPreferencesTable {
+  user_id: string;
+  theme: Generated<string>;
+  last_workspace: string | null;
+  updated_at: Timestamp;
+}
+
 export interface Database {
   workspaces: WorkspacesTable;
+  users: UsersTable;
+  sessions: SessionsTable;
+  workspace_members: WorkspaceMembersTable;
+  workspace_invitations: WorkspaceInvitationsTable;
+  user_preferences: UserPreferencesTable;
   tasks: TasksTable;
   discussion_entries: DiscussionEntriesTable;
   materials: MaterialsTable;

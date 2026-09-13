@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import pg from 'pg';
 import { config } from 'dotenv';
@@ -71,12 +71,77 @@ export function fakeSha(label: string): string {
   return out.slice(0, 40);
 }
 
+/**
+ * The account every suite acts as, unless it says otherwise.
+ *
+ * Authorization is now in front of every workspace route, so a fixture
+ * workspace with no members would make 177 existing assertions fail on a 401
+ * that has nothing to do with what they are testing. Those suites cover task,
+ * Git and review behaviour; `permissions.test.ts` is what covers the gate, and
+ * it deliberately builds its own callers instead of using these.
+ */
+export const TEST_USER_ID = '00000000-0000-4000-8000-00000000a001';
+export const TEST_USER_EMAIL = 'owner@example.test';
+/** A fixed, obviously-fake token. Real ones are 32 random bytes. */
+export const TEST_SESSION_TOKEN = 'test-session-token-not-a-real-credential';
+
+export function sessionCookie(token = TEST_SESSION_TOKEN): { cookie: string } {
+  return { cookie: `coflow_session=${token}` };
+}
+
+/** Idempotent: suites create many workspaces against the same account. */
+export async function ensureTestUser(db: Db): Promise<string> {
+  await db.insertInto('users').values({
+    id: TEST_USER_ID, supabase_user_id: TEST_USER_ID,
+    email: TEST_USER_EMAIL, display_name: 'Test Owner',
+  }).onConflict((oc) => oc.column('id').doNothing()).execute();
+  await db.insertInto('sessions').values({
+    user_id: TEST_USER_ID,
+    token_hash: createHash('sha256').update(TEST_SESSION_TOKEN, 'utf8').digest(),
+    expires_at: new Date(Date.now() + 60 * 60 * 1000),
+  }).onConflict((oc) => oc.column('token_hash').doNothing()).execute();
+  return TEST_USER_ID;
+}
+
+/**
+ * A second account with a chosen role, for tests that need a caller who is not
+ * the fixture owner. Returns the cookie header to pass to `inject`.
+ */
+export async function signInAs(
+  db: Db, options: { workspaceId?: string; role?: 'owner' | 'member'; label?: string } = {},
+): Promise<{ cookie: string; userId: string }> {
+  const label = options.label ?? 'member';
+  const userId = randomUUID();
+  const token = `test-session-${label}-${userId}`;
+  await db.insertInto('users').values({
+    id: userId, supabase_user_id: randomUUID(),
+    email: `${label}-${userId}@example.test`, display_name: label,
+  }).execute();
+  await db.insertInto('sessions').values({
+    user_id: userId,
+    token_hash: createHash('sha256').update(token, 'utf8').digest(),
+    expires_at: new Date(Date.now() + 60 * 60 * 1000),
+  }).execute();
+  if (options.workspaceId && options.role) {
+    await db.insertInto('workspace_members')
+      .values({ workspace_id: options.workspaceId, user_id: userId, role: options.role })
+      .execute();
+  }
+  return { cookie: `coflow_session=${token}`, userId };
+}
+
 export async function insertWorkspace(db: Db, name = 'Test workspace'): Promise<string> {
+  await ensureTestUser(db);
   const row = await db
     .insertInto('workspaces')
+    // Keeps the legacy hash so the claim tests have something to claim; a
+    // workspace created through the API by an account has none.
     .values({ name, owner_key_hash: Buffer.alloc(32, 1) })
     .returning('id')
     .executeTakeFirstOrThrow();
+  await db.insertInto('workspace_members')
+    .values({ workspace_id: row.id, user_id: TEST_USER_ID, role: 'owner' })
+    .execute();
   return row.id;
 }
 

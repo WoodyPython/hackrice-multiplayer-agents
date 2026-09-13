@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { sessionCookie } from './helpers.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eventKeys, workspaceChannel } from '@app/contracts';
 import { RecordingBroadcaster } from '../src/events/broadcaster.js';
@@ -59,7 +60,9 @@ describe('durable events', () => {
       }));
       const started = performance.now();
       const response = await fetch(`${base}${root}/tasks/${task.id}/discussion`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        // Over real HTTP rather than `inject`, so the harness's default cookie
+        // does not apply and this posts as nobody without it.
+        method: 'POST', headers: { 'content-type': 'application/json', ...sessionCookie() },
         body: JSON.stringify({ body: 'Two peer delivery', guestLabel: 'Guest Cedar',
           materialIds: [], clientRequestId: randomUUID() }), signal: abort.signal,
       });

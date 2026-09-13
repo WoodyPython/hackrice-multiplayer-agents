@@ -9,6 +9,7 @@ import { GitWorkspaceLifecycleHook } from '../git/lifecycle.js';
 import { GitRuntimeError } from '../git/command.js';
 import { PgDraftStore } from '../drafts/store.js';
 import { attachLiveDocuments } from '../collaboration/server.js';
+import { readSessionCookie } from '../auth/authorize.js';
 import { LiveDocumentCoordinator } from '../collaboration/coordinator.js';
 import { PgCheckpointStore } from '../collaboration/checkpoint-store.js';
 import { registerCheckpointRoutes } from '../collaboration/routes.js';
@@ -21,7 +22,7 @@ import { OrchestratorPlanner, ParallelAssignmentScheduler, StartOrchestrator,
 import { WorkerExecutor } from '../workers/executor.js';
 import { LocalReviewService } from '../reviews/service.js';
 import { registerReviewRoutes } from '../reviews/routes.js';
-import { ApiError } from '@app/contracts';
+import { ApiError, canWrite } from '@app/contracts';
 import { PgRunStore } from '../runs/run-store.js';
 import { registerFrontend } from '../http/frontend.js';
 import { registerApprovedFileRoutes } from '../git/routes.js';
@@ -157,7 +158,16 @@ export async function startRuntime(options: RuntimeOptions) {
     app.log.info({ recovery }, 'startup recovery complete');
     live = options.attachLiveDocuments
       ? await options.attachLiveDocuments(app.server)
-      : attachLiveDocuments(app.server, liveDeps, collaboration);
+      : attachLiveDocuments(app.server, liveDeps, collaboration, async ({ workspaceId, cookie }) => {
+        // Membership, not link possession: holding a room URL is not permission
+        // to edit the document in it.
+        const identity = await app!.sessions.resolve(readSessionCookie(cookie));
+        const access = await app!.sessions.access(workspaceId, identity?.userId);
+        if (!canWrite(access)) {
+          throw new ApiError(identity ? 'FORBIDDEN' : 'AUTH_REQUIRED',
+            identity ? 'Join this workspace to edit its documents.' : 'Sign in to edit this document.');
+        }
+      });
     // Persisted documents and Git worktree projections restore on demand.
     if (!options.modelAdapter && !config.GEMINI_API_KEY?.trim()) {
       // Everything except agent execution still works; say so once, at boot,
