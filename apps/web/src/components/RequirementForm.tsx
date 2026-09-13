@@ -1,8 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { Paperclip, Upload, X } from "lucide-react";
 import {
-  MAX_TEXT_FILE_BYTES,
-  SUPPORTED_TEXT_EXTENSIONS,
+  MAX_MATERIAL_FILE_BYTES,
   postTaskRequestSchema,
 } from "@app/contracts";
 import { inputIdentity, type TaskInputOption } from "../task-inputs";
@@ -208,7 +207,6 @@ export function RequirementForm({
                   type="file"
                   className="sr-only"
                   disabled={uploading || pending}
-                  accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     if (!file) return;
@@ -293,7 +291,7 @@ export function RequirementForm({
           {onUploadFile && (
             <small className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <Paperclip aria-hidden="true" className="size-3" />
-              Text, Markdown, and code up to {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB.
+              Any file type up to {Math.round(MAX_MATERIAL_FILE_BYTES / 1024 / 1024)} MB. Binary files stay read-only.
             </small>
           )}
           {uploadError && (

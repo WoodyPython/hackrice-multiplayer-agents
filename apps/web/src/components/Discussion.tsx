@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, Clock, FileText, MessageSquare, Plus, Send, Settings2, X } from "lucide-react";
-import { MAX_TEXT_FILE_BYTES, SUPPORTED_TEXT_EXTENSIONS, type DiscussionEntry, type Material, type Participant } from "@app/contracts";
+import { MAX_MATERIAL_FILE_BYTES, type DiscussionEntry, type Material, type Participant } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { toneFor } from "../board";
 import { cn } from "../lib/utils";
@@ -117,7 +117,7 @@ export function Discussion({ workspaceId, taskId, entries, activeRunCutoffSeq, m
         <div className="flex items-end gap-2 rounded-xl border border-border bg-card p-2 shadow-xs focus-within:ring-2 focus-within:ring-ring">
           <label className="grid size-10 shrink-0 cursor-pointer place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" title="Add material">
             <Plus aria-hidden="true" className="size-5" /><span className="sr-only">Add material</span>
-            <input ref={fileInput} type="file" className="sr-only" accept={SUPPORTED_TEXT_EXTENSIONS.join(",")} onChange={(event) => { const file = event.target.files?.[0]; if (file) void attach(file); }} />
+            <input ref={fileInput} type="file" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void attach(file); }} />
           </label>
           <Label htmlFor="discussion-body" className="sr-only">Message</Label>
           <Textarea id="discussion-body" rows={1} value={body} maxLength={20000} onChange={(event) => noteTyping(event.target.value)}
@@ -125,7 +125,7 @@ export function Discussion({ workspaceId, taskId, entries, activeRunCutoffSeq, m
             placeholder="Message this task" className="max-h-36 min-h-10 resize-none border-0 bg-transparent px-2 py-2.5 shadow-none focus-visible:ring-0" />
           <Button size="icon" variant="primary" type="submit" disabled={pending || busy || !body.trim()} aria-label="Send message"><Send aria-hidden="true" /></Button>
         </div>
-        <small className="mt-1.5 block px-1 text-[10.5px] text-muted-foreground">Enter to send · Shift+Enter for a new line · files up to {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB</small>
+        <small className="mt-1.5 block px-1 text-[10.5px] text-muted-foreground">Enter to send · Shift+Enter for a new line · files up to {Math.round(MAX_MATERIAL_FILE_BYTES / 1024 / 1024)} MB</small>
       </form>
     </div>
   );

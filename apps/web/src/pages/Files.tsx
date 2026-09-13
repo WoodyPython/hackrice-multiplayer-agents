@@ -11,8 +11,8 @@ import {
   X,
 } from "lucide-react";
 import {
-  MAX_TEXT_FILE_BYTES,
-  SUPPORTED_TEXT_EXTENSIONS,
+  MAX_MATERIAL_FILE_BYTES,
+  isEditableMaterial,
   isSupportedTextExtension,
   type DraftFile,
   type Material,
@@ -60,7 +60,7 @@ const CATEGORY = {
   },
   material: {
     label: "Reference materials",
-    blurb: "Uploaded context that can be opened as a shared working file.",
+    blurb: "Immutable uploads that can be previewed here; text files can also become shared drafts.",
   },
 } as const;
 
@@ -126,10 +126,7 @@ export function Files({ workspaceId }: { workspaceId: string }) {
     setBusy(true);
 
     const supported = files.filter(
-      (file) =>
-        isSupportedTextExtension(file.name) &&
-        file.size > 0 &&
-        file.size <= MAX_TEXT_FILE_BYTES,
+      (file) => file.size > 0 && file.size <= MAX_MATERIAL_FILE_BYTES,
     );
     const skipped = files.filter((file) => !supported.includes(file));
     let uploaded = 0;
@@ -178,7 +175,7 @@ export function Files({ workspaceId }: { workspaceId: string }) {
           `${issues.length} ${issues.length === 1 ? "file was" : "files were"} not uploaded: ${shown}${remaining > 0 ? `, and ${remaining} more` : ""}.`,
         );
       } else if (supported.length === 0) {
-        setUploadError("No supported text files were found.");
+        setUploadError("No non-empty files within the size limit were found.");
       }
     } finally {
       setBusy(false);
@@ -334,7 +331,6 @@ export function Files({ workspaceId }: { workspaceId: string }) {
             ref={fileInput}
             type="file"
             className="sr-only"
-            accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
             multiple
             disabled={busy}
             onChange={(event) => {
@@ -344,8 +340,8 @@ export function Files({ workspaceId }: { workspaceId: string }) {
           />
         </label>
         <small className="text-[11px] text-muted-foreground">
-          Choose multiple files, or drop files and folders here. Text only, up to{" "}
-          {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB each.
+          Choose multiple files, or drop files and folders here. Any type, up to{" "}
+          {Math.round(MAX_MATERIAL_FILE_BYTES / 1024 / 1024)} MB each. Non-text files stay read-only.
         </small>
       </div>
 
@@ -360,9 +356,9 @@ export function Files({ workspaceId }: { workspaceId: string }) {
               <X aria-hidden="true" />
             </Button>
           </div>
-          {approved.length > 0 || live.length > 0 ? (
+          {approved.length > 0 || live.some(isEditableMaterial) ? (
             <FileTree
-              entries={entries.filter((entry) => entry.kind === "approved" || entry.kind === "material")}
+              entries={entries.filter((entry) => entry.kind === "approved" || (entry.kind === "material" && isEditableMaterial(entry.material)))}
               roots={[CATEGORY.approved.label, CATEGORY.material.label]}
               selected={null}
               onSelect={(entry) => {
@@ -599,14 +595,16 @@ function Detail({
 
       {entry.kind === "material" && (
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={() => onEditTogether(`documents/${entry.material.filename}`, entry.material.id)}
-          >
-            <PencilRuler aria-hidden="true" />
-            Edit together
-          </Button>
+          {isEditableMaterial(entry.material) && (
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => onEditTogether(`documents/${entry.material.filename}`, entry.material.id)}
+            >
+              <PencilRuler aria-hidden="true" />
+              Edit together
+            </Button>
+          )}
           <a
             href={`/api/workspaces/${workspaceId}/materials/${entry.material.id}`}
             download
@@ -619,8 +617,90 @@ function Detail({
             {Math.max(1, Math.round(entry.material.byteSize / 1024))} KB
             {entry.material.guestLabel ? ` · added by ${entry.material.guestLabel}` : ""}
           </small>
+          {!isEditableMaterial(entry.material) && (
+            <Badge size="sm">read-only</Badge>
+          )}
         </div>
       )}
+      {entry.kind === "material" && (
+        <MaterialPreview workspaceId={workspaceId} material={entry.material} />
+      )}
     </div>
+  );
+}
+
+function MaterialPreview({ workspaceId, material }: { workspaceId: string; material: Material }) {
+  const { api } = useBrowser();
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "error"; message: string }
+    | { status: "ready"; text?: string; url?: string; hex?: string }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    setState({ status: "loading" });
+    void api.readMaterial(workspaceId, material.id, controller.signal)
+      .then(async (bytes) => {
+        if (controller.signal.aborted) return;
+        if (isSupportedTextExtension(material.filename) || material.contentType === "image/svg+xml") {
+          const text = await new Response(bytes).text();
+          if (!controller.signal.aborted) setState({ status: "ready", text });
+          return;
+        }
+        const typed = new Blob([bytes], { type: material.contentType });
+        if (
+          material.contentType === "application/pdf" ||
+          material.contentType.startsWith("image/") ||
+          material.contentType.startsWith("audio/") ||
+          material.contentType.startsWith("video/")
+        ) {
+          objectUrl = URL.createObjectURL(typed);
+          setState({ status: "ready", url: objectUrl });
+          return;
+        }
+        const sample = new Uint8Array(bytes.slice(0, 256));
+        setState({
+          status: "ready",
+          hex: Array.from(sample, (byte) => byte.toString(16).padStart(2, "0")).join(" "),
+        });
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setState({ status: "error", message: apiMessage(error) });
+      });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [api, workspaceId, material.id, material.filename, material.contentType]);
+
+  return (
+    <section className="space-y-2 rounded-lg border border-border bg-muted/30 p-3.5" aria-label={`Preview of ${material.filename}`}>
+      <h3 className="text-[13px] font-semibold">Preview</h3>
+      {state.status === "loading" && <Skeleton className="h-40" />}
+      {state.status === "error" && <ErrorText role="alert">{state.message}</ErrorText>}
+      {state.status === "ready" && state.text !== undefined && (
+        <pre className="max-h-96 overflow-auto rounded-lg bg-card p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">{state.text}</pre>
+      )}
+      {state.status === "ready" && state.url && material.contentType.startsWith("image/") && (
+        <img loading="lazy" src={state.url} alt={material.filename} className="max-h-[32rem] w-full rounded-lg bg-card object-contain" />
+      )}
+      {state.status === "ready" && state.url && material.contentType === "application/pdf" && (
+        <iframe loading="lazy" title={`Preview of ${material.filename}`} src={state.url} className="h-[32rem] w-full rounded-lg border border-border bg-white" />
+      )}
+      {state.status === "ready" && state.url && material.contentType.startsWith("audio/") && (
+        <audio aria-label={`Preview of ${material.filename}`} controls src={state.url} className="w-full" />
+      )}
+      {state.status === "ready" && state.url && material.contentType.startsWith("video/") && (
+        <video aria-label={`Preview of ${material.filename}`} controls src={state.url} className="max-h-[32rem] w-full rounded-lg bg-black" />
+      )}
+      {state.status === "ready" && state.hex !== undefined && (
+        <div className="space-y-2 rounded-lg bg-card p-3">
+          <p className="text-[12px] text-muted-foreground">This format has no browser-native visual preview. Showing the first {Math.min(material.byteSize, 256)} bytes.</p>
+          <pre className="max-h-40 overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all">{state.hex || "No preview bytes available."}</pre>
+        </div>
+      )}
+    </section>
   );
 }

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   ApiError,
-  MAX_TEXT_FILE_BYTES,
+  MAX_MATERIAL_FILE_BYTES,
   guestLabelSchema,
 
   uuidSchema,
@@ -41,7 +41,7 @@ export async function registerMaterialRoutes(
       );
     }
 
-    const part = await request.file({ limits: { fileSize: MAX_TEXT_FILE_BYTES } });
+    const part = await request.file({ limits: { fileSize: MAX_MATERIAL_FILE_BYTES } });
     if (!part) {
       throw new ApiError('VALIDATION_FAILED', 'No file part in the upload.');
     }
@@ -50,8 +50,8 @@ export async function registerMaterialRoutes(
     // @fastify/multipart truncates rather than throwing once the limit is hit,
     // so a silent short file would otherwise be stored as if complete.
     if (part.file.truncated) {
-      throw new ApiError('VALIDATION_FAILED', 'File exceeds the 1 MiB limit.', {
-        limit: MAX_TEXT_FILE_BYTES,
+      throw new ApiError('VALIDATION_FAILED', 'File exceeds the 10 MiB limit.', {
+        limit: MAX_MATERIAL_FILE_BYTES,
       });
     }
 
@@ -67,6 +67,7 @@ export async function registerMaterialRoutes(
     const result = await deps.materials.upload(workspaceId, {
       filename: part.filename,
       bytes,
+      contentType: part.mimetype,
       guestLabel: fields.guestLabel,
       taskId: fields.taskId,
       discussionEntryId: fields.discussionEntryId,

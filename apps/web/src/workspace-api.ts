@@ -24,7 +24,6 @@ import {
   discussionEntrySchema,
   draftCaptureSchema,
   draftFileSchema,
-  isSupportedTextExtension,
   listDiscussionResponseSchema,
   applyReviewResponseSchema,
   listTaskAgentsResponseSchema,
@@ -44,7 +43,7 @@ import {
   updateWorkspaceRequestSchema,
   uuidSchema,
   workspaceSchema,
-  MAX_TEXT_FILE_BYTES,
+  MAX_MATERIAL_FILE_BYTES,
   type AnswerQuestionRequest,
   type AnswerQuestionResponse,
   type CreateWorkspaceRequest,
@@ -846,13 +845,33 @@ export class WorkspaceApi {
       .materials;
   }
 
+  /** Fetches immutable material bytes for the in-app preview. */
+  async readMaterial(workspaceId: string, materialId: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(materialId);
+    const response = await this.transport(
+      `/api/workspaces/${workspaceId}/materials/${materialId}`,
+      {
+        method: "GET",
+        credentials: "same-origin",
+        redirect: "error",
+        cache: "no-store",
+        signal,
+      },
+    );
+    if (!response.ok) {
+      const data: unknown = await response.json().catch(() => null);
+      const parsed = apiErrorBodySchema.safeParse(data);
+      throw new ApiError(parsed.success ? parsed.data.error.code : "INTERNAL_ERROR");
+    }
+    return response.arrayBuffer();
+  }
+
   /**
    * Upload is multipart, so it bypasses `request` and its JSON content type.
    *
-   * The extension and size are checked here as well as on the server. That is
-   * not redundant politeness: §3.4 rejects binary, and finding out by dragging
-   * in a PDF and reading a validation error is a worse experience than being
-   * told which files are accepted before the request leaves.
+   * Size and emptiness are checked here as well as on the server. This is
+   * useful for large batches because invalid files fail before upload.
    *
    * `reused` reflects the 200/201 split — identical bytes return the existing
    * material, and the caller must not render a second card for it.
@@ -864,9 +883,8 @@ export class WorkspaceApi {
     link?: { taskId?: string; discussionEntryId?: string },
   ): Promise<{ material: Material; reused: boolean }> {
     uuidSchema.parse(workspaceId);
-    if (!isSupportedTextExtension(file.name))
+    if (file.size === 0 || file.size > MAX_MATERIAL_FILE_BYTES)
       throw new ApiError("VALIDATION_FAILED");
-    if (file.size > MAX_TEXT_FILE_BYTES) throw new ApiError("VALIDATION_FAILED");
     const form = new FormData();
     form.append("guestLabel", guestLabel);
     if (link?.taskId) form.append("taskId", link.taskId);

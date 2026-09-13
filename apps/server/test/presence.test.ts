@@ -22,6 +22,12 @@ describe('workspace presence', () => {
     ]);
   });
 
+  it('keeps the server-derived account marker with the live participant', () => {
+    const registry = new PresenceRegistry(() => 1000);
+    registry.announce('w', { ...entry(1, 'Ada'), isAccount: true });
+    expect(registry.list('w')[0]).toMatchObject({ name: 'Ada', isAccount: true });
+  });
+
   it('drops a browser that stopped saying it was here', () => {
     let now = 1000;
     const registry = new PresenceRegistry(() => now);

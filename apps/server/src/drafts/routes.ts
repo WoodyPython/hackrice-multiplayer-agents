@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import * as Y from 'yjs';
-import { LIVE_TEXT_NAME, draftFileSchema, openDraftRequestSchema, uuidSchema } from '@app/contracts';
+import { ApiError, LIVE_TEXT_NAME, draftFileSchema, isEditableMaterial, openDraftRequestSchema, uuidSchema } from '@app/contracts';
 import { parseOrThrow } from '../http/errors.js';
 import { normalizeEditorText } from '../collaboration/editor-text.js';
 import type { PgMaterialService } from '../materials/service.js';
@@ -44,6 +44,9 @@ export async function registerDraftRoutes(
     const material = body.materialId
       ? await deps.materials.readSelected(workspaceId, body.materialId)
       : undefined;
+    if (material && !isEditableMaterial(material.material)) {
+      throw new ApiError('VALIDATION_FAILED', 'This uploaded file is read-only and cannot be opened in the text editor.');
+    }
     const result = await deps.drafts.openManualEdit(workspaceId, body);
     if (material) {
       const source = normalizeEditorText(Buffer.from(material.bytes).toString('utf8'));

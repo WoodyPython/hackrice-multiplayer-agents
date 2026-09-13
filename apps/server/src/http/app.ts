@@ -4,6 +4,7 @@ import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
   BRIEFING_SESSION_HEADER,
+  MAX_MATERIAL_FILE_BYTES,
   NullOrchestrationHook,
   NullWorkspaceLifecycleHook,
   OWNER_KEY_HEADER,
@@ -180,10 +181,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
    */
   await app.register(rateLimit, { global: false });
 
-  // Section 3.4's 1 MiB per-text-file transport limit, enforced at the parser
+  // The material transport limit is enforced at the parser
   // so an oversized body never reaches memory whole.
   await app.register(multipart, {
-    limits: { fileSize: 1024 * 1024, files: 1, fields: 8 },
+    limits: { fileSize: MAX_MATERIAL_FILE_BYTES, files: 1, fields: 8 },
   });
 
   registerErrorHandler(app);

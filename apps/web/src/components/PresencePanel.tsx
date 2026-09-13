@@ -135,8 +135,15 @@ export function PresencePanel({
                       className="flex items-center gap-2.5 rounded-lg px-2 py-2"
                     >
                       <Avatar participant={participant} />
-                      <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">
-                        {participant.name}
+                      <span className="min-w-0 flex flex-1 items-center gap-1.5 truncate text-[12.5px] font-medium">
+                        <span className="truncate" title={participant.isAccount ? "Signed-in account" : undefined}>
+                          {participant.isAccount ? `@${participant.name}` : participant.name}
+                        </span>
+                        {!participant.isAccount && (
+                          <span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-medium text-muted-foreground">
+                            Guest
+                          </span>
+                        )}
                       </span>
                       {participant.isHost && (
                         <span className="shrink-0 rounded-full bg-navy-100 px-2 py-0.5 text-[10px] font-semibold text-navy-800 dark:bg-navy-900 dark:text-navy-200">
