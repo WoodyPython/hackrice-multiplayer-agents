@@ -53,8 +53,8 @@ const envSchema = z.object({
 
   // Role C. Optional so B and D can run without a key.
   GEMINI_API_KEY: z.string().min(1).optional(),
-  ORCHESTRATOR_MODEL: z.string().min(1).default('gemini-2.5-pro'),
-  WORKER_MODEL: z.string().min(1).default('gemini-2.5-flash'),
+  ORCHESTRATOR_MODEL: z.string().min(1).default('gemini-3.8-flash'),
+  WORKER_MODEL: z.string().min(1).default('gemini-3.6-flash'),
 
   /**
    * Workspace creation guard (section 3.4). A transport and storage

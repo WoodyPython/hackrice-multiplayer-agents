@@ -28,8 +28,8 @@ loadDotenv({ quiet: true });
 
 const NL = String.fromCharCode(10);
 const key = process.env.GEMINI_API_KEY?.trim();
-const orchestrator = (process.env.ORCHESTRATOR_MODEL ?? 'gemini-2.5-pro').replace(/^models\//, '');
-const worker = (process.env.WORKER_MODEL ?? 'gemini-2.5-flash').replace(/^models\//, '');
+const orchestrator = (process.env.ORCHESTRATOR_MODEL ?? 'gemini-3.8-flash').replace(/^models\//, '');
+const worker = (process.env.WORKER_MODEL ?? 'gemini-3.6-flash').replace(/^models\//, '');
 
 /** The provider's own words, with anything credential-shaped removed. */
 function detail(error: unknown): { status: number | undefined; text: string } {

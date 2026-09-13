@@ -32,6 +32,16 @@ interface GeminiState {
 // Add a model only after verifying its counting and thinking/output semantics.
 // For these models maxOutputTokens covers thinking AND visible output.
 const MODEL_PROFILES: Record<string, { minThinking: number; maxThinking: number; maxOutput: number }> = {
+  // `maxOutput` is each model's reported outputTokenLimit, read from
+  // models.list() rather than assumed; `npm run gemini:smoke` prints them.
+  'gemini-3.1-pro-preview': { minThinking: 128, maxThinking: 32768, maxOutput: 65536 },
+  'gemini-3.8-flash': { minThinking: 0, maxThinking: 24576, maxOutput: 65536 },
+  'gemini-3.6-flash': { minThinking: 0, maxThinking: 24576, maxOutput: 65536 },
+
+  // Retired 2026-09: reachable in models.list() but countTokens answers 404,
+  // "no longer available to new users". Kept so an old .env fails in the
+  // adapter with a message naming the model, rather than as a bare provider
+  // 404 from the first agent that runs.
   'gemini-2.5-pro': { minThinking: 128, maxThinking: 32768, maxOutput: 65536 },
   'gemini-2.5-flash': { minThinking: 0, maxThinking: 24576, maxOutput: 65536 },
 };
@@ -286,6 +296,19 @@ function normalizeResponse(response: GenerateContentResponse, model: string): Ag
   if (!candidate && !response.promptFeedback?.blockReason) {
     throw new ModelAdapterError('invalid_response', 'Gemini returned no candidate or block reason.', false, undefined, usage);
   }
+  if (!text.length && toolCalls.length === 0) {
+    // Returning empty is legal, and the planner will treat it as an unusable
+    // answer and retry — by which point the budget reservation is spent and the
+    // failure surfaces as `token_exhausted`, several layers from the cause.
+    reportProviderError?.({
+      model,
+      status: undefined,
+      detail: `empty response: finishReason=${candidate?.finishReason ?? 'none'} ` +
+        `blockReason=${response.promptFeedback?.blockReason ?? 'none'} usage=${usage.status}` +
+        (usage.totalTokens === undefined ? '' : ` total=${usage.totalTokens}`) +
+        (usage.thinkingTokens === undefined ? '' : ` thinking=${usage.thinkingTokens}`),
+    });
+  }
   return {
     ...(text.length ? { text: text.join('') } : {}),
     toolCalls,
@@ -297,7 +320,15 @@ function normalizeResponse(response: GenerateContentResponse, model: string): Ag
 }
 
 function safeError(error: unknown, signal?: AbortSignal, model = 'unknown'): ModelAdapterError {
-  if (error instanceof ModelAdapterError) return error;
+  if (error instanceof ModelAdapterError) {
+    // Report these as well. They are already safe to surface, but they are the
+    // adapter refusing the provider's answer — which is exactly the case that
+    // produced no log line at all and left a run to die on a later retry.
+    if (error.code !== 'aborted') {
+      reportProviderError?.({ model, status: error.status, detail: `${error.code}: ${error.message}` });
+    }
+    return error;
+  }
   if (signal?.aborted) return new ModelAdapterError('aborted', 'Model operation was canceled.');
   const status = typeof error === 'object' && error !== null && 'status' in error &&
     typeof error.status === 'number' ? error.status : undefined;

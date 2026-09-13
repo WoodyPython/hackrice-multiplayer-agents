@@ -371,7 +371,7 @@ describe('a provider failure is diagnosable', () => {
     expect(detail).toContain('[redacted]');
   });
 
-  it('leaves an already-safe error alone and reports nothing', async () => {
+  it('also reports an error the adapter itself classified', async () => {
     reported.length = 0;
     setProviderDiagnostic((info) => reported.push(info));
     const adapter = new GeminiAdapter(config, failing(
@@ -381,7 +381,29 @@ describe('a provider failure is diagnosable', () => {
     await expect(adapter.generate(request, allowance, signal())).rejects.toMatchObject({
       code: 'invalid_response',
     });
-    // Already classified: there is no raw provider text to recover.
+
+    /*
+     * These were the silent ones. `safeError` returned an already-classified
+     * error untouched, so the adapter REFUSING the provider's answer produced
+     * no log line at all — and the run died several layers later on a retry
+     * that had no budget left, reported as `token_exhausted`. Reporting them
+     * costs nothing: they are already safe to surface.
+     */
+    expect(reported).toHaveLength(1);
+    expect(reported[0]!.detail).toContain('invalid_response');
+  });
+
+  it('says nothing about a cancellation', async () => {
+    reported.length = 0;
+    setProviderDiagnostic((info) => reported.push(info));
+    const adapter = new GeminiAdapter(config, failing(
+      new ModelAdapterError('aborted', 'Model operation was canceled.'),
+    ));
+
+    await expect(adapter.generate(request, allowance, signal())).rejects.toMatchObject({
+      code: 'aborted',
+    });
+    // A deliberate cancel is not a provider failure and must not read as one.
     expect(reported).toHaveLength(0);
   });
 });

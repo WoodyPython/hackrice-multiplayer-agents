@@ -7,7 +7,12 @@ run the server without constructing it.
 
 `ORCHESTRATOR_MODEL` selects the orchestrator model. `WORKER_MODEL` selects the
 model for analyst, writer, coder, and reviewer. The initial supported profiles
-are `gemini-2.5-pro` and `gemini-2.5-flash`; either can be routed to either tier.
+are `gemini-3.8-flash` (orchestrator) and `gemini-3.6-flash` (worker); either can
+be routed to either tier. Both are Flash deliberately: a free-tier key reports
+`limit: 0` quota for the Pro models, so routing the orchestrator to one fails
+every Start with a 429. `gemini-2.5-pro`/`-flash` were retired in September 2026
+and answer 404 for new keys; their profiles are retained so an old `.env` fails
+with a message naming the model rather than a bare provider 404.
 The optional `models/` prefix is accepted. Before adding another model, verify
 its token-counting behavior, combined output ceiling, and thinking bounds, then
 add its profile and tests. Model configuration stays out of frontend requests.

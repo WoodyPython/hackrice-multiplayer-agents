@@ -119,6 +119,36 @@ and would cost the next person the same.
 
 ---
 
+## The diagnostic I added to find the bug was itself dead code
+
+**MVP blocker, second pass.** Having established that a failed Start reported
+`provider_error` and nothing else, I added a diagnostic sink so the adapter
+would log what the provider actually said, wired it in `runtime.ts`, shipped it,
+and re-ran. The log was empty.
+
+The sink was installed from inside `configuredAdapter(config, app?.log)` — which
+runs at `runtime.ts:102`, and `app` is assigned at line 107. `app?.log` was
+always `undefined`, so `setProviderDiagnostic` was never called. The optional
+chain that made it compile is what made it silent.
+
+It is the same shape as the constraint-name match in B05 and the redaction rule
+in B02: code that reads correctly, type-checks, and never runs. Adding a
+diagnostic does not exempt you from asking whether it executes — arguably the
+opposite, since a diagnostic that produces nothing looks exactly like a system
+with nothing to report.
+
+**The second blind spot, found the same way:** `safeError` returned an
+already-classified `ModelAdapterError` untouched, so the adapter *refusing the
+provider's answer* logged nothing either. That is the case that was actually
+happening. Those errors are already safe to surface, so reporting them costs
+nothing; `aborted` stays silent because a deliberate cancel is not a failure.
+
+**Instead:** when you add logging to diagnose something, make the first run
+prove the logging works — a line you expected and did not get is data about your
+instrumentation, not about the bug. Order of initialisation is worth one grep.
+
+---
+
 ## A safe error class made the failure unfixable
 
 **MVP blocker, orchestrator Start.** Every Start reached the orchestrator and

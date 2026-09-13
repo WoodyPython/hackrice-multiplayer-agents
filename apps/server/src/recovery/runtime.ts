@@ -1,6 +1,6 @@
 import type { Server } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { AppConfig } from '../config.js';
 import { createDb, type DbHandle } from '../db/client.js';
 import { buildApp, defaultBlobStore, type AppDeps } from '../http/app.js';
@@ -99,12 +99,25 @@ export async function startRuntime(options: RuntimeOptions) {
     collaboration = new LiveDocumentCoordinator(liveDeps, {
       drafts, git, checkpoints: new PgCheckpointStore(db.db),
     });
-    const adapter = options.modelAdapter ?? configuredAdapter(config, app?.log);
+    const adapter = options.modelAdapter ?? configuredAdapter(config);
     orchestration = buildOrchestration({
       config, db: db.db, git, drafts, collaboration, adapter,
       onBackgroundError: (error) => app?.log.error({ err: error }, 'orchestration failed outside a request'),
     });
     app = await (options.applicationFactory ?? buildApp)({ db: db.db, config, lifecycle, orchestration });
+
+    /*
+     * Send the provider's own account of a failure to the process log.
+     *
+     * Must come after `app` exists: an earlier version set this from inside
+     * configuredAdapter, which runs before the server is built, so the logger
+     * was always undefined and nothing was ever reported. Server-side only —
+     * section 13.3 governs what reaches the browser, and the adapter strips
+     * anything credential-shaped before calling this.
+     */
+    setProviderDiagnostic(({ model, status, detail }) => {
+      app?.log.error({ model, status, detail }, 'gemini request failed');
+    });
     await registerFrontend(app, options.frontendRoot ?? fileURLToPath(new URL('../../../web/dist/', import.meta.url)), config.isProduction);
     await registerApprovedFileRoutes(app, { db: db.db, git });
     await registerCheckpointRoutes(app, collaboration);
@@ -191,22 +204,7 @@ function buildOrchestration(deps: {
  * better than refusing to boot, and far better than a silent hook that leaves
  * every started run sitting in `planning` with nothing behind it.
  */
-function configuredAdapter(config: AppConfig, log?: FastifyBaseLogger): ModelAdapter {
-  /*
-   * Send the provider's own account of a failure to the process log.
-   *
-   * Without this a rejected key, an unavailable model and a malformed request
-   * are one indistinguishable `provider_error`, and a Start that dies in a
-   * quarter of a second leaves nothing to read. Server-side only: section 13.3
-   * is about what reaches the browser, and `redactProviderDetail` strips
-   * anything credential-shaped before this is called.
-   */
-  if (log) {
-    setProviderDiagnostic(({ model, status, detail }) => {
-      log.error({ model, status, detail }, 'gemini request failed');
-    });
-  }
-
+function configuredAdapter(config: AppConfig): ModelAdapter {
   try {
     return createGeminiAdapter(config);
   } catch {

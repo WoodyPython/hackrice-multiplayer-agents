@@ -2,6 +2,59 @@
 
 Newest first. One entry per landed ticket.
 
+## Fix — agents run again: the configured Gemini models were retired
+**Landed:** 2026-09-13 · Role B
+**Affects:** everyone. `.env` change required.
+**Action required:** Set `ORCHESTRATOR_MODEL=gemini-3.8-flash` and
+`WORKER_MODEL=gemini-3.6-flash` in your `.env`. Verify with
+`npm run gemini:smoke --workspace @app/server`.
+
+Every Start died in the orchestrator. The probe named the cause:
+
+```
+gemini-2.5-pro   404  "no longer available to new users ... use gemini-3.1-pro-preview"
+gemini-2.5-flash 404  "no longer available to new users ... use gemini-3.6-flash"
+```
+
+Two further things had to be true before agents ran:
+
+- **The orchestrator cannot be a Pro model on a free-tier key.**
+  `gemini-3.1-pro-preview` counts tokens but refuses to generate with
+  `429 ... limit: 0` — a plan-level quota of zero, not a transient rate limit.
+  Both tiers are Flash now, and `.env.example` says why.
+- **`MODEL_PROFILES` is an allowlist**, so renaming in `.env` alone trades a 404
+  for a `configuration` error. The new models are added with `maxOutput` read
+  from `models.list()` rather than assumed. The retired ones are kept so an old
+  `.env` fails with a message naming the model.
+
+**Verified end to end** against the live API and a real Git root:
+`orchestrator:completed → writer:completed → reviewer:completed`, task
+`ready_for_review`, `documents/haiku.md` written, and every token reservation
+settled to 0 (orchestrator 1505, writer 10612, reviewer 4796 of 64000).
+
+Two diagnostic blind spots closed on the way, both recorded in
+[pitfalls](pitfalls.md):
+
+- The sink added last commit was **dead code** — installed from inside
+  `configuredAdapter`, which runs before `app` exists, so `app?.log` was always
+  undefined. Now installed after the server is built.
+- `safeError` returned an already-classified `ModelAdapterError` untouched, so
+  the adapter refusing a response logged nothing. That was the case actually
+  occurring. Now reported; `aborted` stays silent.
+- An empty response (no text, no tool calls) now logs its `finishReason`, since
+  the planner treats it as unusable and retries — by which point the budget
+  reservation is spent and the failure surfaces as `token_exhausted`, several
+  layers from the cause.
+
+**Known fragility, not fixed:** the SDK is configured with
+`retryOptions: { attempts: 1 }`. A single transient 503 — which these models do
+return under load — leaves the reservation unsettled, and the planner's repair
+then has no budget. One blip kills a run. Worth a look before the demo.
+
+Verified: `npm run build`, `models` (**40**), `runtime`/`start`/`agents` (**48**).
+
+---
+
 ## Fix — a Gemini provider failure is now diagnosable
 **Landed:** 2026-09-13 · Role B
 **Affects:** anyone debugging a Start that fails
