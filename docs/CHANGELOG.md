@@ -96,11 +96,19 @@ with members and content is never listed at any age.
   a new `refresh`, which re-ran the effect that called it, which set state.
   Measured at 300+ `GET /api/auth/session` in a few seconds on one page load.
   Invisible in tests (all of them pass a stable `api`) and in the browser
-  (every request succeeded). Memoized; now two per load, which is React's
-  development double-invoke.
+  (every request succeeded). Found independently on the same day by the
+  sign-in hardening in `f1aaf81`; that fix is the one kept, since it also
+  guards each refresh with a revision so a slow response cannot overwrite a
+  newer session.
 - **The workspace read was keyed on the browser session's revision**, left over
   from when the request carried an owner key from storage. It carries no
   per-browser secret now, so renaming yourself refetched the whole workspace.
+
+**Presence survives a rename.** `usePresence` keyed its subscription on the
+display name, so changing it ran the cleanup — closing the event stream and
+sending the "I have left" DELETE — before re-announcing. Adopting the account's
+name made that happen on every page load, which is how it was found. The room
+subscription is keyed on the room now; a rename is an announcement.
 
 **One display name, not two.** Signing in adopts the account's name for
 presence, document cursors, discussion authorship and upload attribution, via
@@ -116,12 +124,11 @@ RESTRICT check runs, confirmed directly for both `delete from workspaces` and
 `delete from tasks`. The constraint is left exactly as `0002` wrote it, and
 there is a test so a change to that chain fails a test rather than a deletion.
 
-Verified after the merge: `npm run build`; web **150** across 13 files; server
-`unit` (121), then `workspace-lifecycle`, `permissions`, `schema`, `events`,
-`workspaces` and `agent-history` together (**174**), and `runtime-flow` +
-`tasks` (39). Mutation-checked: neutralising the archived guard, the last-owner
-copy, or `SKIP LOCKED` each fails exactly the test written for it, and nothing
-else.
+Verified after both merges: `npm run build`; web **177** across 16 files; server
+`unit` (136), then the ten suites either branch touched together (**237**), and
+`runtime-flow` + `tasks` (39). Mutation-checked: neutralising the archived
+guard, the last-owner copy, `SKIP LOCKED`, or the presence key each fails
+exactly the test written for it and nothing else.
 
 Driven end to end in a browser against the live database before the merge: the
 home list, the switcher, archive, the archived-write refusal, delete with name

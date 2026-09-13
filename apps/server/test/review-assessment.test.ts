@@ -146,12 +146,19 @@ describe('C07 review assessment', () => {
     const adapter = new FakeModelAdapter([{ inputTokens: 10, result: kind === 'failure'
       ? new ModelAdapterError('provider_error', 'Unknown bill', false)
       : { ...structured('Finding.'), usage } }]);
+    // Fund exactly one request. The global task budget can support several
+    // provider calls, so retaining one reservation need not exhaust it.
+    const requestBudget = 10 + adapter.getModel('reviewer').maxOutputTokens;
+    await db.db.insertInto('task_agent_budgets').values({
+      workspace_id: workspaceId, task_id: taskId, agent_key: `review:${detail.review.id}`,
+      token_budget: requestBudget,
+    }).execute();
     const assessor = new ReviewAssessor({ db: db.db, adapter, reviews: reader });
     const assessment = assessor.assess({ workspaceId, taskId, reviewId: detail.review.id });
     if (kind === 'failure') await expect(assessment).rejects.toBeInstanceOf(ModelAdapterError);
     else await assessment;
     const row = await budget(taskId, `review:${detail.review.id}`);
-    expect(row!.reserved_tokens).toBeGreaterThan(0);
+    expect(row!.reserved_tokens).toBe(requestBudget);
     expect(row!.consumed_tokens).toBe(0);
     // A new candidate cannot reuse the unaccounted allowance.
     detail.candidateSha = sha();

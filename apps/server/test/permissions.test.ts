@@ -228,6 +228,19 @@ describe('writes are denied by default', () => {
 });
 
 describe('roles', () => {
+  it('serializes simultaneous owner demotions without a deadlock or an ownerless workspace', async () => {
+    const workspaceId = (await create(ownerA.cookie, 'Concurrent owners')).workspaceId;
+    const second = await signInAs(t.handle.db, { workspaceId, role: 'owner', label: 'concurrent-owner' });
+    const responses = await Promise.all([
+      call('PATCH', `/api/workspaces/${workspaceId}/members/${ownerA.userId}`, ownerA.cookie, { role: 'member' }),
+      call('PATCH', `/api/workspaces/${workspaceId}/members/${second.userId}`, second.cookie, { role: 'member' }),
+    ]);
+    expect(responses.map((response) => response.statusCode).sort()).toEqual([204, 403]);
+    const owners = await t.handle.db.selectFrom('workspace_members').select('user_id')
+      .where('workspace_id', '=', workspaceId).where('role', '=', 'owner').execute();
+    expect(owners).toHaveLength(1);
+  });
+
   it('lets a member do the work but not administer', async () => {
     const work = await call('POST', `/api/workspaces/${workspaceA}/tasks`, memberA.cookie,
       { title: 'Member task', kind: 'agent_task', creatorGuestLabel: 'Member A' });
@@ -299,8 +312,22 @@ describe('roles', () => {
 });
 
 describe('sessions', () => {
+  it('exchanges a provider token, restores its account, and revokes the browser session', async () => {
+    const signedIn = await call('POST', '/api/auth/session', '', { accessToken: 'session-exchange@example.test' });
+    expect(signedIn.statusCode, signedIn.body).toBe(200);
+    expect(signedIn.json().account.email).toBe('session-exchange@example.test');
+    const issuedCookie = String(signedIn.headers['set-cookie']);
+    expect(issuedCookie).toContain('HttpOnly');
+    expect(issuedCookie).toContain('SameSite=Lax');
+    const cookie = issuedCookie.split(';')[0]!;
+    const restored = await call('GET', '/api/auth/session', cookie);
+    expect(restored.json().account).toEqual(signedIn.json().account);
+    expect((await call('DELETE', '/api/auth/session', cookie)).statusCode).toBe(204);
+    expect((await call('GET', '/api/auth/session', cookie)).json().account).toBeNull();
+  });
+
   it('treats an unknown, malformed, or truncated cookie as signed out', async () => {
-    for (const value of ['', 'not-a-token', 'x'.repeat(400), `${SESSION_COOKIE}=`]) {
+    for (const value of ['', '%', '%ZZ', '%E0%A4%A', 'not-a-token', 'x'.repeat(400), `${SESSION_COOKIE}=`]) {
       const res = await call('PATCH', `/api/workspaces/${workspaceA}`,
         `${SESSION_COOKIE}=${value}`, { guidance: 'x' });
       expect(res.statusCode, value).toBe(401);
@@ -326,6 +353,22 @@ describe('sessions', () => {
       .where('user_id', '=', expired.userId).execute();
     expect((await call('PATCH', `/api/workspaces/${workspaceA}`, expired.cookie,
       { guidance: 'x' })).statusCode).toBe(401);
+  });
+
+  it('renews the browser cookie alongside the sliding database expiry', async () => {
+    const active = await signInAs(t.handle.db, { label: 'sliding-session' });
+    await t.handle.db.updateTable('sessions').set({
+      last_seen_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    }).where('user_id', '=', active.userId).execute();
+    const res = await call('GET', '/api/auth/session', active.cookie);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    const cookie = String(res.headers['set-cookie']);
+    expect(cookie).toContain(`${active.cookie};`);
+    const expiry = /Expires=([^;]+)/.exec(cookie)?.[1];
+    expect(expiry).toBeDefined();
+    expect(new Date(expiry!).getTime()).toBeGreaterThan(Date.now() + 29 * 24 * 60 * 60 * 1000);
   });
 });
 

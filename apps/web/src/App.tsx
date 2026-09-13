@@ -38,7 +38,7 @@ import { useInbox } from "./inbox";
 
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
-  const { account, workspaces, setPreferences } = useAuth();
+  const { account, workspaces, loading: authLoading, setPreferences } = useAuth();
   // Subscribed so a rename -- or signing in, which adopts the account's name --
   // re-renders the name shown in the sidebar and broadcast to presence.
   useSyncExternalStore(session.subscribe, session.getRevision);
@@ -59,6 +59,7 @@ function LiveWorkspace({ id }: { id: string }) {
   const location = useLocation();
   const base = `/w/${id}`;
   useEffect(() => {
+    if (authLoading) return;
     const controller = new AbortController();
     setLoading(true);
     setFailure(null);
@@ -74,12 +75,15 @@ function LiveWorkspace({ id }: { id: string }) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-    // Deliberately not keyed on the browser session's revision. It used to be:
+    // Re-read when the account changes, because `access` is resolved per
+    // caller and signing in is exactly what turns a viewer into an owner.
+    //
+    // Deliberately NOT keyed on the browser session's revision. It used to be:
     // the read once carried an owner key from storage, so a change there could
     // change the answer. It carries no per-browser secret now, and leaving the
     // dependency in meant renaming yourself -- or signing in, which adopts the
-    // account's name -- silently refetched the whole workspace.
-  }, [api, id, retry]);
+    // account's name -- silently refetching the whole workspace.
+  }, [api, id, retry, account?.id, authLoading]);
   useEffect(() => {
     document.title = workspace
       ? `${workspace.name} — CoFlow`
@@ -144,11 +148,19 @@ function LiveWorkspace({ id }: { id: string }) {
    * It used to also require a legacy owner key in this browser's storage. That
    * key is no longer minted -- an account-owned workspace has none at all -- so
    * the condition was never true, and the person who created the workspace
-   * could not open its settings, see the member list, or invite anybody. The
-   * flag stays advisory either way: every owner-only route is re-checked by the
-   * authorization hook, so this only decides what is drawn.
+   * could not open its settings, see the member list, or invite anybody.
+   *
+   * `access` is read rather than `isOwner` because it is the same answer with
+   * the other two levels attached, and the read is the moment it was true:
+   * `!loading && !failure` keeps a stale or failed refresh from leaving an
+   * owner form enabled. No check on `account` -- a caller without one can never
+   * come back as `owner`, and testing for it only makes the controls flicker
+   * while the session is still loading.
+   *
+   * Advisory either way: every owner-only route is re-checked by the
+   * authorization hook, so this decides what is drawn and nothing else.
    */
-  const isOwner = workspace.access === "owner";
+  const isOwner = workspace.access === "owner" && !loading && !failure;
   const archived = workspace.status === "archived";
   // A failed refresh hides the badge rather than advertising a stale count.
   const inboxCount = inbox.failure ? undefined : inbox.items?.length;
@@ -187,7 +199,13 @@ function LiveWorkspace({ id }: { id: string }) {
       // is exactly the thing this control renames.
       profileControl={account ? <AccountMenu sidebar /> : <GuestNameControl sidebar />}
       topbarEnd={
-        <div className="flex items-center gap-2.5">
+        /*
+          No account control here: the sidebar footer already carries the
+          signed-in name, the address, and Sign out, next to the workspace role
+          it belongs with. Two of them in one screen only makes the reader
+          choose between them.
+        */
+        <div className="flex flex-wrap items-center justify-end gap-2.5">
           <PresencePanel
             participants={participants}
             selfPresenceId={presenceId}
@@ -438,14 +456,27 @@ function HomeOrLanding() {
  * bounce a signed-in person to the sign-in page for a frame.
  */
 function RequireAccount({ children }: { children: ReactNode }) {
-  const { account, loading } = useAuth();
+  const { account, loading, error, refresh } = useAuth();
+  const [retrying, setRetrying] = useState(false);
   const location = useLocation();
-  if (loading)
+  if (loading || retrying)
     return (
       <main aria-busy="true" className="mx-auto w-full max-w-2xl px-6 py-20">
         <p role="status" className="sr-only">
           Checking your session…
         </p>
+      </main>
+    );
+  if (!account && error)
+    return (
+      <main className="mx-auto w-full max-w-2xl px-6 py-20">
+        <Notice role="alert" tone="warn" title="Session unavailable">
+          <p>{error}</p>
+          <Button onClick={() => {
+            setRetrying(true);
+            void refresh().catch(() => {}).finally(() => setRetrying(false));
+          }}>Try again</Button>
+        </Notice>
       </main>
     );
   if (!account)

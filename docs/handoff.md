@@ -183,7 +183,7 @@ actually gone wrong, more than once:
 
 ## Current state
 
-All suites green. 41 server test files and 13 web ones; web is 150 tests.
+All suites green. 42 server test files and 16 web ones; web is 177 tests.
 
 Workspaces have a full lifecycle as of 2026-09-13 — a home page listing
 everything an account can reach, archive/restore, leave, delete, and

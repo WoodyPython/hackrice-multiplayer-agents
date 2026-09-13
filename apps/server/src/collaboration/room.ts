@@ -23,7 +23,7 @@ export interface RoomOptions {
   onIdle: () => void;
   onError: () => void;
   debounceMs?: number;
-  processUpdate?: (operation: () => void) => Promise<void>;
+  processUpdate?: (operation: () => void | Promise<void>) => Promise<void>;
 }
 
 /** Owns document mutations and ordered saves. No Git writes or capture logic. */
@@ -67,7 +67,7 @@ export class LiveRoom {
     for (const socket of this.connections.keys()) socket.close(LIVE_EPOCH_CLOSED_CODE, 'DOCUMENT_EPOCH_CLOSED');
   }
 
-  attach(socket: WebSocket, release: () => void): void {
+  attach(socket: WebSocket, release: () => void, authorizeWrite?: () => Promise<void>): void {
     if (this.closed) { socket.once('close', release); socket.close(LIVE_EPOCH_CLOSED_CODE, 'DOCUMENT_EPOCH_CLOSED'); return; }
     this.connections.set(socket, new Set());
     let alive = true;
@@ -95,7 +95,7 @@ export class LiveRoom {
       try {
         if (!binary) throw new Error('Expected binary message');
         const bytes = Array.isArray(data) ? Buffer.concat(data) : new Uint8Array(data as ArrayBuffer);
-        this.receive(socket, bytes);
+        this.receive(socket, bytes, authorizeWrite);
       } catch {
         socket.close(1008, 'VALIDATION_FAILED');
       }
@@ -108,7 +108,7 @@ export class LiveRoom {
     this.ack(socket, LIVE_ACK_PERSISTED, this.persistedRevision);
   }
 
-  private receive(socket: WebSocket, bytes: Uint8Array): void {
+  private receive(socket: WebSocket, bytes: Uint8Array, authorizeWrite?: () => Promise<void>): void {
     if (bytes.byteLength > MAX_LIVE_MESSAGE_BYTES) throw new Error('Message too large');
     const decoder = decoding.createDecoder(bytes);
     const type = decoding.readVarUint(decoder);
@@ -139,7 +139,7 @@ export class LiveRoom {
         sync.writeSyncStep2(reply, this.doc, payload);
         this.send(socket, encoding.toUint8Array(reply));
       } else if (subtype === sync.messageYjsSyncStep2 || subtype === sync.messageYjsUpdate) {
-        if (!this.options.processUpdate) { this.accept(socket, payload); return; }
+        if (!this.options.processUpdate && !authorizeWrite) { this.accept(socket, payload); return; }
         if (this.queuedBytes + bytes.byteLength > MAX_LIVE_MESSAGE_BYTES) {
           socket.close(1009, 'Queued updates too large');
           return;
@@ -147,9 +147,14 @@ export class LiveRoom {
         this.queuedBytes += bytes.byteLength;
         this.queuedUpdates++;
         // Queue at receipt, before any await, so a capture cannot overtake it.
-        void this.options.processUpdate(() => {
+        const processUpdate = this.options.processUpdate ?? (async (operation: () => Promise<void>) => operation());
+        void processUpdate(async () => {
+          // A socket can outlive logout, session expiry, or membership removal.
+          // Recheck inside the update queue so capture cannot overtake this edit.
+          await authorizeWrite?.();
           if (!this.closed) this.accept(socket, payload);
-        }).catch(() => socket.close(1008, 'VALIDATION_FAILED')).finally(() => {
+        }).catch((error: unknown) => socket.close(1008,
+          error instanceof ApiError ? error.code : 'VALIDATION_FAILED')).finally(() => {
           this.queuedBytes -= bytes.byteLength;
           this.queuedUpdates--;
           this.options.onIdle();

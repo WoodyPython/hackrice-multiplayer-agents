@@ -20,7 +20,7 @@ export async function registerFrontend(app: FastifyInstance, root: string, requi
         ? 'no-cache' : 'public, max-age=31536000, immutable');
     },
   });
-  for (const url of ['/', '/w/*', '/demo/*']) {
+  for (const url of ['/', '/signin', '/invite/*', '/w/*', '/demo/*']) {
     app.get(url, async (_request, reply) => reply.sendFile('index.html'));
   }
   app.get<{ Params: { '*': string } }>('/assets/*', async (request, reply) => {

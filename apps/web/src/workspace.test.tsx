@@ -223,7 +223,10 @@ describe("A02 workspace interactions", () => {
         }),
       )
       .mockImplementation(async () => response(workspace));
-    fixture("/new", transport);
+    const authApi = signedIn();
+    const current = vi.spyOn(authApi, "current");
+    // `/new`, because `/` is the account's workspace list now.
+    fixture("/new", transport, new BrowserSession(), authApi);
     await user.type(await screen.findByLabelText("Workspace name"), "Team room");
     await user.type(screen.getByLabelText(/Purpose/), "Build together");
     await user.dblClick(
@@ -235,6 +238,7 @@ describe("A02 workspace interactions", () => {
     expect(
       transport.mock.calls.filter(([, init]) => init?.method === "POST"),
     ).toHaveLength(1);
+    expect(current).toHaveBeenCalledTimes(2);
     expect(document.body.textContent).not.toContain(ownerKey);
     await user.click(
       screen.getByRole("button", { name: "Share workspace link" }),
@@ -303,17 +307,24 @@ describe("A02 workspace interactions", () => {
       }),
     );
   });
-  it("removes owner controls when the server refuses, keeping unsaved text visible", async () => {
-    // The server is the authority on who may administer a workspace. When it
-    // disagrees with what was drawn -- a role changed in another tab, most
-    // likely -- the controls go and the typing stays, because losing somebody's
-    // words is a worse outcome than showing a button that has stopped working.
+  it("lets an account owner edit settings without a legacy browser key", async () => {
+    const session = new BrowserSession();
+    fixture(`/w/${id}/settings`, vi.fn<typeof fetch>().mockResolvedValue(response(workspace)), session);
+    expect(await screen.findByRole("button", { name: "Save workspace settings" })).toBeTruthy();
+    expect(session.getOwnerKey(id)).toBeUndefined();
+  });
+  // The server is the authority on who may administer a workspace. Whichever
+  // way it says no -- a role changed in another tab, a session that expired --
+  // the controls go and the typing stays, because losing somebody's words is a
+  // worse outcome than a button that has stopped working.
+  it.each(["OWNER_KEY_REQUIRED", "AUTH_REQUIRED", "FORBIDDEN"])("removes owner controls after %s, keeping unsaved text visible", async (code) => {
+    const session = new BrowserSession();
     const user = userEvent.setup();
     const transport = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response(workspace))
-      .mockResolvedValueOnce(errorResponse("FORBIDDEN", 403));
-    fixture(`/w/${id}/settings`, transport);
+      .mockResolvedValueOnce(errorResponse(code, 403));
+    fixture(`/w/${id}/settings`, transport, session);
     await user.click(
       await screen.findByRole("button", { name: "Save workspace settings" }),
     );

@@ -19,7 +19,7 @@ import { ErrorText, Notice } from "../components/ui/misc";
  * HttpOnly session cookie the server sets, which this code cannot read.
  */
 export function SignIn() {
-  const { api, refresh } = useAuth();
+  const { api, setSession } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = params.get("next");
@@ -35,12 +35,13 @@ export function SignIn() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setFailure(null);
     setConfirm(false);
     try {
       if (mode === "in") {
-        await api.signIn(email, password);
+        setSession(await api.signIn(email, password));
       } else {
         const session = await api.signUp(email, password, displayName || email);
         if (!session) {
@@ -49,9 +50,9 @@ export function SignIn() {
           setConfirm(true);
           return;
         }
+        setSession(session);
       }
-      await refresh();
-      navigate(next && next.startsWith("/") ? next : "/", { replace: true });
+      navigate(next && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/", { replace: true });
     } catch (error) {
       setFailure(
         error instanceof AuthError
@@ -120,7 +121,7 @@ export function SignIn() {
               id="password"
               type="password"
               required
-              minLength={8}
+              minLength={mode === "up" ? 8 : undefined}
               autoComplete={mode === "in" ? "current-password" : "new-password"}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -152,6 +153,7 @@ export function SignIn() {
           {mode === "in" ? "No account yet?" : "Already have an account?"}{" "}
           <button
             type="button"
+            disabled={busy}
             className="font-medium text-navy-700 underline-offset-2 hover:underline dark:text-navy-300"
             onClick={() => {
               setMode(mode === "in" ? "up" : "in");

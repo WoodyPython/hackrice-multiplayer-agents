@@ -1,5 +1,37 @@
 # Pitfalls
 
+## Renaming yourself announced that you had left the room
+
+`usePresence` keyed its effect on `[workspaceId, presenceId, name, color]`, so a
+change of display name ran the cleanup — which closed the shared event stream
+**and sent the "I have left" DELETE** — before re-announcing. Changing your own
+name therefore made you blink out of everyone else's roster and dropped your
+refresh stream on the way through.
+
+It sat unnoticed because nothing changed a name except a person deliberately
+typing one. Adopting the signed-in account's name made it happen on every page
+load, which is how it surfaced: two Agents tests failed because the hint they
+sent landed on an `EventSource` that had already been replaced.
+
+Now the subscription and heartbeat are keyed on the room (`workspaceId`,
+`presenceId`) with the label in a ref, and a rename is a second effect that
+re-posts. Joining and leaving is about this browser being here, which a rename
+does not change.
+
+Worth generalising: if an effect's cleanup tells somebody else something, every
+value in its dependency array is a thing that will send that message.
+
+## A test double drifts when the interface it stands for widens
+
+`auth-unit.test.ts` builds a fake `SessionStore` with the two methods the gate
+called. The gate then started reading access and archived state in one call, and
+the double did not have that method — so the hook threw and the refusal arrived
+as a **500 instead of a 401**. A failure to authorize, dressed as a server
+error, in the suite whose whole job is to prove authorization.
+
+The test was right to exist and right to fail. The lesson is narrower: when you
+add a method to an interface a preHandler depends on, grep for the doubles.
+
 ## A React context whose default dependency is built per render loops forever
 
 `AuthProvider` took `api = new AuthApi(supabaseConfig())` as a **default
@@ -18,6 +50,12 @@ unrelated feature.
 Worth generalising: a `useCallback`/`useMemo` dependency that is constructed in
 the same render is not a dependency, it is a change on every render. If a
 provider builds anything, build it in `useMemo` or `useState(() => ...)`.
+
+Found twice, independently and on the same day, from opposite directions — once
+by watching the network panel while checking an unrelated feature, once while
+hardening sign-in. Both fixes were the same shape; the surviving one is the
+`useState(() => ...)` in `auth-context.tsx`, which also guards each refresh with
+a revision so a slow response cannot overwrite a newer session.
 
 ## An effect keyed on something that used to matter keeps costing after it stops
 

@@ -53,7 +53,7 @@ const PILLARS = [
  */
 export function CreateWorkspace() {
   const { api } = useBrowser();
-  const { account } = useAuth();
+  const { account, refresh } = useAuth();
   const navigate = useNavigate();
   const submitting = useRef(false);
   const [pending, setPending] = useState(false);
@@ -91,6 +91,9 @@ export function CreateWorkspace() {
     setPending(true);
     try {
       const id = await api.create(parsed.data);
+      // Creation has already succeeded: a failed session read must never make
+      // retrying this form create a second workspace.
+      await refresh().catch(() => {});
       navigate(`/w/${id}`);
     } catch (cause) {
       setError(workspaceError(cause));
@@ -110,11 +113,17 @@ export function CreateWorkspace() {
         <div className="absolute -top-40 left-1/2 size-[680px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,var(--color-navy-200)_0%,transparent_65%)] opacity-50 blur-3xl dark:bg-[radial-gradient(circle,var(--color-navy-700)_0%,transparent_65%)] dark:opacity-40" />
       </div>
 
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
+      <header className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-6">
         <Link to="/" aria-label="CoFlow home" className="rounded-lg">
           <Wordmark size="lg" />
         </Link>
-        <div className="flex items-center gap-2.5">
+        {/*
+          `AccountMenu` rather than `AccountControl` here: it already shows the
+          address and signs out, and it carries the way back to the workspace
+          list, which this page now needs. Two sign-out controls in one header
+          would only make the reader choose between them.
+        */}
+        <div className="flex flex-wrap items-center gap-3">
           <ThemeToggle />
           <AccountMenu />
         </div>

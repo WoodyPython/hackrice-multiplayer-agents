@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { ApiError, type Membership, type SessionState, type WorkspaceDirectory } from "@app/contracts";
@@ -195,6 +195,76 @@ describe("workspace lifecycle", () => {
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
     await user.type(screen.getByLabelText(/to confirm/), "Launch room");
     expect((confirm as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("one identity", () => {
+  /**
+   * Presence posts with the global `fetch` rather than the injected transport,
+   * so these stub that instead. Restored in `afterEach`.
+   */
+  const presenceCalls: Array<{ method: string; path: string; body: unknown }> = [];
+
+  function stubPresenceFetch() {
+    presenceCalls.length = 0;
+    vi.stubGlobal("fetch", ((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path.includes("/presence")) {
+        presenceCalls.push({
+          method: init?.method ?? "GET",
+          path,
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return Promise.resolve(response({ participants: [] }));
+      }
+      return Promise.resolve(response({}));
+    }) as typeof fetch);
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("adopts the account's name for presence instead of a guest label", async () => {
+    stubPresenceFetch();
+    open(`/w/${idA}`, authApi());
+    // Signed in, other people in the room see the account's name. A generated
+    // "Guest Maple" beside a verified account is the app contradicting itself.
+    await waitFor(() =>
+      expect(presenceCalls.some((c) => (c.body as { name?: string })?.name === "Ada Lovelace"))
+        .toBe(true));
+  });
+
+  it("re-announces a renamed participant without leaving the room", async () => {
+    // Signed out, because that is when a display name is the browser's own to
+    // change: with an account the name comes from the account, and the rename
+    // control is not drawn at all.
+    stubPresenceFetch();
+    const session = new BrowserSession();
+    render(
+      <MemoryRouter initialEntries={[`/w/${idA}`]}>
+        <App
+          session={session}
+          api={new WorkspaceApi(session, ((input) => Promise.resolve(response(
+            String(input).endsWith("/inbox")
+              ? { items: [] }
+              : { ...sample, id: idA, name: "Launch room", access: "owner", isOwner: true },
+          ))) as typeof fetch)}
+          authApi={authApi({ account: null, workspaces: [] }, { workspaces: [], visited: [] })}
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(presenceCalls.some((c) => c.method === "POST")).toBe(true));
+    presenceCalls.length = 0;
+
+    await act(async () => { session.rename("River"); });
+
+    // A rename used to run the subscription's cleanup, which closed the event
+    // stream and sent the "I have left" DELETE -- so changing your own display
+    // name made you blink out of everyone else's roster. It is an announcement
+    // now, on the stream that was already open.
+    await waitFor(() =>
+      expect(presenceCalls.some((c) => (c.body as { name?: string })?.name === "River"))
+        .toBe(true));
+    expect(presenceCalls.some((c) => c.method === "DELETE")).toBe(false);
   });
 });
 

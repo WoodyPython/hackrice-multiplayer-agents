@@ -112,7 +112,7 @@ export class SessionStore {
    * Null is returned for every failure — absent, malformed, unknown, expired —
    * so a caller cannot distinguish them and turn this into an oracle.
    */
-  async resolve(token: string | undefined): Promise<SessionIdentity | null> {
+  async resolve(token: string | undefined): Promise<(SessionIdentity & { expiresAt: Date }) | null> {
     if (!token || token.length < 16 || token.length > 512) return null;
     const now = this.now();
     const row = await this.deps.db.selectFrom('sessions')
@@ -128,20 +128,23 @@ export class SessionStore {
     // by prefix. Constant-time either way.
     const stored = Buffer.isBuffer(row.token_hash) ? row.token_hash : Buffer.from(row.token_hash);
     if (stored.length !== 32 || !timingSafeEqual(hashToken(token), stored)) return null;
-    if (new Date(row.expires_at).getTime() <= now.getTime()) return null;
+    let expiresAt = new Date(row.expires_at);
+    if (expiresAt.getTime() <= now.getTime()) return null;
 
     // Sliding expiry, written at most once a day. Refreshing on every request
     // would make an authenticated GET a write, which this app does a lot of.
     const lastSeen = new Date(row.last_seen_at).getTime();
     if (now.getTime() - lastSeen > 24 * 60 * 60 * 1000) {
+      expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
       await this.deps.db.updateTable('sessions')
-        .set({ last_seen_at: now, expires_at: new Date(now.getTime() + SESSION_TTL_MS) })
+        .set({ last_seen_at: now, expires_at: expiresAt })
         .where('id', '=', row.session_id).execute();
     }
 
     return {
       userId: row.user_id,
       account: { id: row.user_id, email: row.email, displayName: row.display_name },
+      expiresAt,
     };
   }
 

@@ -54,11 +54,15 @@ export function WorkspaceSettings({
     } catch (cause) {
       setError(workspaceError(cause));
       // The server is the authority. If it says this caller may not administer
-      // the workspace -- a role changed in another tab, most likely -- stop
-      // drawing the controls, and keep every character they typed: losing
-      // somebody's words is worse than a button that briefly looked available.
+      // the workspace -- a role changed in another tab, or the session expired
+      // -- stop drawing the controls, and keep every character they typed:
+      // losing somebody's words is worse than a button that looked available.
+      //
+      // `access` moves with `isOwner` because it is what the rest of the screen
+      // reads now; leaving it saying "owner" would keep the lifecycle panel
+      // offering controls the same response just refused.
       if (cause instanceof ApiError &&
-          (cause.code === "FORBIDDEN" || cause.code === "OWNER_KEY_REQUIRED"))
+          ["OWNER_KEY_REQUIRED", "AUTH_REQUIRED", "FORBIDDEN"].includes(cause.code))
         onChange({ ...workspace, isOwner: false, access: "viewer" });
     } finally {
       busy.current = false;

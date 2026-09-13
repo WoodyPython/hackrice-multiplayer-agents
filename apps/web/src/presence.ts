@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   PRESENCE_HEARTBEAT_MS,
   presenceRosterSchema,
@@ -48,6 +48,22 @@ export function usePresence(
   const [participants, setParticipants] = useState<Participant[]>([]);
   const { presenceId, name, color } = me;
 
+  /**
+   * The label, read by the heartbeat without being a dependency of it.
+   *
+   * The subscription below used to be keyed on `name` and `color` too, which
+   * meant a rename did far more than rename: the cleanup ran, which closed the
+   * shared event stream AND sent the "I have left" DELETE, so changing your own
+   * display name made you blink out of everyone else's roster and dropped your
+   * refresh stream on the way. Signing in makes that happen on every page load,
+   * because the account's name replaces the guest label.
+   *
+   * A ref, so the heartbeat always sends the current label while the stream it
+   * travels on stays up.
+   */
+  const label = useRef({ name, color });
+  label.current = { name, color };
+
   useEffect(() => {
     if (!workspaceId) return;
     const controller = new AbortController();
@@ -61,7 +77,7 @@ export function usePresence(
             method: "POST",
             headers: { "content-type": "application/json" },
             // No host flag: the server derives it from membership.
-            body: JSON.stringify({ presenceId, name, color }),
+            body: JSON.stringify({ presenceId, ...label.current }),
             signal: controller.signal,
           },
         );
@@ -108,6 +124,28 @@ export function usePresence(
       window.removeEventListener("pagehide", leave);
       leave();
     };
+    // Deliberately not keyed on the label. Joining and leaving the room is
+    // about this browser being here, which a rename does not change.
+  }, [workspaceId, presenceId]);
+
+  /**
+   * A rename is an announcement, not a rejoin.
+   *
+   * Separate effect so it re-posts the roster entry without touching the
+   * subscription, the heartbeat, or the departure notice above.
+   */
+  useEffect(() => {
+    if (!workspaceId) return;
+    const controller = new AbortController();
+    void fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/presence`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ presenceId, name, color }),
+      signal: controller.signal,
+    }).catch(() => {
+      // Ornamental, exactly as above: the next heartbeat carries the new label.
+    });
+    return () => controller.abort();
   }, [workspaceId, presenceId, name, color]);
 
   return participants;
