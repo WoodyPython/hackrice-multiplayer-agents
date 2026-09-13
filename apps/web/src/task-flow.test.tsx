@@ -517,11 +517,16 @@ describe("files", () => {
     });
     open(`/w/${workspaceId}/files`, transport);
 
+    // The path form now opens from the explorer toolbar rather than sitting
+    // permanently in a panel; opening a file for editing is unchanged.
+    await user.click(
+      await screen.findByRole("button", { name: "Edit a file together" }),
+    );
     await user.type(
       await screen.findByLabelText("File path"),
       "documents/guide.md",
     );
-    await user.click(screen.getByRole("button", { name: "Edit together" }));
+    await user.click(screen.getByRole("button", { name: "Open for editing" }));
 
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith("/drafts/open"))).toBe(
@@ -537,11 +542,63 @@ describe("files", () => {
     const { transport } = server();
     open(`/w/${workspaceId}/files`, transport);
 
-    const approved = await screen.findByRole("heading", {
-      name: "Approved files",
+    // The categories are folders now, but an empty one must still be visible
+    // and must still read as empty rather than simply being absent.
+    expect(
+      await screen.findByRole("button", { name: /Approved files/ }),
+    ).toBeTruthy();
+    expect(screen.getAllByText("Nothing here yet").length).toBeGreaterThan(0);
+  });
+
+  it("shows a selected file in the detail pane", async () => {
+    const user = userEvent.setup();
+    const { transport } = server({
+      "GET /files": () =>
+        json({
+          mainSha: "a".repeat(40),
+          files: [{ path: "documents/top.md", hash: "2".repeat(40) }],
+        }),
+      "GET /files/content": () =>
+        json({
+          mainSha: "a".repeat(40),
+          path: "documents/top.md",
+          hash: "2".repeat(40),
+          text: "Approved body text",
+        }),
     });
-    expect(approved).toBeTruthy();
-    expect(await screen.findByText("No approved files yet")).toBeTruthy();
+    open(`/w/${workspaceId}/files`, transport);
+
+    await user.click(await screen.findByRole("button", { name: /top\.md/ }));
+    // Selection drives the detail pane, and for an approved file it also
+    // fetches the content the old screen showed behind a separate click.
+    expect(
+      await screen.findByRole("heading", { name: "documents/top.md" }),
+    ).toBeTruthy();
+    expect(await screen.findByText("Approved body text")).toBeTruthy();
+  });
+
+  it("nests repository paths into real folders", async () => {
+    const { transport } = server({
+      "GET /files": () =>
+        json({
+          mainSha: "a".repeat(40),
+          files: [
+            { path: "documents/deep/nested.md", hash: "1".repeat(40) },
+            { path: "documents/top.md", hash: "2".repeat(40) },
+          ],
+        }),
+    });
+    open(`/w/${workspaceId}/files`, transport);
+
+    // The old screen listed both as flat rows reading the whole path; the
+    // shared `documents/` prefix is now a folder, and `deep/` a folder inside it.
+    expect(await screen.findByRole("button", { name: /nested/ })).toBeTruthy();
+    // Two `documents/` folders, not one: each category is its own tree, so the
+    // approved copy and the draft copy of a path never merge into one row.
+    expect(screen.getAllByRole("button", { name: /documents/ })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /deep/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /nested\.md/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /top\.md/ })).toBeTruthy();
   });
 });
 
