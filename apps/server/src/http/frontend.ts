@@ -23,6 +23,9 @@ export async function registerFrontend(app: FastifyInstance, root: string, requi
   for (const url of ['/', '/signin', '/invite/*', '/w/*', '/demo/*']) {
     app.get(url, async (_request, reply) => reply.sendFile('index.html'));
   }
+  // Vite copies public files to the build root. Keep the browser tab icon
+  // reachable in production without exposing arbitrary neighboring files.
+  app.get('/favicon.svg', async (_request, reply) => reply.sendFile('favicon.svg'));
   app.get<{ Params: { '*': string } }>('/assets/*', async (request, reply) => {
     const name = request.params['*'];
     if (!/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*\.[a-zA-Z0-9]+$/.test(name)) {

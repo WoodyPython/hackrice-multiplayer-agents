@@ -1732,7 +1732,7 @@ describe("A08 cross-flow integration", () => {
     expect(screen.queryByText("This document was closed")).toBeNull();
   });
 
-  it("tells a non-owner who to ask, where the owner controls are", async () => {
+  it("tells a non-host who to ask, where the host controls are", async () => {
     const { transport } = server({
       "GET ": () => json({ ...workspace, isOwner: false, access: "member" }),
     });
@@ -1745,7 +1745,7 @@ describe("A08 cross-flow integration", () => {
      * fields is who can, which is the member list directly below.
      */
     expect(
-      await screen.findByText(/only an owner can change these/i),
+      await screen.findByText(/only a host can change these/i),
     ).toBeTruthy();
   });
 });

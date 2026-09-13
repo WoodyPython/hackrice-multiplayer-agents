@@ -15,45 +15,42 @@ describe("authentication transport", () => {
       .mockResolvedValueOnce(Response.json({ access_token: "test-provider-token" }))
       .mockResolvedValueOnce(Response.json(session));
     const api = new AuthApi(config, transport);
-    await expect(api.signIn(" ada@example.test ", "test-password")).resolves.toEqual(session);
+    await expect(api.signIn(" Ada ", "test-password")).resolves.toEqual(session);
     expect(transport).toHaveBeenCalledTimes(2);
     const [providerUrl, providerInit] = transport.mock.calls[0]!;
     expect(providerUrl).toBe("https://auth.example.test/auth/v1/token?grant_type=password");
     expect(providerInit).toMatchObject({ method: "POST", credentials: "omit", headers: { apikey: "public-test-key" } });
-    expect(JSON.parse(providerInit!.body as string)).toEqual({ email: "ada@example.test", password: "test-password" });
+    expect(JSON.parse(providerInit!.body as string)).toEqual({ email: "ada@accounts.coflow.local", password: "test-password" });
     const [exchangeUrl, exchangeInit] = transport.mock.calls[1]!;
     expect(exchangeUrl).toBe("/api/auth/session");
     expect(exchangeInit).toMatchObject({ method: "POST", credentials: "same-origin" });
     expect(JSON.parse(exchangeInit!.body as string)).toEqual({ accessToken: "test-provider-token" });
   });
 
-  it("requires email confirmation without creating an application session", async () => {
-    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ user: { id: "new-user" } }));
+  it("creates a confirmed username account through the application server", async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json(session, { status: 201 }));
     const api = new AuthApi(config, transport);
-    await expect(api.signUp(" ada@example.test ", "test-password", " Ada ")).resolves.toBeNull();
+    await expect(api.signUp(" Ada ", "test-password")).resolves.toEqual(session);
     expect(transport).toHaveBeenCalledTimes(1);
-    expect(transport.mock.calls[0]![0]).toBe("https://auth.example.test/auth/v1/signup");
+    expect(transport.mock.calls[0]![0]).toBe("/api/auth/signup");
     expect(JSON.parse(transport.mock.calls[0]![1]!.body as string)).toEqual({
-      email: "ada@example.test", password: "test-password", data: { full_name: "Ada" },
+      username: "ada", password: "test-password",
     });
   });
 
-  it("starts a session immediately when signup returns an access token", async () => {
-    const transport = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json({ access_token: "signup-token" }))
-      .mockResolvedValueOnce(Response.json(session));
-    await expect(new AuthApi(config, transport).signUp("ada@example.test", "test-password", "Ada")).resolves.toEqual(session);
-    expect(transport).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(transport.mock.calls[1]![1]!.body as string)).toEqual({ accessToken: "signup-token" });
+  it("surfaces a username conflict from signup", async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      error: { code: "CONFLICT", message: "That username is already taken." },
+    }, { status: 409 }));
+    await expect(new AuthApi(config, transport).signUp("ada", "test-password"))
+      .rejects.toThrow("That username is already taken.");
   });
 
-  it.each([
-    [{ error_description: "Invalid login credentials" }, false],
-    [{ msg: "Email not confirmed" }, true],
-  ])("surfaces provider rejection and never attempts session exchange: %j", async (body, needsConfirmation) => {
+  it("turns provider rejection into a username-safe message and never exchanges a token", async () => {
+    const body = { error_description: "Invalid login credentials" };
     const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json(body, { status: 400 }));
-    await expect(new AuthApi(config, transport).signIn("ada@example.test", "test-password"))
-      .rejects.toMatchObject({ message: Object.values(body)[0], needsConfirmation });
+    await expect(new AuthApi(config, transport).signIn("ada", "test-password"))
+      .rejects.toThrow("Incorrect username or password.");
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
@@ -61,7 +58,7 @@ describe("authentication transport", () => {
     const transport = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ access_token: "test-provider-token" }))
       .mockResolvedValueOnce(Response.json({}, { status: 503 }));
-    await expect(new AuthApi(config, transport).signIn("ada@example.test", "test-password"))
+    await expect(new AuthApi(config, transport).signIn("ada", "test-password"))
       .rejects.toThrow("Could not start a session");
   });
 
@@ -80,7 +77,7 @@ describe("authentication transport", () => {
       });
     });
     const api = new AuthApi(config, transport);
-    const pending = stage === "logout" ? api.signOut() : api.signIn("ada@example.test", "test-password");
+    const pending = stage === "logout" ? api.signOut() : api.signIn("ada", "test-password");
     const rejected = expect(pending).rejects.toThrow("Timed out");
     await requestStarted;
     controller.abort(new Error("Timed out"));

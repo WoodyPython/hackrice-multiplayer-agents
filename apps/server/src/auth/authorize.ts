@@ -173,7 +173,7 @@ export function registerAuthorization(app: FastifyInstance, sessions: SessionSto
       return;
     }
     if (requirement === 'owner' && !canAdminister(access)) {
-      throw unauthorized(identity !== null, 'Only a workspace owner can do that.');
+      throw unauthorized(identity !== null, 'Only a workspace host can do that.');
     }
     if (requirement === 'member' && !canWrite(access)) {
       throw unauthorized(identity !== null, 'Join this workspace to make changes.');
@@ -188,7 +188,7 @@ export function registerAuthorization(app: FastifyInstance, sessions: SessionSto
      */
     if (archived && requirement !== 'viewer' && !ARCHIVED_WRITES.has(`${request.method} ${route}`)) {
       throw new ApiError('WORKSPACE_ARCHIVED',
-        'This workspace is archived. An owner can restore it from workspace settings.');
+        'This workspace is archived. A host can restore it from workspace settings.');
     }
   });
 }

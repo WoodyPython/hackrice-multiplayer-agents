@@ -1,6 +1,6 @@
-import { ApiError } from '@app/contracts';
+import { ApiError, usernameEmail, usernameSchema } from '@app/contracts';
 import type { AppConfig } from '../config.js';
-import { supabaseHeaders } from '../supabase-auth.js';
+import { supabaseHeaders, supabaseServerKey } from '../supabase-auth.js';
 
 /**
  * Verifying a Supabase access token, server-side.
@@ -59,6 +59,76 @@ function safeDisplayName(user: SupabaseUser, email: string): string {
 }
 
 export type IdentityVerifier = (accessToken: string) => Promise<VerifiedIdentity>;
+export type AccountCreator = (username: string, password: string) => Promise<string>;
+
+interface SupabaseToken {
+  access_token?: unknown;
+}
+
+/**
+ * Create a password account without an email-confirmation round trip.
+ *
+ * Supabase's password provider still expects an email-shaped login internally,
+ * but CoFlow never asks for or sends mail to a real address. The Admin endpoint
+ * marks the generated identity confirmed, then the ordinary password endpoint
+ * supplies the same access token used by the existing session exchange.
+ */
+export function createSupabaseAccountCreator(
+  config: Pick<AppConfig, 'SUPABASE_URL' | 'SUPABASE_PUBLISHABLE_KEY' |
+    'SUPABASE_SECRET_KEY' | 'SUPABASE_SERVICE_ROLE_KEY'>,
+  fetchImpl: typeof fetch = fetch,
+): AccountCreator {
+  return async (username, password) => {
+    const url = config.SUPABASE_URL?.replace(/\/+$/, '');
+    const publicKey = config.SUPABASE_PUBLISHABLE_KEY;
+    const serverKey = supabaseServerKey(config);
+    if (!url || !publicKey || !serverKey) {
+      throw new ApiError('AUTH_REQUIRED',
+        'Account creation is not configured on this server.');
+    }
+    const normalizedUsername = usernameSchema.parse(username);
+    const email = usernameEmail(normalizedUsername);
+    let created: Response;
+    try {
+      created = await fetchImpl(`${url}/auth/v1/admin/users`, {
+        method: 'POST',
+        headers: { ...supabaseHeaders(serverKey), 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email, password, email_confirm: true,
+          user_metadata: { username: normalizedUsername, full_name: normalizedUsername },
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      throw new ApiError('AUTH_REQUIRED', 'Could not create the account. Try again.');
+    }
+    if (!created.ok) {
+      if (created.status === 409 || created.status === 422) {
+        throw new ApiError('CONFLICT', 'That username is already taken.');
+      }
+      throw new ApiError('AUTH_REQUIRED', 'Could not create the account. Try again.');
+    }
+
+    let signedIn: Response;
+    try {
+      signedIn = await fetchImpl(`${url}/auth/v1/token?grant_type=password`, {
+        method: 'POST',
+        headers: { ...supabaseHeaders(publicKey), 'content-type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      throw new ApiError('AUTH_REQUIRED', 'Account created, but sign-in failed. Try signing in.');
+    }
+    const payload: unknown = await signedIn.json().catch(() => null);
+    const accessToken = payload && typeof payload === 'object'
+      ? (payload as SupabaseToken).access_token : undefined;
+    if (!signedIn.ok || typeof accessToken !== 'string' || !accessToken) {
+      throw new ApiError('AUTH_REQUIRED', 'Account created, but sign-in failed. Try signing in.');
+    }
+    return accessToken;
+  };
+}
 
 export function createSupabaseVerifier(
   config: Pick<AppConfig, 'SUPABASE_URL' | 'SUPABASE_PUBLISHABLE_KEY'>,

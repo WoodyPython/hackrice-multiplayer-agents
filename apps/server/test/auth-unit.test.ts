@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { SESSION_COOKIE } from '@app/contracts';
 import { readSessionCookie, registerAuthorization } from '../src/auth/authorize.js';
-import { createSupabaseVerifier } from '../src/auth/supabase.js';
+import { createSupabaseAccountCreator, createSupabaseVerifier } from '../src/auth/supabase.js';
 import type { SessionStore } from '../src/auth/sessions.js';
 import { registerErrorHandler } from '../src/http/errors.js';
 
@@ -58,5 +58,39 @@ describe('Supabase verification', () => {
       headers: { apikey: 'sb_publishable_test', authorization: 'Bearer test-token' },
       signal: expect.any(AbortSignal),
     }));
+  });
+});
+
+describe('username account creation', () => {
+  const config = {
+    SUPABASE_URL: 'https://auth.example.test',
+    SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
+    SUPABASE_SECRET_KEY: 'sb_secret_test',
+  };
+
+  it('creates an already-confirmed provider identity and signs it in', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ id: 'new-user' }, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ access_token: 'new-access-token' }));
+    await expect(createSupabaseAccountCreator(config, fetcher)('Ada', 'test-password'))
+      .resolves.toBe('new-access-token');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[0]![0]).toBe('https://auth.example.test/auth/v1/admin/users');
+    expect(JSON.parse(fetcher.mock.calls[0]![1]!.body as string)).toEqual({
+      email: 'ada@accounts.coflow.local',
+      password: 'test-password',
+      email_confirm: true,
+      user_metadata: { username: 'ada', full_name: 'ada' },
+    });
+    expect(JSON.parse(fetcher.mock.calls[1]![1]!.body as string)).toEqual({
+      email: 'ada@accounts.coflow.local', password: 'test-password',
+    });
+  });
+
+  it('reports duplicate usernames without attempting sign-in', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}, { status: 422 }));
+    await expect(createSupabaseAccountCreator(config, fetcher)('ada', 'test-password'))
+      .rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

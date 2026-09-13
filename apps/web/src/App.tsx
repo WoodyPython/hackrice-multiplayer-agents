@@ -192,7 +192,7 @@ function LiveWorkspace({ id }: { id: string }) {
         ) : undefined
       }
       guestRole={
-        isOwner ? "Owner" : workspace.access === "member" ? "Member" : "Viewing by link"
+        isOwner ? "Host" : workspace.access === "member" ? "Member" : "Viewing by link"
       }
       // Signed in, the name is the account's and is not editable here; signed
       // out it is the browser label other people see in a live document, which
@@ -244,7 +244,7 @@ function LiveWorkspace({ id }: { id: string }) {
           <p>
             Everything here is still readable, and nothing can be changed until
             it is restored.
-            {isOwner ? " You can restore it in workspace settings." : " Ask an owner to restore it."}
+            {isOwner ? " You can restore it in workspace settings." : " Ask a host to restore it."}
           </p>
           {isOwner && (
             <ButtonLink size="sm" to={`${base}/settings`}>

@@ -50,7 +50,7 @@ const demoTabCopy: Record<TaskTab, readonly [string, string]> = {
   ],
   Changes: [
     "Nothing to review here yet",
-    "Combined changes and owner review appear once a review exists.",
+    "Combined changes and host review appear once a review exists.",
   ],
 };
 import { useGuest } from "./browser-context";

@@ -84,9 +84,7 @@ export function AccountMenu({
         <span className="block truncate text-[12px] font-medium">
           {account.displayName}
         </span>
-        <span className="block truncate text-[10.5px] text-muted-foreground">
-          {account.email}
-        </span>
+        <span className="block truncate text-[10.5px] text-muted-foreground">@{account.displayName}</span>
       </span>
       <ChevronsUpDown aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="sr-only">Account menu</span>
@@ -109,7 +107,7 @@ export function AccountMenu({
           <p className={sidebar
             ? "truncate px-3 py-2 text-[11.5px] text-muted-foreground"
             : "truncate px-3 py-2 text-[11.5px] text-muted-foreground sm:hidden"}>
-            {account.email}
+            @{account.displayName}
           </p>
           <Link
             role="menuitem"

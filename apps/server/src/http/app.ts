@@ -18,7 +18,7 @@ import { registerWorkspaceRoutes } from '../workspaces/routes.js';
 import { registerAuthorization } from '../auth/authorize.js';
 import { registerAuthRoutes } from '../auth/routes.js';
 import { SessionStore } from '../auth/sessions.js';
-import { createSupabaseVerifier, type IdentityVerifier } from '../auth/supabase.js';
+import { createSupabaseAccountCreator, createSupabaseVerifier, type IdentityVerifier } from '../auth/supabase.js';
 import { PgDiscussionService } from '../discussion/service.js';
 import { PgTaskService } from '../tasks/service.js';
 import { PgReviewStore } from '../runs/review-store.js';
@@ -134,6 +134,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           'ownerKey',
           '*.ownerKey',
           '*.*.ownerKey',
+          'password',
+          '*.password',
+          '*.*.password',
           'req.headers.authorization',
           'req.headers.cookie',
           'headers.authorization',
@@ -230,6 +233,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerAuthRoutes(app, {
     db: deps.db,
     sessions,
+    createAccount: createSupabaseAccountCreator(config),
     // A cookie marked Secure is dropped by the browser over plain HTTP, which
     // is exactly how local development is served.
     secureCookies: config.isProduction,

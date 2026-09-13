@@ -230,7 +230,7 @@ export function Home() {
             title="Opened by link"
             count={links.length}
             hidden={links.length === 0}
-            note="You can read these. Ask an owner for an invitation to take part."
+            note="You can read these. Ask a host for an invitation to take part."
           >
             {links.map((workspace) => (
               <Row
@@ -255,7 +255,7 @@ export function Home() {
             title="Archived"
             count={archived.length}
             hidden={archived.length === 0}
-            note="Read-only, and everything is still here. An owner can restore one from its settings."
+            note="Read-only, and everything is still here. A host can restore one from its settings."
           >
             {archived.map((workspace) => (
               <Row
@@ -317,7 +317,7 @@ function MembershipRow({ workspace }: { workspace: Membership }) {
         <>
           {workspace.role === "owner" && (
             <Badge size="sm" tone="brand">
-              Owner
+              Host
             </Badge>
           )}
           {workspace.memberCount !== undefined && (

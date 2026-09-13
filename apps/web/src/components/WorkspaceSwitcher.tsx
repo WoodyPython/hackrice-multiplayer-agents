@@ -75,7 +75,7 @@ export function WorkspaceSwitcher({
               ? current.archived
                 ? "Archived"
                 : current.role === "owner"
-                  ? "Owner"
+                  ? "Host"
                   : "Member"
               : "Viewing by link"}
           </span>
@@ -111,7 +111,7 @@ export function WorkspaceSwitcher({
               <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
               {workspace.role === "owner" && (
                 <span className="shrink-0 text-[10.5px] text-muted-foreground">
-                  owner
+                  host
                 </span>
               )}
               {workspace.workspaceId === currentId && (

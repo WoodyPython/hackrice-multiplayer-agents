@@ -1,12 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { MailCheck } from "lucide-react";
 import { AuthError } from "../auth-api";
 import { useAuth } from "../auth-context";
 import { Wordmark } from "../components/Logo";
 import { Button } from "../components/ui/button";
 import { Input, Label } from "../components/ui/field";
-import { ErrorText, Notice } from "../components/ui/misc";
+import { ErrorText } from "../components/ui/misc";
 
 /**
  * Sign in or create an account.
@@ -14,9 +13,10 @@ import { ErrorText, Notice } from "../components/ui/misc";
  * One screen with two modes rather than two routes: the commonest mistake here
  * is arriving at the wrong one, and a toggle costs nothing.
  *
- * Passwords go to Supabase directly and never reach our server, so nothing in
- * this file stores or forwards one. The only thing kept afterwards is the
- * HttpOnly session cookie the server sets, which this code cannot read.
+ * Sign-in passwords go directly to Supabase. Account creation goes through the
+ * server so it can create an already-confirmed username identity. The browser
+ * stores neither password nor provider token; it keeps only the HttpOnly
+ * session cookie, which this code cannot read.
  */
 export function SignIn() {
   const { api, setSession } = useAuth();
@@ -26,31 +26,21 @@ export function SignIn() {
   const [mode, setMode] = useState<"in" | "up">(
     params.get("mode") === "up" ? "up" : "in",
   );
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
     setBusy(true);
     setFailure(null);
-    setConfirm(false);
     try {
       if (mode === "in") {
-        setSession(await api.signIn(email, password));
+        setSession(await api.signIn(username, password));
       } else {
-        const session = await api.signUp(email, password, displayName || email);
-        if (!session) {
-          // The project requires email confirmation. Saying so plainly beats
-          // leaving someone on a form that looked like it worked.
-          setConfirm(true);
-          return;
-        }
-        setSession(session);
+        setSession(await api.signUp(username, password));
       }
       navigate(next && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/", { replace: true });
     } catch (error) {
@@ -59,7 +49,6 @@ export function SignIn() {
           ? error.message
           : "Something went wrong. Try again.",
       );
-      if (error instanceof AuthError && error.needsConfirmation) setConfirm(true);
     } finally {
       setBusy(false);
     }
@@ -79,41 +68,25 @@ export function SignIn() {
             : "One account, as many teams as you like."}
         </p>
 
-        {confirm && (
-          <Notice role="status" className="mt-4" title="Check your email">
-            <p className="flex items-start gap-2">
-              <MailCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-              <span>
-                We sent a confirmation link to {email || "your address"}. Open it,
-                then sign in here.
-              </span>
-            </p>
-          </Notice>
-        )}
-
         <form className="mt-5 space-y-4" onSubmit={(event) => void submit(event)}>
-          {mode === "up" && (
-            <div className="space-y-1.5">
-              <Label htmlFor="name">Your name</Label>
-              <Input
-                id="name"
-                autoComplete="name"
-                value={displayName}
-                placeholder="Ada Lovelace"
-                onChange={(event) => setDisplayName(event.target.value)}
-              />
-            </div>
-          )}
           <div className="space-y-1.5">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="username">Username</Label>
             <Input
-              id="email"
-              type="email"
+              id="username"
               required
-              autoComplete="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              minLength={3}
+              maxLength={32}
+              pattern="[A-Za-z0-9][A-Za-z0-9._-]*"
+              autoComplete="username"
+              value={username}
+              placeholder="ada"
+              onChange={(event) => setUsername(event.target.value)}
             />
+            {mode === "up" && (
+              <p className="text-[11.5px] text-muted-foreground">
+                3–32 characters: letters, numbers, dots, dashes, or underscores.
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="password">Password</Label>
@@ -158,7 +131,6 @@ export function SignIn() {
             onClick={() => {
               setMode(mode === "in" ? "up" : "in");
               setFailure(null);
-              setConfirm(false);
             }}
           >
             {mode === "in" ? "Create one" : "Sign in"}

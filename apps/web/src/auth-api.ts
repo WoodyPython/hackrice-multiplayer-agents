@@ -2,6 +2,7 @@ import {
   apiErrorBodySchema, membershipSchema, preferencesSchema, sessionStateSchema,
   workspaceMemberSchema, createdInvitationSchema, invitationSchema,
   invitationPreviewSchema, workspaceDirectorySchema, ApiError,
+  usernameEmail,
   type Preferences, type SessionState, type WorkspaceDirectory, type WorkspaceRole,
 } from "@app/contracts";
 import { z } from "zod";
@@ -34,11 +35,7 @@ const supabaseErrorSchema = z.object({
 });
 
 export class AuthError extends Error {
-  constructor(
-    override readonly message: string,
-    /** True when the account exists but the address has not been confirmed. */
-    readonly needsConfirmation = false,
-  ) {
+  constructor(override readonly message: string) {
     super(message);
   }
 }
@@ -93,7 +90,9 @@ export class AuthApi {
         ? (parsed.data.error_description ?? parsed.data.msg ?? parsed.data.message)
         : undefined;
       const text = detail ?? "That did not work. Check the details and try again.";
-      throw new AuthError(text, /confirm/i.test(text));
+      throw new AuthError(/invalid login credentials/i.test(text)
+        ? "Incorrect username or password."
+        : text);
     }
     return data;
   }
@@ -120,34 +119,31 @@ export class AuthApi {
     return sessionStateSchema.parse(data);
   }
 
-  async signIn(email: string, password: string): Promise<SessionState> {
+  async signIn(username: string, password: string): Promise<SessionState> {
     const data = await this.supabase("/token?grant_type=password", {
-      email: email.trim(),
+      email: usernameEmail(username),
       password,
     });
     return this.exchange(supabaseSessionSchema.parse(data).access_token);
   }
 
-  /**
-   * Create an account.
-   *
-   * Returns null when the project requires email confirmation: Supabase
-   * answers with a user but no session, and the caller has to say "check your
-   * inbox" rather than pretending the person is signed in.
-   */
-  async signUp(
-    email: string,
-    password: string,
-    displayName: string,
-  ): Promise<SessionState | null> {
-    const data = await this.supabase("/signup", {
-      email: email.trim(),
-      password,
-      data: { full_name: displayName.trim() },
+  async signUp(username: string, password: string): Promise<SessionState> {
+    const response = await this.transport("/api/auth/signup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: username.trim().toLowerCase(), password }),
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
     });
-    const session = supabaseSessionSchema.safeParse(data);
-    if (!session.success) return null;
-    return this.exchange(session.data.access_token);
+    const data: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      const parsed = apiErrorBodySchema.safeParse(data);
+      throw new AuthError(parsed.success
+        ? parsed.data.error.message
+        : "Could not create the account. Try again.");
+    }
+    return sessionStateSchema.parse(data);
   }
 
   async current(signal?: AbortSignal): Promise<SessionState> {

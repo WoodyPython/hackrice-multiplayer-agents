@@ -331,7 +331,7 @@ export class PgTaskService {
       // rather than in the route-level authorization hook.
       const completionChange = input.status === 'completed' || input.status === 'unmark';
       if (!completionChange && !isOwner) {
-        throw new ApiError('FORBIDDEN', 'Only a workspace owner can move a task to another state.');
+        throw new ApiError('FORBIDDEN', 'Only a workspace host can move a task to another state.');
       }
       await assertTaskMutable(trx, taskId);
       if (task.active_run_id || task.status !== input.expectedStatus) {

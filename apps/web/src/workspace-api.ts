@@ -984,7 +984,7 @@ export function apiMessage(error: unknown): string {
       case "WORKSPACE_NOT_FOUND":
         return "This workspace could not be found. Check the contribution link.";
       case "WORKSPACE_ARCHIVED":
-        return "This workspace is archived, so it is read-only. An owner can restore it from workspace settings.";
+        return "This workspace is archived, so it is read-only. A host can restore it from workspace settings.";
       case "AUTH_REQUIRED":
         return "Sign in to continue.";
       case "FORBIDDEN":

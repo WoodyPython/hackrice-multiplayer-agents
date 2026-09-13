@@ -11,6 +11,7 @@ it('serves SPA deep links and Monaco assets without exposing neighboring files o
   try {
     await mkdir(join(root, 'assets'));
     await writeFile(join(root, 'index.html'), '<main>App</main>');
+    await writeFile(join(root, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
     await writeFile(join(root, 'assets', 'editor.worker-Ab12.js'), '/* worker */');
     await writeFile(join(root, 'secret.txt'), 'not public');
     await registerFrontend(app, root, true);
@@ -23,6 +24,9 @@ it('serves SPA deep links and Monaco assets without exposing neighboring files o
     expect(worker.statusCode).toBe(200);
     expect(worker.headers['content-type']).toContain('javascript');
     expect(worker.headers['x-content-type-options']).toBe('nosniff');
+    const favicon = await app.inject('/favicon.svg?v=2');
+    expect(favicon.statusCode).toBe(200);
+    expect(favicon.headers['content-type']).toContain('image/svg+xml');
     for (const path of ['/assets/%2e%2e%2fsecret.txt', '/assets/%2e%2e%5csecret.txt', '/assets/missing.js', '/api/missing', '/secret.txt']) {
       const res = await app.inject(path); expect(res.statusCode).toBe(404); expect(res.body).not.toContain('not public');
     }

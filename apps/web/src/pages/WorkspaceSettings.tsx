@@ -92,7 +92,7 @@ export function WorkspaceSettings({
             <p className="flex gap-2">
               <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
               <span>
-                Only an owner can change these. Ask one of the people listed
+                Only a host can change these. Ask one of the people listed
                 below if something here needs to be different.
               </span>
             </p>

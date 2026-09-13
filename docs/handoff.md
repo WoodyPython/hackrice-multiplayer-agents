@@ -94,15 +94,16 @@ Copy `.env.example`. The parts that matter:
 | `TEST_DATABASE_URL` | Separate DB, wiped and re-migrated per test run |
 | `GEMINI_API_KEY` | See trap 1. Enable billing. |
 | `ORCHESTRATOR_MODEL` / `WORKER_MODEL` | Both Flash on purpose; a free key has `limit: 0` for Pro |
-| `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` | Server-side token verification |
+| `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` | Username/password sign-in and server-side token verification |
+| `SUPABASE_SECRET_KEY` | Confirmed username account creation; server only |
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` | Same values, for the browser |
 
 **Never** prefix `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY` with
 `VITE_` — that ships a server credential to every visitor.
 
-One Supabase dashboard setting: turn **Confirm email** off for demos.
-Free-tier SMTP is rate-limited to a handful per hour, so several people signing
-up in a row will stall. `docs/accounts.md` has the full auth picture.
+CoFlow creates synthetic username identities through the server and confirms
+them immediately, so no email-confirmation dashboard setting or SMTP setup is
+needed. `docs/accounts.md` has the full auth picture.
 
 ## Running it
 

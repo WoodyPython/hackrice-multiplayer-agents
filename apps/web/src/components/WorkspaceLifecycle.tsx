@@ -64,7 +64,7 @@ export function WorkspaceLifecycle({
    */
   function whyLeaveFailed(error: unknown): string | undefined {
     return error instanceof ApiError && error.code === "FORBIDDEN"
-      ? "You are the only owner, so leaving would leave this workspace with nobody who can manage it. Make someone else an owner first."
+      ? "You are the only host, so leaving would leave this workspace with nobody who can manage it. Make someone else a host first."
       : undefined;
   }
 
@@ -73,7 +73,7 @@ export function WorkspaceLifecycle({
       {failure && <ErrorText role="alert">{failure}</ErrorText>}
 
       {/*
-        Anyone in the workspace can leave except the last owner, who cannot: a
+        Anyone in the workspace can leave except the last host, who cannot: a
         workspace with nobody who can administer it can never be recovered,
         invited into, archived, or deleted by anybody.
 
@@ -87,7 +87,7 @@ export function WorkspaceLifecycle({
           <h2 className="text-[15px] font-semibold tracking-tight">Leave this workspace</h2>
           <p className="mt-1 text-[12.5px] text-muted-foreground">
             You stop being a member and it leaves your list. Nothing here is
-            deleted, and an owner can invite you back.
+            deleted, and a host can invite you back.
           </p>
           <Button
             className="mt-4"

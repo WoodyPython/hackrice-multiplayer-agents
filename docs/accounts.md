@@ -12,6 +12,7 @@ memberships, roles, and invitations are our tables and are checked by us.
 |---|---|---|
 | `SUPABASE_URL` | server | Project to verify access tokens against |
 | `SUPABASE_PUBLISHABLE_KEY` | server | Sent with the verification call |
+| `SUPABASE_SECRET_KEY` | server | Creates already-confirmed username identities |
 | `VITE_SUPABASE_URL` | browser | Same value; Vite only exposes `VITE_`-prefixed vars |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | browser | Same value; the browser signs in with it directly |
 
@@ -20,21 +21,19 @@ own. **Never** prefix `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY` with
 `VITE_`: that would ship a server credential to every visitor.
 
 Without these, the app still runs and the API still enforces membership. Only
-signing in fails, with a message naming the variables.
+signing in and account creation fail.
 
-### One dashboard setting
+### Username identities
 
-Supabase requires email confirmation by default (`mailer_autoconfirm: false`),
-and the free-tier mailer is rate-limited to a handful of messages per hour. For
-a demo, turn **Confirm email** off in Authentication → Providers → Email so
-accounts work instantly. Turn it back on afterwards. The sign-up screen handles
-both: when Supabase returns a user without a session it says "check your email"
-rather than pretending the person is signed in.
+CoFlow maps each username to a private email-shaped identifier for Supabase and
+creates it as already confirmed through the server. No email provider,
+confirmation setting, or SMTP setup is needed.
 
 ## How a session is established
 
-1. The browser signs in with Supabase directly. Passwords never reach this
-   server.
+1. Existing accounts sign in with Supabase directly using the private identifier
+   derived from the username. New accounts are created through the server so
+   they can be marked confirmed without an email round trip.
 2. It posts the resulting access token to `POST /api/auth/session` **once**.
 3. The server verifies that token against Supabase, upserts the account, and
    replies with an opaque session in an `HttpOnly` cookie.
@@ -54,12 +53,14 @@ in browser storage.
 
 ## Roles
 
-| | viewer | member | owner |
+The product calls the workspace administrator a **host**. The stored role value
+remains `owner` for database and API compatibility.
+
+| | viewer | member | host |
 |---|---|---|---|
 | Read tasks, files, history | ✅ | ✅ | ✅ |
 | Appear in presence | ✅ | ✅ | ✅ |
 | See the member list | ❌ | ✅ | ✅ |
-| See member email addresses | ❌ | ❌ | ✅ |
 | Create and run tasks, edit documents, apply reviews | ❌ | ✅ | ✅ |
 | Mark a task complete | ❌ | ✅ | ✅ |
 | Move a task to another state | ❌ | ❌ | ✅ |
@@ -119,7 +120,7 @@ through a week of real work.
 
 Three different intentions, which until now all had the same answer: nothing.
 
-**Archive** (owner) is reversible and keeps everything. The workspace leaves the
+**Archive** (host) is reversible and keeps everything. The workspace leaves the
 switcher, appears under Archived on the home page, reads normally, and refuses
 every write. The refusal is in the same `preHandler` that enforces membership,
 so a route added later is covered before anyone thinks about it; the exceptions
@@ -130,11 +131,11 @@ member told they lack a permission they actually have would go looking in the
 wrong place.
 
 **Leave** (any member) removes only you, and clears your last-workspace pointer
-if it named this one. The last owner cannot leave, for the same reason they
+if it named this one. The last host cannot leave, for the same reason they
 cannot demote themselves: a workspace nobody can administer can never be
 invited into, archived, or deleted by anybody.
 
-**Delete** (owner) is real and permanent: the row, everything cascading from it,
+**Delete** (host) is real and permanent: the row, everything cascading from it,
 the Git repository, and the uploaded objects. A soft delete was considered and
 rejected — it reclaims nothing, and reclaiming is the reason this exists. The
 caller types the workspace's name back, checked server-side; that is not the
@@ -156,22 +157,22 @@ age. `--ids` is there for when a person has decided.
 
 ## Invitations
 
-Single-use, expiring after seven days, hashed at rest, and optionally locked to
-one email address. The token is returned **once**, at creation; only its hash is
-stored, so the invitation list cannot reproduce a working link.
+Single-use, expiring after seven days, and hashed at rest. The token is returned
+**once**, at creation; only its hash is stored, so the invitation list cannot
+reproduce a working link.
 
 The workspace URL grants nothing. The token is the credential.
 
 ## Migrating a workspace made before accounts
 
 Such a workspace still has its `owner_key_hash`. Somebody signed in who holds
-that key can claim it, becoming its owner; the hash is then cleared, so a key
+that key can claim it, becoming its host; the hash is then cleared, so a key
 shared in a chat months ago stops working.
 
 **Ownership is never granted from a workspace URL.** Everyone the link was ever
 sent to has it, and honouring it would hand each old workspace to whoever opened
 it first. Contributors who were not the key holder need an invitation from the
-new owner — there is no credential that identifies them, and inventing one would
+new host — there is no credential that identifies them, and inventing one would
 mean trusting a self-asserted label, which design section 1.3 rules out.
 
 ## Relationship to the MVP design

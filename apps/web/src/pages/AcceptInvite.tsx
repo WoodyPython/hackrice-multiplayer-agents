@@ -62,7 +62,7 @@ export function AcceptInvite() {
     } catch (error) {
       setAcceptFailure(
         error instanceof ApiError && error.code === "INVITATION_INVALID"
-          ? "This invitation is no longer valid, or it was issued to a different email address."
+          ? "This invitation is no longer valid or was issued to a different account."
           : "Could not accept the invitation. Try again.",
       );
     } finally {
@@ -106,15 +106,14 @@ export function AcceptInvite() {
               Join {preview!.workspaceName}
             </h1>
             <p className="mt-1 text-[13px] text-muted-foreground">
-              You have been invited as {preview!.role === "owner" ? "an owner" : "a member"}.
+              You have been invited as {preview!.role === "owner" ? "a host" : "a member"}.
             </p>
 
             {preview!.emailMismatch && (
-              <Notice role="alert" tone="warn" className="mt-4" title="Different email address">
+              <Notice role="alert" tone="warn" className="mt-4" title="Different account">
                 <p>
-                  This invitation was issued to a specific address, and it is not
-                  the one you are signed in with. Sign in with the invited
-                  address, or ask for a new invitation.
+                  This invitation was issued to a different account. Sign in
+                  with that account, or ask for a new invitation.
                 </p>
                 <AccountControl signInNext={`/invite/${token}`} />
               </Notice>

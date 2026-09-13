@@ -205,7 +205,7 @@ export function CreateWorkspace() {
                 Create a workspace
               </h2>
               <p className="text-[13px] text-muted-foreground">
-                You will be its owner. Invite people afterwards, and switch
+                You will be its host. Invite people afterwards, and switch
                 between your workspaces from the sidebar.
               </p>
             </div>

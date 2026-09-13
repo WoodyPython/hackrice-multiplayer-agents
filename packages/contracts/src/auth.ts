@@ -47,6 +47,20 @@ export const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const displayNameSchema = z.string().trim().min(1).max(80);
 export const emailSchema = z.string().trim().min(3).max(320).email();
+export const usernameSchema = z.string().trim().toLowerCase()
+  .min(3, 'Username must be at least 3 characters.')
+  .max(32, 'Username must be at most 32 characters.')
+  .regex(/^[a-z0-9][a-z0-9._-]*$/, 'Use letters, numbers, dots, dashes, or underscores.');
+
+/** Supabase's password provider requires an email-shaped identifier internally. */
+export function usernameEmail(username: string): string {
+  const normalized = usernameSchema.parse(username);
+  // Escape punctuation so every allowed username becomes a valid, unique email
+  // local-part (including names with consecutive or trailing dots).
+  const local = normalized.replace(/[._-]/g, (character) =>
+    character === '.' ? '_d' : character === '_' ? '_u' : '_h');
+  return `${local}@accounts.coflow.local`;
+}
 
 export const accountSchema = z.object({
   id: uuidSchema,
@@ -142,6 +156,11 @@ export type SessionState = z.infer<typeof sessionStateSchema>;
  */
 export const createSessionRequestSchema = z.object({
   accessToken: z.string().min(1).max(8192),
+}).strict();
+
+export const createAccountRequestSchema = z.object({
+  username: usernameSchema,
+  password: z.string().min(8).max(128),
 }).strict();
 
 export const createInvitationRequestSchema = z.object({

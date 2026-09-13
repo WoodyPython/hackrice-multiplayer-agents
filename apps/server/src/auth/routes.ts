@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   ApiError, INVITATION_TTL_MS, SESSION_COOKIE,
-  claimWorkspaceRequestSchema, createInvitationRequestSchema, createSessionRequestSchema,
+  claimWorkspaceRequestSchema, createAccountRequestSchema, createInvitationRequestSchema, createSessionRequestSchema,
   createdInvitationSchema, invitationPreviewSchema, invitationSchema, membershipSchema,
   preferencesSchema, sessionStateSchema, updateMemberRequestSchema,
   updatePreferencesRequestSchema, uuidSchema, workspaceDirectorySchema,
@@ -16,6 +16,7 @@ import { parseOrThrow } from '../http/errors.js';
 import { ownerKeyMatches } from '../workspaces/owner-key.js';
 import { readSessionCookie, requireAccount, requireAuth } from './authorize.js';
 import type { SessionStore } from './sessions.js';
+import type { AccountCreator } from './supabase.js';
 
 /**
  * Accounts, memberships, and invitations.
@@ -65,6 +66,7 @@ function clearSessionCookie(reply: FastifyReply, secure: boolean): void {
 export interface AuthRouteDeps {
   db: Db;
   sessions: SessionStore;
+  createAccount: AccountCreator;
   /** False only for plain-HTTP local development. */
   secureCookies: boolean;
   signInRateLimit: { max: number; timeWindow: string };
@@ -98,6 +100,15 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
     setSessionCookie(reply, token, expiresAt, deps.secureCookies);
     const rest = await state(identity.userId);
     return reply.code(200).send(sessionStateSchema.parse({ account: identity.account, ...rest }));
+  });
+
+  app.post('/api/auth/signup', { config: { rateLimit: deps.signInRateLimit } }, async (request, reply) => {
+    const body = parseOrThrow(createAccountRequestSchema, request.body ?? {});
+    const accessToken = await deps.createAccount(body.username, body.password);
+    const { token, expiresAt, identity } = await sessions.signIn(accessToken);
+    setSessionCookie(reply, token, expiresAt, deps.secureCookies);
+    const rest = await state(identity.userId);
+    return reply.code(201).send(sessionStateSchema.parse({ account: identity.account, ...rest }));
   });
 
   /** Who am I, what do I have, and what are my settings -- in one call. */
@@ -269,7 +280,7 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
       .forUpdate().execute();
     if (owners.length <= 1) {
       throw new ApiError('FORBIDDEN',
-        'This is the only owner. Make someone else an owner first, or the workspace would be left with nobody who can manage it.');
+        'This is the only host. Make someone else a host first, or the workspace would be left with nobody who can manage it.');
     }
   }
 
@@ -393,10 +404,10 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
       if (workspace.owner_key_hash === null) {
         // Already claimed. Say so plainly: this is not a permission failure to
         // be retried, it is a workspace that now has owners to ask.
-        throw new ApiError('FORBIDDEN', 'This workspace already belongs to an account. Ask an owner for an invitation.');
+        throw new ApiError('FORBIDDEN', 'This workspace already belongs to an account. Ask a host for an invitation.');
       }
       if (!ownerKeyMatches(body.ownerKey, workspace.owner_key_hash)) {
-        throw new ApiError('OWNER_KEY_REQUIRED', 'That is not this workspace\'s owner key.');
+        throw new ApiError('OWNER_KEY_REQUIRED', 'That is not this workspace\'s host key.');
       }
       const current = now();
       await trx.insertInto('workspace_members').values({

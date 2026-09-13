@@ -75,11 +75,11 @@ describe("authentication session lifecycle", () => {
       </Routes></AuthProvider>
     </MemoryRouter>);
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText("Email"), "ada@example.test");
+    await user.type(screen.getByLabelText("Username"), "ada");
     await user.type(screen.getByLabelText("Password"), "short");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     await screen.findByText("Ada");
-    expect(api.signIn).toHaveBeenCalledWith("ada@example.test", "short");
+    expect(api.signIn).toHaveBeenCalledWith("ada", "short");
     expect(api.current).toHaveBeenCalledTimes(1);
   });
 

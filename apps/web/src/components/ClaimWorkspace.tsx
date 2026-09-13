@@ -44,9 +44,9 @@ export function ClaimWorkspace({
     } catch (error) {
       setFailure(
         error instanceof ApiError && error.code === "OWNER_KEY_REQUIRED"
-          ? "That is not this workspace's owner key."
+          ? "That is not this workspace's host key."
           : error instanceof ApiError && error.code === "FORBIDDEN"
-            ? "This workspace already belongs to an account. Ask one of its owners for an invitation."
+            ? "This workspace already belongs to an account. Ask one of its hosts for an invitation."
             : "Could not claim this workspace. Try again.",
       );
     } finally {
@@ -61,7 +61,7 @@ export function ClaimWorkspace({
       title={`${workspaceName} was created before accounts existed`}
     >
       <p>
-        Paste its owner key to take ownership with your account. You will not
+        Paste its host key to become a host with your account. You will not
         need the key again afterwards, and it stops working once used.
       </p>
       <form
@@ -72,7 +72,7 @@ export function ClaimWorkspace({
         }}
       >
         <div className="min-w-0 flex-1 space-y-1.5">
-          <Label htmlFor="owner-key">Owner key</Label>
+          <Label htmlFor="owner-key">Host key</Label>
           <Input
             id="owner-key"
             value={ownerKey}

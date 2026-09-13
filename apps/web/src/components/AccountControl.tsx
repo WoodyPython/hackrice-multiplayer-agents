@@ -27,8 +27,8 @@ export function AccountControl({ signInNext }: { signInNext?: string } = {}) {
   }
 
   return <div className="flex min-w-0 flex-wrap items-center justify-end gap-2" aria-busy={busy}>
-    <span className="max-w-40 truncate text-xs text-muted-foreground" title={account.email}>
-      {account.email}
+    <span className="max-w-40 truncate text-xs text-muted-foreground" title={account.displayName}>
+      @{account.displayName}
     </span>
     <Button variant="ghost" className="min-h-11" disabled={busy} onClick={() => void leave()}>
       {busy ? "Signing out…" : "Sign out"}

@@ -169,7 +169,7 @@ describe("switching", () => {
 });
 
 describe("workspace lifecycle", () => {
-  it("explains the last-owner refusal instead of claiming you lack permission", async () => {
+  it("explains the last-host refusal instead of claiming you lack permission", async () => {
     const user = userEvent.setup();
     const api = {
       ...authApi(),
@@ -181,9 +181,9 @@ describe("workspace lifecycle", () => {
     open(`/w/${idA}/settings`, api);
     await user.click(await screen.findByRole("button", { name: "Leave workspace" }));
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/only owner/i);
+    expect(alert.textContent).toMatch(/only host/i);
     // The generic copy would be both untrue and unactionable here: they have
-    // the permission, and what they need is a second owner.
+    // the permission, and what they need is a second host.
     expect(alert.textContent).not.toMatch(/do not have permission/i);
   });
 
