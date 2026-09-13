@@ -62,7 +62,16 @@ export function ApprovedFile({ workspaceId }: { workspaceId: string }) {
               </Button>
             )}
           </header>
-          <pre className="min-h-72 overflow-auto p-5 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap">
+          {/*
+            The file scrolls inside its own box, not by making the page taller.
+
+            `overflow-auto` with no height does nothing: the element grows to
+            its content, so a long file turned the whole page into one enormous
+            scroll with the card's border thousands of pixels down. Capped to
+            the viewport, so the heading and the Download button stay put and
+            the scrollbar belongs to the thing being scrolled.
+          */}
+          <pre className="max-h-[70vh] min-h-72 overflow-auto p-5 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap">
             {file.text ?? "This file is no longer present in the approved version."}
           </pre>
         </article>
