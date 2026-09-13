@@ -170,6 +170,24 @@ export class PgAgentLedger implements Pick<AgentService, 'recordUsage' | 'enforc
     });
   }
 
+  /**
+   * Append one step of the agent's thought process for its history.
+   *
+   * Like late usage, allowed after the agent is terminal: a response that
+   * arrived after a deadline is still something the agent did. Append-only and
+   * never read by execution, so it takes no locks and authorizes nothing.
+   */
+  async recordTraceStep(agentInstanceId: string, kind: 'model_turn' | 'tool_results',
+    content: Record<string, unknown>): Promise<void> {
+    const agent = await this.deps.db.selectFrom('agent_instances').select(['workspace_id', 'task_id', 'run_id'])
+      .where('id', '=', agentInstanceId).executeTakeFirst();
+    if (!agent) throw new AgentExecutionError('not_found');
+    await this.deps.db.insertInto('agent_trace_steps').values({
+      workspace_id: agent.workspace_id, task_id: agent.task_id, run_id: agent.run_id,
+      agent_instance_id: agentInstanceId, kind, content, created_at: this.now(),
+    }).execute();
+  }
+
   async enforceDeadline(input: { agentInstanceId: string }): Promise<void> {
     await this.deps.db.transaction().execute(async (trx) => {
       const state = await this.lock(trx, input.agentInstanceId);

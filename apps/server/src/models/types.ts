@@ -20,6 +20,12 @@ export interface ToolResult {
 
 export interface AgentResponse {
   text?: string;
+  /**
+   * The provider's thought summary, for agent history only. Never part of
+   * `text`, never parsed as an answer, and never replayed from this field —
+   * `providerState` carries the original parts.
+   */
+  thoughts?: string;
   toolCalls: ToolCall[];
   usage: ModelUsage;
   /** Opaque, server-only protocol state. Store and replay without editing. */

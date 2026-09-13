@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Bot, History as HistoryIcon, PenLine } from "lucide-react";
 import type { HistoryEntry } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
 import { toneFor } from "../board";
+import { cn } from "../lib/utils";
+import { AgentHistory } from "../components/AgentHistory";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeading } from "../components/PageHeading";
 import { Badge, Dot } from "../components/ui/badge";
@@ -12,7 +14,8 @@ import { Button, ButtonLink } from "../components/ui/button";
 import { ErrorText, Path, Skeleton } from "../components/ui/misc";
 
 /**
- * Applied changes and the tasks they came from (design §4.1).
+ * Applied changes and the tasks they came from (design §4.1), plus the work of
+ * every finished agent — its thought process and its own diff.
  *
  * Built on apply operations rather than reviews, which is what lets this screen
  * be honest about the awkward cases. §10.5 writes that row *before* the ref
@@ -27,6 +30,74 @@ import { ErrorText, Path, Skeleton } from "../components/ui/misc";
  * and the review still holds it.
  */
 export function History({ workspaceId }: { workspaceId: string }) {
+  const [params, setParams] = useSearchParams();
+  const view: View = params.get("view") === "agents" ? "agents" : "changes";
+  const select = (next: View) => {
+    const updated = new URLSearchParams(params);
+    if (next === "agents") updated.set("view", "agents");
+    else updated.delete("view");
+    updated.delete("agent");
+    setParams(updated);
+  };
+
+  return (
+    <>
+      <PageHeading
+        eyebrow="A record of progress"
+        title="History"
+        description={view === "agents"
+          ? "See how each finished agent reasoned and what it changed, newest first."
+          : "See what changed and how it went, newest first."}
+      />
+
+      <div role="tablist" aria-label="History" className="mb-5 flex gap-1 border-b border-border">
+        {VIEWS.map(({ id, label }, index) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`history-tab-${id}`}
+            aria-selected={view === id}
+            aria-controls={`history-panel-${id}`}
+            tabIndex={view === id ? 0 : -1}
+            onClick={() => select(id)}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+              event.preventDefault();
+              const next = VIEWS[(index + (event.key === "ArrowRight" ? 1 : VIEWS.length - 1)) % VIEWS.length]!.id;
+              select(next);
+              document.getElementById(`history-tab-${next}`)?.focus();
+            }}
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2.5 text-[13px] font-medium whitespace-nowrap transition-colors",
+              view === id
+                ? "border-navy-700 text-navy-800 dark:border-navy-300 dark:text-navy-200"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div role="tabpanel" id={`history-panel-${view}`} aria-labelledby={`history-tab-${view}`}>
+        {view === "agents" ? (
+          <AgentHistory workspaceId={workspaceId} focusAgentId={params.get("agent")} />
+        ) : (
+          <AppliedChanges workspaceId={workspaceId} />
+        )}
+      </div>
+    </>
+  );
+}
+
+type View = "changes" | "agents";
+const VIEWS: Array<{ id: View; label: string }> = [
+  { id: "changes", label: "Applied changes" },
+  { id: "agents", label: "Agent work" },
+];
+
+function AppliedChanges({ workspaceId }: { workspaceId: string }) {
   const { api } = useBrowser();
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -52,12 +123,6 @@ export function History({ workspaceId }: { workspaceId: string }) {
 
   return (
     <>
-      <PageHeading
-        eyebrow="A record of progress"
-        title="History"
-        description="See what changed and how it went, newest first."
-      />
-
       {failure && (
         <div role="alert" className="mb-5 flex flex-wrap items-center gap-3">
           <ErrorText>{failure}</ErrorText>

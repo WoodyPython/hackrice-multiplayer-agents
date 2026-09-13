@@ -2,6 +2,45 @@
 
 Newest first. One entry per landed ticket.
 
+## History — agent work: thought process and changes
+**Landed:** 2026-09-13 (not yet merged) · contracts, server, frontend, one migration
+**Affects:** everyone. **Action required:** run `npm run db:migrate` (adds `0013_agent_trace_steps.sql`).
+
+History now has two tabs: **Applied changes** (unchanged) and **Agent work**,
+which lists every agent that is done working (completed, failed, timed out,
+out of tokens, canceled or interrupted), newest first. Opening one shows its
+result summary and limitations, why it stopped if it did not complete, its
+recorded thought process, and the files it changed, using the same `DiffView`
+as the Changes tab. Finished agents on the Agents page link straight to their
+entry (`/history?view=agents&agent=<id>`).
+
+**What is recorded.** `AgentExecution.generate` appends one `model_turn` row per
+successful model call (Gemini's thought summary, visible text, tool calls), and
+the worker loop appends one `tool_results` row per batch of tool outcomes. This
+covers the orchestrator and workers. Strings are clipped: 20,000 characters for
+reasoning and text, 600 for tool arguments and results, so a trace never becomes
+a second copy of the files. Rows come from normalized response fields only.
+`providerState` and thought signatures never reach a trace. A failed trace write
+is reported to the background error log and never fails the agent. Agents that
+ran before this change have no recorded steps, and the UI says so.
+
+**Thought summaries are now requested** (`includeThoughts: true`). They arrive as
+separate `thought` parts, so they still never mix into `text`, and the replayed
+provider state is unchanged. The UI labels reasoning as generated and unchecked.
+
+**The diff is the agent's own work:** `base_sha` against its last accepted
+checkpoint (`result_sha`), limited to its write paths, via a new
+`ReviewGit.compare` that the review detail now shares. If the commits cannot be
+read, the response says `available: false` and the UI says the changes could
+not be read. It never shows that as "no changes".
+
+**Endpoints:** `GET /api/workspaces/:w/agent-history` (listing, capped at 200) and
+`GET /api/workspaces/:w/agent-history/:agentInstanceId` (detail, reads Git, only
+requested when an entry is opened). Both are read-only and scoped to the
+workspace, and responses are parsed on the way out, so model IDs and full
+instructions stay server-side. A new `AGENT_NOT_FOUND` (404) error code covers
+unknown, unfinished, or foreign agents.
+
 ## Inbox — actionable items across the workspace
 **Landed:** 2026-09-13 (not yet merged) · contracts, server, frontend
 **Affects:** everyone. **Action required:** none (no migration).

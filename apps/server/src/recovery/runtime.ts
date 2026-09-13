@@ -29,6 +29,8 @@ import { registerApprovedFileRoutes } from '../git/routes.js';
 import type { ExecutionDeps } from '../agents/execution.js';
 import { BriefingService } from '../briefings/service.js';
 import { registerBriefingRoutes } from '../briefings/routes.js';
+import { AgentHistoryService } from '../agent-history/service.js';
+import { registerAgentHistoryRoutes } from '../agent-history/routes.js';
 
 export interface LiveDocumentAttachment {
   close(): Promise<void>;
@@ -128,6 +130,7 @@ export async function startRuntime(options: RuntimeOptions) {
     });
     await registerFrontend(app, options.frontendRoot ?? fileURLToPath(new URL('../../../web/dist/', import.meta.url)), config.isProduction);
     await registerApprovedFileRoutes(app, { db: db.db, git });
+    await registerAgentHistoryRoutes(app, new AgentHistoryService({ db: db.db, git }));
     await registerCheckpointRoutes(app, collaboration);
     const database = db.db;
     collaboration.checkUnloaded = async (taskId, revisions) => {

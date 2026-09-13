@@ -288,6 +288,17 @@ export interface WorkspaceBriefingsTable {
   created_at: Timestamp;
 }
 
+export interface AgentTraceStepsTable {
+  id: Generated<number>;
+  workspace_id: string;
+  task_id: string;
+  run_id: string;
+  agent_instance_id: string;
+  kind: 'model_turn' | 'tool_results';
+  content: Record<string, unknown>;
+  created_at: Timestamp;
+}
+
 export interface SchemaMigrationsTable {
   filename: string;
   checksum: string;
@@ -364,6 +375,7 @@ export interface Database {
   reviews: ReviewsTable;
   apply_operations: ApplyOperationsTable;
   workspace_briefings: WorkspaceBriefingsTable;
+  agent_trace_steps: AgentTraceStepsTable;
   schema_migrations: SchemaMigrationsTable;
 }
 

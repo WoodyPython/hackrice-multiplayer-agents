@@ -1,5 +1,6 @@
-import { ModelAdapterError, type AgentRequest, type AgentResponse, type ModelAdapter } from '../models/types.js';
+import { ModelAdapterError, type AgentRequest, type AgentResponse, type ModelAdapter, type ToolResult } from '../models/types.js';
 import { AgentExecutionError, PgAgentLedger } from './ledger.js';
+import { modelTurnContent, toolResultsContent } from './trace.js';
 
 /**
  * Output ceiling a caller gets when it does not ask for one.
@@ -207,8 +208,23 @@ export class AgentExecution {
       await ledger.recordUsage({ agentInstanceId, requestKey, usage: response.usage });
       account('ok', `${response.usage.status} total=${response.usage.totalTokens ?? '?'} ` +
         `thinking=${response.usage.thinkingTokens ?? '?'} finish=${response.finishReason ?? 'none'}`);
+      await this.trace('model_turn', modelTurnContent(response));
       return response;
     });
+  }
+
+  /** Record the tool outcomes the model is about to see, for agent history. */
+  recordToolResults(results: ToolResult[]): Promise<void> {
+    return results.length ? this.trace('tool_results', toolResultsContent(results)) : Promise.resolve();
+  }
+
+  /**
+   * History is evidence, not execution state: a failed write is reported and
+   * never fails the agent, and nothing reads a trace back to decide anything.
+   */
+  private async trace(kind: 'model_turn' | 'tool_results', content: Record<string, unknown>): Promise<void> {
+    try { await this.deps.ledger.recordTraceStep(this.deps.agentInstanceId, kind, content); }
+    catch (error) { this.deps.onBackgroundError(error); }
   }
 
   close(): void {

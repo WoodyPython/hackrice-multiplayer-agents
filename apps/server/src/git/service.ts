@@ -360,6 +360,18 @@ export class LocalGitService implements Pick<GitService,
     });
   }
 
+  /** Read-only diffs between two existing commits, limited to `paths` (agent history). */
+  async compareCommits(input: { workspaceId: string; beforeSha: string; afterSha: string; paths: string[] }) {
+    const value = parse(z.object({ workspaceId: uuidSchema, beforeSha: shaSchema, afterSha: shaSchema,
+      paths: z.array(z.string()) }), input);
+    const paths = [...pathSet(value.paths)];
+    portablePaths(paths);
+    return this.files(value.workspaceId, async (files, repo) => {
+      await files.commit(value.beforeSha); await files.commit(value.afterSha);
+      return new ReviewGit(repo.repositoryPath, files, this.git).compare(value.beforeSha, value.afterSha, paths);
+    });
+  }
+
   async readReviewArtifact(input: { workspaceId: string; reviewId: string; candidateSha: string }) {
     const value = parse(reviewIdentity, input);
     return this.files(value.workspaceId, (files, repo) =>

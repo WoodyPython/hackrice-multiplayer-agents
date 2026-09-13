@@ -68,6 +68,7 @@ describe('migrations', () => {
       '0010_confirmation_file_ownership.sql',
       '0011_workspace_briefings.sql',
       '0012_accounts_and_memberships.sql',
+      '0013_agent_trace_steps.sql',
     ]);
   });
 
@@ -78,7 +79,7 @@ describe('migrations', () => {
     );
     const unprotected = rows.filter((r) => !r.rowsecurity).map((r) => r.tablename);
     expect(unprotected).toEqual([]);
-    expect(rows.length).toBe(24);
+    expect(rows.length).toBe(25);
   });
 
   it('pins the agent write guard search path', async () => {

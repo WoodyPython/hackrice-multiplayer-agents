@@ -1,5 +1,9 @@
 import {
   ApiError,
+  agentHistoryDetailSchema,
+  listAgentHistoryResponseSchema,
+  type AgentHistoryDetail,
+  type AgentHistoryEntry,
   listInboxResponseSchema,
   type InboxItem,
   BRIEFING_SESSION_HEADER,
@@ -481,6 +485,33 @@ export class WorkspaceApi {
     ).entries;
   }
 
+  /**
+   * Agents that are done working, newest first (History → Agent work). A
+   * listing only: the thought process and diff are read per agent on demand.
+   */
+  async listAgentHistory(
+    workspaceId: string,
+    signal?: AbortSignal,
+  ): Promise<AgentHistoryEntry[]> {
+    uuidSchema.parse(workspaceId);
+    return listAgentHistoryResponseSchema.parse(
+      await this.request(`/${workspaceId}/agent-history`, "GET", undefined, workspaceId, signal),
+    ).agents;
+  }
+
+  /** One finished agent's recorded thought process and its own file changes. */
+  async readAgentHistory(
+    workspaceId: string,
+    agentInstanceId: string,
+    signal?: AbortSignal,
+  ): Promise<AgentHistoryDetail> {
+    uuidSchema.parse(workspaceId);
+    uuidSchema.parse(agentInstanceId);
+    return agentHistoryDetailSchema.parse(
+      await this.request(`/${workspaceId}/agent-history/${agentInstanceId}`, "GET", undefined, workspaceId, signal),
+    );
+  }
+
   // --- briefings -----------------------------------------------------------
 
   /**
@@ -925,6 +956,8 @@ export function apiMessage(error: unknown): string {
         return "This workspace could not be found. Check the contribution link.";
       case "TASK_NOT_FOUND":
         return "This task could not be found. It may have been removed.";
+      case "AGENT_NOT_FOUND":
+        return "This agent's history could not be found. It may belong to a task that was removed.";
       case "MATERIAL_NOT_FOUND":
         return "That material is recorded but its content is unavailable.";
       case "VALIDATION_FAILED":
