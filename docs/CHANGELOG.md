@@ -2,6 +2,30 @@
 
 Newest first. One entry per landed ticket.
 
+## Download a shared draft or an approved file
+**Landed:** 2026-09-13 · frontend only
+**Affects:** everyone. **Action required:** none.
+
+A Download button on the shared editor's toolbar and on the approved-file
+screen, saving the text as a file.
+
+**No endpoint.** Both screens are already looking at the content -- the
+approved file was fetched to render it, and the draft is live in the shared
+document -- so a download route would fetch it a second time and re-authorize
+to do it. This builds a blob and clicks an anchor with `download`, which is the
+client-side equivalent of `Content-Disposition`.
+
+The draft saves **what is on screen**, taken from the Yjs text rather than the
+persisted snapshot: what somebody means by "download this" includes the words a
+collaborator typed a second ago. The filename is the path's last segment, so
+`documents/notes.md` saves as `notes.md`.
+
+Verified by hand against a live workspace, both screens: typed into a shared
+draft and downloaded it (`notes.md`, `text/plain;charset=utf-8`, exactly the
+typed text), and seeded a file on approved main and downloaded that
+(`brief.md`, its committed content). No unit tests, deliberately -- this was a
+time-boxed addition. `npm run build` and the web suite (176) are green.
+
 ## Workspaces you can come back to: home, switching, archive, delete, cleanup
 **Landed:** 2026-09-13 · contracts, server, frontend, one migration
 **Affects:** everyone. **Action required:** run `npm run db:migrate` (adds

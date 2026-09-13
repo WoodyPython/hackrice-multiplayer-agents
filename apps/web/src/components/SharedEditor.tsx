@@ -12,9 +12,10 @@ import {
   type DraftFile,
   type LiveRoomId,
 } from "@app/contracts";
-import { Eye } from "lucide-react";
+import { Download, Eye } from "lucide-react";
 import { LiveDocument } from "../live-document";
 import { bindGuestAwareness } from "../session";
+import { downloadText } from "../lib/download";
 import { useBrowser } from "../browser-context";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
@@ -254,6 +255,18 @@ function BoundEditor({
           />
           {labels[state]}
         </span>
+        {/*
+          The live text, straight out of the shared document. Not the persisted
+          snapshot: what a person means by "download this" is what they can see,
+          including the words someone typed a second ago.
+        */}
+        <Button
+          size="sm"
+          onClick={() => downloadText(draft.path, live.doc.getText(LIVE_TEXT_NAME).toString())}
+        >
+          <Download aria-hidden="true" />
+          Download
+        </Button>
         {language(draft.path) === "markdown" && (
           <Button
             size="sm"

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { FileText } from "lucide-react";
+import { Download, FileText } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import type { ApprovedFileContent } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
+import { downloadText } from "../lib/download";
 import { EmptyState } from "../components/EmptyState";
 import { BackLink, PageHeading } from "../components/PageHeading";
 import { Badge } from "../components/ui/badge";
@@ -54,6 +55,12 @@ export function ApprovedFile({ workspaceId }: { workspaceId: string }) {
           <header className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
             <Path>{file.path}</Path>
             <Badge size="sm" className="ml-auto font-mono">{file.mainSha.slice(0, 8)}</Badge>
+            {file.text !== null && (
+              <Button size="sm" onClick={() => downloadText(file.path, file.text!)}>
+                <Download aria-hidden="true" />
+                Download
+              </Button>
+            )}
           </header>
           <pre className="min-h-72 overflow-auto p-5 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap">
             {file.text ?? "This file is no longer present in the approved version."}
