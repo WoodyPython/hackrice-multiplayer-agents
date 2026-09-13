@@ -26,6 +26,7 @@ import { GoogleGenAI } from '@google/genai';
 loadDotenv({ path: resolve(process.cwd(), '../../.env'), quiet: true });
 loadDotenv({ quiet: true });
 
+const NL = String.fromCharCode(10);
 const key = process.env.GEMINI_API_KEY?.trim();
 const orchestrator = (process.env.ORCHESTRATOR_MODEL ?? 'gemini-2.5-pro').replace(/^models\//, '');
 const worker = (process.env.WORKER_MODEL ?? 'gemini-2.5-flash').replace(/^models\//, '');
@@ -100,6 +101,41 @@ async function probe(label: string, model: string, client: GoogleGenAI): Promise
   }
 }
 
+/**
+ * What this key can actually reach, and the limits it reports.
+ *
+ * Printed because `MODEL_PROFILES` in the adapter is a hardcoded allowlist: a
+ * model Google has retired cannot simply be renamed in `.env`, it has to be
+ * added there with real numbers. These are those numbers.
+ */
+async function listAvailable(client: GoogleGenAI): Promise<void> {
+  try {
+    const page = await client.models.list();
+    const rows: Array<{ model: string; input: number | undefined; output: number | undefined }> = [];
+    for await (const model of page) {
+      const name = (model.name ?? '').replace(/^models[/]/, '');
+      if (!name.startsWith('gemini')) continue;
+      const methods = model.supportedActions ?? [];
+      if (methods.length && !methods.includes('generateContent')) continue;
+      rows.push({ model: name, input: model.inputTokenLimit, output: model.outputTokenLimit });
+    }
+    if (rows.length === 0) {
+      console.log(NL + 'No generateContent-capable Gemini models were listed for this key.');
+      return;
+    }
+    console.log(NL + 'Models this key can reach (out= is the number MODEL_PROFILES needs):' + NL);
+    for (const row of rows.sort((a, b) => a.model < b.model ? -1 : 1)) {
+      console.log(`  ${row.model.padEnd(34)} in=${String(row.input ?? '?').padStart(9)}  out=${String(row.output ?? '?').padStart(7)}`);
+    }
+    console.log(NL + 'Pick one pro-tier and one flash-tier model, set ORCHESTRATOR_MODEL and');
+    console.log('WORKER_MODEL to them, and add both to MODEL_PROFILES in');
+    console.log('apps/server/src/models/gemini.ts with maxOutput set to the out= value.');
+  } catch (error) {
+    const { status, text } = detail(error);
+    console.error(NL + `Could not list models${status ? ` (${status})` : ''}: ${text}`);
+  }
+}
+
 async function main(): Promise<void> {
   if (!key) {
     console.error('FAIL  GEMINI_API_KEY is empty or absent in .env at the repository root.');
@@ -123,6 +159,9 @@ async function main(): Promise<void> {
     console.log('model-availability problem — read the server log for "gemini request failed".');
     return;
   }
+  // A failure above is almost always a retired model, and the only way to
+  // choose a replacement is to see what this key can actually use.
+  await listAvailable(client);
   process.exit(1);
 }
 

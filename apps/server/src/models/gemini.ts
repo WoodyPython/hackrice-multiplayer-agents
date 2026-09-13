@@ -80,7 +80,13 @@ export class GeminiAdapter implements ModelAdapter {
     };
     for (const model of Object.values(this.routing)) {
       if (!Object.hasOwn(MODEL_PROFILES, model)) {
-        throw new ModelAdapterError('configuration', 'Configured model needs a verified token/thinking profile.');
+        // Naming the model matters: Google retires model IDs, and the old
+        // message sent someone hunting through config for a value that was
+        // already correct. The missing thing is the profile, not the name.
+        throw new ModelAdapterError('configuration',
+          `Model "${model}" has no verified token/thinking profile. Run ` +
+          '`npm run gemini:smoke --workspace @app/server` to see which models this ' +
+          'key can reach and their limits, then add an entry to MODEL_PROFILES.');
       }
     }
   }
