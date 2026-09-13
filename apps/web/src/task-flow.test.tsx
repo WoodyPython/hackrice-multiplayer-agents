@@ -170,6 +170,8 @@ function server(overrides: Record<string, (call: Call) => Response> = {}) {
           return json({ drafts: [draft] });
         case `GET /tasks/${taskId}/saved-outputs`:
           return json({ outputs: [] });
+        case `GET /tasks/${taskId}/materials`:
+          return json({ materials: [material] });
         case "GET /history":
           return json({ entries: [] });
         case `GET /tasks/${taskId}/events`:
@@ -234,6 +236,18 @@ describe("the board", () => {
     expect(screen.queryByText(/Writer/)).toBeNull();
     expect(screen.queryByText(/first draft/)).toBeNull();
     expect(within(working).getByText("Agents are working")).toBeTruthy();
+  });
+
+  it("hides and restores a task without deleting it", async () => {
+    const user = userEvent.setup();
+    const { transport, calls } = server();
+    open(`/w/${workspaceId}`, transport);
+    await user.click(await screen.findByRole("button", { name: `Hide ${task.title}` }));
+    expect(screen.queryByRole("link", { name: new RegExp(task.title) })).toBeNull();
+    expect(calls.some((call) => call.method !== "GET")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Show hidden tasks" }));
+    await user.click(screen.getByRole("button", { name: `Show ${task.title}` }));
+    expect(screen.getByRole("link", { name: new RegExp(task.title) })).toBeTruthy();
   });
 });
 
@@ -478,7 +492,44 @@ describe("starting and revising", () => {
   });
 });
 
+describe("task details", () => {
+  it("adds a file directly to task context and keeps versions out of the UI", async () => {
+    const user = userEvent.setup();
+    const added = {
+      ...material,
+      id: "30000000-0000-4000-8000-000000000bb2",
+      filename: "notes.md",
+      sha256: "b".repeat(64),
+    };
+    const { transport, calls } = server({
+      "POST /materials": () => json({ material: added, created: true }, 201),
+    });
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    expect(await screen.findByRole("heading", { name: task.title })).toBeTruthy();
+    expect(screen.queryByText(/Version 2/)).toBeNull();
+    expect(screen.queryByLabelText("Acceptance criteria")).toBeNull();
+    await user.upload(screen.getByLabelText("Add file"), new File(["notes"], "notes.md", { type: "text/markdown" }));
+    await waitFor(() => expect(calls.some((call) => call.method === "POST" && call.url.endsWith("/materials"))).toBe(true));
+    const upload = calls.find((call) => call.method === "POST" && call.url.endsWith("/materials"))!;
+    expect(upload.body).toMatchObject({ taskId, file: "notes.md" });
+  });
+});
+
 describe("files", () => {
+  it("opens approved content on a dedicated file screen", async () => {
+    const user = userEvent.setup();
+    const path = "documents/guide.md";
+    const { transport } = server({
+      "GET /files": () => json({ mainSha: "a".repeat(40), files: [{ path, hash: "b".repeat(40) }] }),
+      "GET /files/content": () => json({ path, hash: "b".repeat(40), mainSha: "a".repeat(40), text: "A dedicated page" }),
+    });
+    open(`/w/${workspaceId}/files`, transport);
+    await user.click(await screen.findByRole("link", { name: path }));
+    expect((await screen.findByRole("heading", { level: 1 })).textContent).toContain(path);
+    expect(screen.getByText("A dedicated page")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "All files" })).toBeTruthy();
+  });
+
   it("rejects a binary before the request leaves the browser", async () => {
     const { transport, calls } = server();
     open(`/w/${workspaceId}/files`, transport);
@@ -842,6 +893,9 @@ describe("review", () => {
     await user.click(
       screen.getByRole("button", { name: "Apply these changes" }),
     );
+
+    expect(await screen.findByText("These changes were applied")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Apply these changes" })).toBeNull();
 
     await waitFor(() =>
       expect(calls.some((c) => c.url.endsWith("/apply"))).toBe(true),

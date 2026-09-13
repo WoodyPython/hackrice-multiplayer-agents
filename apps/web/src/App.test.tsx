@@ -87,10 +87,7 @@ describe("A01 workspace shell", () => {
       screen.getByLabelText("Desired outcome"),
       "Make onboarding welcoming.",
     );
-    await user.type(
-      screen.getByLabelText("Acceptance criteria"),
-      "Include setup\nInclude examples",
-    );
+    expect(screen.queryByLabelText("Acceptance criteria")).toBeNull();
     await user.click(screen.getByLabelText(/Launch brief.md/));
     await user.click(screen.getByLabelText(/README.md/));
     await user.click(screen.getByLabelText(/Landing copy.md/));
@@ -110,7 +107,7 @@ describe("A01 workspace shell", () => {
       "Write a contributor guide",
     );
     expect(screen.getByText("Posted", { exact: true })).toBeTruthy();
-    expect(screen.getByText("Include examples")).toBeTruthy();
+    expect(screen.queryByText(/Version 1/)).toBeNull();
     expect(screen.getByText("README.md")).toBeTruthy();
     expect(screen.getByText("documents/contributing.md")).toBeTruthy();
     expect(

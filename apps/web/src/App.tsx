@@ -20,6 +20,7 @@ import { TaskBoardPage } from "./pages/TaskBoardPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
 import { NewTask } from "./pages/NewTask";
 import { Files } from "./pages/Files";
+import { ApprovedFile } from "./pages/ApprovedFile";
 import { History } from "./pages/History";
 
 function LiveWorkspace({ id }: { id: string }) {
@@ -186,6 +187,7 @@ function LiveWorkspace({ id }: { id: string }) {
             />
           }
         />
+        <Route path="files/view" element={<ApprovedFile workspaceId={id} />} />
         <Route path="files" element={<Files workspaceId={id} />} />
         <Route path="history" element={<History workspaceId={id} />} />
         <Route

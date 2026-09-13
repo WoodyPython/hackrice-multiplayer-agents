@@ -64,9 +64,6 @@ export function Assignments({ attempts }: { attempts: TaskAttempt[] }) {
               />
               {humanizeStatus(attempt.status)}
             </Badge>
-            <small className="ml-auto text-[11px] text-muted-foreground">
-              Against task version {attempt.taskVersion}
-            </small>
           </header>
 
           <div className="p-4">

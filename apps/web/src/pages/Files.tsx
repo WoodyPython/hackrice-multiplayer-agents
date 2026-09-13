@@ -8,7 +8,6 @@ import {
   PencilRuler,
   Upload,
   Users,
-  X,
 } from "lucide-react";
 import {
   MAX_TEXT_FILE_BYTES,
@@ -16,7 +15,6 @@ import {
   type DraftFile,
   type Material,
   type ApprovedFile,
-  type ApprovedFileContent,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
@@ -76,7 +74,6 @@ export function Files({ workspaceId }: { workspaceId: string }) {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [drafts, setDrafts] = useState<DraftFile[]>([]);
   const [approved, setApproved] = useState<ApprovedFile[]>([]);
-  const [preview, setPreview] = useState<ApprovedFileContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -143,18 +140,6 @@ export function Files({ workspaceId }: { workspaceId: string }) {
   }
 
   const live = materials.filter((material) => material.deletedAt === null);
-
-  async function viewFile(target: string) {
-    setBusy(true);
-    setOpenError(null);
-    try {
-      setPreview(await api.readApprovedFile(workspaceId, target));
-    } catch (error) {
-      setOpenError(apiMessage(error));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   const listSkeleton = (
     <div aria-hidden="true" className="space-y-2">
@@ -319,14 +304,12 @@ export function Files({ workspaceId }: { workspaceId: string }) {
             <ul className="grid gap-2">
               {approved.map((file) => (
                 <FileRow key={file.path}>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void viewFile(file.path)}
+                  <Link
+                    to={`/w/${workspaceId}/files/view?path=${encodeURIComponent(file.path)}`}
                     className="min-w-0 truncate font-mono text-[11.5px] font-medium underline-offset-2 hover:underline disabled:opacity-50"
                   >
                     {file.path}
-                  </button>
+                  </Link>
                   <Button
                     size="sm"
                     variant="ghost"
@@ -341,34 +324,6 @@ export function Files({ workspaceId }: { workspaceId: string }) {
             </ul>
           )}
 
-          {preview && (
-            <section
-              aria-label="Approved file preview"
-              className="space-y-2 rounded-lg border border-border bg-muted/30 p-3.5"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-[13px] font-semibold">
-                  <Path>{preview.path}</Path>
-                </h3>
-                <Badge size="sm" className="font-mono">
-                  {preview.mainSha.slice(0, 8)}
-                </Badge>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  className="ml-auto"
-                  onClick={() => setPreview(null)}
-                >
-                  <X aria-hidden="true" />
-                  <span className="sr-only">Close preview</span>
-                </Button>
-              </div>
-              <pre className="max-h-80 overflow-auto rounded-lg bg-card p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
-                {preview.text ??
-                  "This file is no longer on the approved version. Refresh the list."}
-              </pre>
-            </section>
-          )}
         </Panel>
       </div>
     </>

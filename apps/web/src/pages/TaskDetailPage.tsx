@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { CircleAlert, FileText, Play, RotateCcw, Square } from "lucide-react";
+import { CircleAlert, FileText, Paperclip, Play, RotateCcw, Square, Upload } from "lucide-react";
 import {
   ApiError,
+  MAX_TEXT_FILE_BYTES,
+  SUPPORTED_TEXT_EXTENSIONS,
   isStartableTaskStatus,
   uuidSchema,
   type DraftFile,
@@ -84,6 +86,7 @@ function TaskDetailState({
   const { api, session } = useBrowser();
   const [task, setTask] = useState<Task | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
+  const [taskMaterials, setTaskMaterials] = useState<Material[]>([]);
   const [drafts, setDrafts] = useState<DraftFile[]>([]);
   const [approved, setApproved] = useState<
     import("@app/contracts").ApprovedFile[]
@@ -96,6 +99,8 @@ function TaskDetailState({
   const [pollError, setPollError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const [attempts, setAttempts] = useState<TaskAttempt[]>([]);
   const [events, setEvents] = useState<TaskEvent[]>([]);
@@ -105,7 +110,9 @@ function TaskDetailState({
   const retryId = useRef(crypto.randomUUID());
   const eventCache = useRef<TaskEvent[]>([]);
   const actionLock = useRef(false);
+  const readEpoch = useRef(0);
   const knownOutputs = useRef(new Set<string>());
+  const fileInput = useRef<HTMLInputElement>(null);
   // Read inside the polling loop, which must not restart every time the task
   // status changes — a restarting interval is how a poll ends up firing twice.
   const live = useRef(false);
@@ -143,10 +150,12 @@ function TaskDetailState({
     const controller = new AbortController();
     let stopped = false;
     const pull = async () => {
+      const epoch = readEpoch.current;
       try {
-        const [detail, mats, drafted, runs, log, saved] = await Promise.all([
+        const [detail, mats, attached, drafted, runs, log, saved] = await Promise.all([
           api.readTask(workspaceId, taskId, controller.signal),
           api.listMaterials(workspaceId, controller.signal),
+          api.listTaskMaterials(workspaceId, taskId, controller.signal),
           api.listWorkspaceDrafts(workspaceId, controller.signal),
           api.listTaskAgents(workspaceId, taskId, controller.signal),
           readEventPages(
@@ -158,9 +167,10 @@ function TaskDetailState({
           ),
           api.listSavedOutputs(workspaceId, taskId, controller.signal),
         ]);
-        if (controller.signal.aborted || stopped) return;
+        if (controller.signal.aborted || stopped || epoch !== readEpoch.current) return;
         setTask(detail);
         setMaterials(mats);
+        setTaskMaterials(attached);
         setDrafts(drafted);
         setAttempts(runs);
         eventCache.current = log;
@@ -243,6 +253,9 @@ function TaskDetailState({
   async function act(run: () => Promise<unknown>) {
     if (actionLock.current) return;
     actionLock.current = true;
+    // Ignore reads that started before this mutation. Their payload is valid
+    // for an older server state and must not overwrite the mutation response.
+    readEpoch.current += 1;
     setBusy(true);
     setActionError(null);
     try {
@@ -264,12 +277,39 @@ function TaskDetailState({
   async function save(fields: TaskFields) {
     if (!editing || !taskId) return;
     await act(async () => {
-      await api.updateTask(workspaceId, taskId, {
+      const updated = await api.updateTask(workspaceId, taskId, {
         expectedVersion: editing.version,
         ...fields,
       });
+      setTask(updated);
       setEditing(null);
     });
+  }
+
+  async function attachFile(file: File) {
+    if (!taskId || uploading) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const { material } = await api.uploadMaterial(
+        workspaceId,
+        file,
+        session.getGuest().name,
+        { taskId },
+      );
+      setMaterials((current) =>
+        current.some((item) => item.id === material.id) ? current : [...current, material],
+      );
+      setTaskMaterials((current) =>
+        current.some((item) => item.id === material.id) ? current : [...current, material],
+      );
+      reload();
+    } catch (error) {
+      setUploadError(apiMessage(error));
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
   }
 
   const startable =
@@ -289,10 +329,11 @@ function TaskDetailState({
             disabled={busy}
             onClick={() =>
               void act(async () => {
-                await api.startTask(workspaceId, task.id, {
+                const started = await api.startTask(workspaceId, task.id, {
                   expectedVersion: task.version,
                   clientRequestId: startId.current,
                 });
+                setTask((current) => current && ({ ...current, status: started.taskStatus, activeRunId: started.runId }));
                 // Rotate only on success. A failed Start keeps its key so a
                 // retry REPLAYS that intent; a Start after a cancel is a new
                 // intent and must not replay the canceled run, which is what
@@ -309,9 +350,7 @@ function TaskDetailState({
           <Button
             disabled={busy}
             onClick={() =>
-              void act(() =>
-                api.cancelTask(workspaceId, task.id, crypto.randomUUID()),
-              )
+              void act(async () => setTask(await api.cancelTask(workspaceId, task.id, crypto.randomUUID())))
             }
           >
             <Square aria-hidden="true" />
@@ -324,7 +363,7 @@ function TaskDetailState({
             disabled={busy}
             onClick={() =>
               void act(async () => {
-                await api.retryTask(workspaceId, task.id, {
+                const started = await api.retryTask(workspaceId, task.id, {
                   expectedVersion: task.version,
                   clientRequestId: retryId.current,
                   savedOutputs: savedOutputs
@@ -338,6 +377,7 @@ function TaskDetailState({
                       path: output.path,
                     })),
                 });
+                setTask((current) => current && ({ ...current, status: started.taskStatus, activeRunId: started.runId }));
                 retryId.current = crypto.randomUUID();
               })
             }
@@ -443,6 +483,7 @@ function TaskDetailState({
                 .find((event) => event.type === "review.stale")?.id
             }
             onApplied={() => {
+              setTask((current) => current && ({ ...current, status: "completed", activeRunId: null }));
               reload();
               thread.refresh();
             }}
@@ -503,7 +544,7 @@ function TaskDetailState({
             eyebrow: "Revise the brief",
             title: "Change what this task is asking for.",
             blurb:
-              "Saving raises the task version. Any result from an older version has to be reviewed against these requirements before it can be applied.",
+              "Saving updates the brief. Existing work is checked against the new request before it can be applied.",
           }}
           onSubmit={(fields) => void save(fields)}
           onCancel={() => {
@@ -546,6 +587,46 @@ function TaskDetailState({
         </>
       }
       action={action}
+      taskFiles={
+        <section className="mt-6 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-[11px] font-semibold tracking-[0.1em] text-muted-foreground uppercase">
+              Task files
+            </h3>
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11.5px] font-medium hover:bg-muted">
+              <Upload aria-hidden="true" className="size-3" />
+              {uploading ? "Adding…" : "Add file"}
+              <input
+                ref={fileInput}
+                type="file"
+                className="sr-only"
+                accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
+                disabled={uploading || busy}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void attachFile(file);
+                }}
+              />
+            </label>
+          </div>
+          {taskMaterials.length > 0 ? (
+            <ul className="space-y-1.5">
+              {taskMaterials.map((material) => (
+                <li key={material.id} className="flex items-center gap-2 rounded-lg bg-muted/60 px-2.5 py-1.5 text-[12px]">
+                  <Paperclip aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{material.filename}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[12px] text-muted-foreground">Add text, Markdown, or code for this task to use.</p>
+          )}
+          <small className="block text-[10.5px] text-muted-foreground">
+            Up to {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB. Added files become task context.
+          </small>
+          {uploadError && <ErrorText role="alert">{uploadError}</ErrorText>}
+        </section>
+      }
       renderTab={renderTab}
       initialTab={
         // Only a tab name we actually have; a hand-edited query must not

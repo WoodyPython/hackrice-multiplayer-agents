@@ -255,14 +255,16 @@ export class WorkspaceApi {
     workspaceId: string,
     taskId: string,
     clientRequestId: string,
-  ): Promise<void> {
+  ): Promise<TaskDetail> {
     uuidSchema.parse(workspaceId);
     uuidSchema.parse(taskId);
-    await this.request(
-      `/${workspaceId}/tasks/${taskId}/cancel`,
-      "POST",
-      { clientRequestId },
-      workspaceId,
+    return taskDetailSchema.parse(
+      await this.request(
+        `/${workspaceId}/tasks/${taskId}/cancel`,
+        "POST",
+        { clientRequestId },
+        workspaceId,
+      ),
     );
   }
 
