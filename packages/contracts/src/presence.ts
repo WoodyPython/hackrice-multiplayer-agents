@@ -28,6 +28,8 @@ export const participantSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   /** Server clock, so one browser's wrong clock cannot claim to be earliest. */
   since: z.number().int().nonnegative(),
+  /** Ephemeral task-local typing state. Omitted when this browser is idle. */
+  typingTaskId: uuidSchema.optional(),
 });
 export type Participant = z.infer<typeof participantSchema>;
 

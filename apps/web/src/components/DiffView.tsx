@@ -149,7 +149,6 @@ export function parseDiff(diff: string): Row[] | null {
     // `+++`, which repeat the path and hashes the caller already displays.
     if (!started) continue;
     if (line.startsWith("\\")) {
-      rows.push({ kind: "marker", text: line.slice(1).trim() });
       continue;
     }
     const body = line.slice(1);

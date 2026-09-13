@@ -238,16 +238,11 @@ describe("the board", () => {
     expect(within(working).getByText("Agents are working")).toBeTruthy();
   });
 
-  it("hides and restores a task without deleting it", async () => {
-    const user = userEvent.setup();
-    const { transport, calls } = server();
+  it("keeps every task visible and offers no local hide control", async () => {
+    const { transport } = server();
     open(`/w/${workspaceId}`, transport);
-    await user.click(await screen.findByRole("button", { name: `Hide ${task.title}` }));
-    expect(screen.queryByRole("link", { name: new RegExp(task.title) })).toBeNull();
-    expect(calls.some((call) => call.method !== "GET")).toBe(false);
-    await user.click(screen.getByRole("button", { name: "Show hidden tasks" }));
-    await user.click(screen.getByRole("button", { name: `Show ${task.title}` }));
-    expect(screen.getByRole("link", { name: new RegExp(task.title) })).toBeTruthy();
+    expect(await screen.findByRole("link", { name: new RegExp(task.title) })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: `Hide ${task.title}` })).toBeNull();
   });
 });
 
@@ -953,7 +948,7 @@ describe("review is announced, not buried in a tab", () => {
     ).toBeTruthy();
   });
 
-  it("prepares the review and lands the reader on it in one click", async () => {
+  it("prepares changes automatically and lands the reader on them in one click", async () => {
     const { user, calls } = await openTask({
       [`POST /tasks/${taskId}/review`]: () => json(reviewDetail()),
       [`GET /reviews/${reviewId}`]: () => json(reviewDetail()),
@@ -961,8 +956,7 @@ describe("review is announced, not buried in a tab", () => {
     await user.click(
       await screen.findByRole("button", { name: /Review the changes/ }),
     );
-    // §4.6 keeps preparation explicit; this makes asking one obvious click
-    // rather than removing the ask.
+    // The mounted Changes panel prepares the shared candidate automatically.
     expect(
       calls.some(
         (call) =>
@@ -989,20 +983,10 @@ describe("review is announced, not buried in a tab", () => {
 });
 
 describe("review", () => {
-  it("offers to prepare one rather than claiming there are no changes", async () => {
-    const { user, calls } = await openChanges({});
-    expect(
-      await screen.findByText("No review has been requested yet"),
-    ).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: "Prepare review" }));
-    // Nothing prepares a review automatically, so the absence of one is not
-    // evidence that the work produced no changes.
-    await waitFor(() =>
-      expect(
-        calls.some((c) => c.method === "POST" && c.url.endsWith("/review")),
-      ).toBe(true),
-    );
+  it("shows an automatic empty state before the task is reviewable", async () => {
+    const { calls } = await openChanges({});
+    expect(await screen.findByText("Changes will appear here")).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/review"))).toBe(false);
   });
 
   it("shows the diff and lets an owner apply the candidate it is looking at", async () => {
@@ -1689,12 +1673,13 @@ describe("finishing and rerunning tasks", () => {
 });
 
 
-it("offers a new review for rerun results while preserving the applied review", async () => {
-  const { user, calls } = await openChanges({
+it("prepares rerun results automatically while preserving the applied review", async () => {
+  const { calls } = await openChanges({
     [`GET /tasks/${taskId}`]: () => json({ ...task, status: "ready_for_review" }),
     [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow({ status: "applied" })] }),
     [`POST /tasks/${taskId}/review`]: () => json(reviewDetail()),
   });
-  await user.click(await screen.findByRole("button", { name: "Prepare new review" }));
-  expect(calls.some((call) => call.method === "POST" && call.url.endsWith("/review"))).toBe(true);
+  await waitFor(() =>
+    expect(calls.some((call) => call.method === "POST" && call.url.endsWith("/review"))).toBe(true),
+  );
 });

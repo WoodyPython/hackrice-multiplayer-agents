@@ -1,13 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import {
-  ChevronDown,
   Clock3,
   FileText,
   LayoutGrid,
   Menu,
   Settings,
-  Sparkles,
   X,
 } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -89,13 +87,9 @@ function NavList({
 function WorkspaceCard({
   name,
   subtitle,
-  settingsTo,
-  onNavigate,
 }: {
   name: string;
   subtitle: string;
-  settingsTo?: string;
-  onNavigate?: () => void;
 }) {
   const card = (
     <span className="flex min-w-0 items-center gap-2.5">
@@ -114,33 +108,8 @@ function WorkspaceCard({
     </span>
   );
 
-  if (!settingsTo)
-    return (
-      <div className="rounded-xl border border-border bg-muted/40 p-2.5">
-        {card}
-      </div>
-    );
-
   return (
-    <details className="group rounded-xl border border-border bg-muted/40 [&_summary::-webkit-details-marker]:hidden">
-      <summary className="flex cursor-pointer list-none items-center gap-2 p-2.5">
-        {card}
-        <ChevronDown
-          aria-hidden="true"
-          className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
-        />
-      </summary>
-      <div className="border-t border-border p-1">
-        <Link
-          to={settingsTo}
-          onClick={onNavigate}
-          className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <Settings className="size-3.5" aria-hidden="true" />
-          Workspace settings
-        </Link>
-      </div>
-    </details>
+    <div className="rounded-xl border border-border bg-muted/40 p-2.5">{card}</div>
   );
 }
 
@@ -151,6 +120,7 @@ function SidebarBody({
   items,
   guestName,
   guestRole,
+  profileControl,
   onNavigate,
 }: {
   workspaceName: string;
@@ -159,6 +129,7 @@ function SidebarBody({
   items: NavItem[];
   guestName: string;
   guestRole: string;
+  profileControl?: ReactNode;
   onNavigate?: () => void;
 }) {
   return (
@@ -175,8 +146,6 @@ function SidebarBody({
       <WorkspaceCard
         name={workspaceName}
         subtitle={workspaceSubtitle}
-        settingsTo={settingsTo}
-        onNavigate={onNavigate}
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -186,17 +155,7 @@ function SidebarBody({
         <NavList items={items} onNavigate={onNavigate} />
       </div>
 
-      <div className="grid gap-3">
-        <div className="rounded-xl border border-navy-200/70 bg-navy-50/60 p-3.5 dark:border-navy-800 dark:bg-navy-950/40">
-          <Sparkles
-            aria-hidden="true"
-            className="size-4 text-navy-600 dark:text-navy-300"
-          />
-          <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
-            Plan together, let agents help, and review the result. You decide
-            when it is done.
-          </p>
-        </div>
+      <div className="grid gap-3 border-t border-border pt-3">
         <div className="flex items-center gap-2.5 px-1">
           <Avatar name={guestName} />
           <span className="min-w-0 flex-1 leading-tight">
@@ -207,8 +166,19 @@ function SidebarBody({
               {guestRole}
             </span>
           </span>
+          {profileControl}
+          {settingsTo && (
+            <Link
+              to={settingsTo}
+              onClick={onNavigate}
+              aria-label="Workspace settings"
+              title="Workspace settings"
+              className="grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Settings className="size-4" aria-hidden="true" />
+            </Link>
+          )}
         </div>
-
       </div>
     </div>
   );
@@ -229,6 +199,7 @@ export function AppShell({
   items,
   guestName,
   guestRole,
+  profileControl,
   breadcrumb,
   topbarEnd,
   strip,
@@ -240,6 +211,7 @@ export function AppShell({
   items: NavItem[];
   guestName: string;
   guestRole: string;
+  profileControl?: ReactNode;
   breadcrumb: ReactNode;
   topbarEnd?: ReactNode;
   strip?: ReactNode;
@@ -265,6 +237,7 @@ export function AppShell({
       items={items}
       guestName={guestName}
       guestRole={guestRole}
+      profileControl={profileControl}
       onNavigate={onNavigate}
     />
   );

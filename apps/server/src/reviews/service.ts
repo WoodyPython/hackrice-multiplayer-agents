@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  ApiError, contextManifestSchema, eventKeys, reviewDetailSchema, reviewSourceSchema, resolveCandidateRequestSchema,
+  ApiError, contextManifestSchema, currentReview, eventKeys, reviewDetailSchema, reviewSourceSchema, resolveCandidateRequestSchema,
   uuidSchema, type CollaborationService, type Review, type ReviewCandidateData, type ResolveCandidateRequest,
   type ReviewService, type ReviewDetail,
 } from '@app/contracts';
@@ -280,6 +280,11 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
     let workspaceId = input, taskId = task!;
     workspaceId = uuidSchema.parse(workspaceId).toLowerCase(); taskId = uuidSchema.parse(taskId).toLowerCase();
     return this.operations.run(taskId, async () => {
+      // Automatic clients can arrive together. Reuse the current candidate so
+      // opening the Changes tab in several browsers never creates duplicates.
+      const existing = currentReview(await this.store.listForTask(taskId));
+      if (existing && ["ready", "conflict"].includes(existing.status))
+        return this.read(workspaceId, existing.id);
       const initial = await this.inputs(workspaceId, taskId);
       const capture = await this.deps.collaboration.capture({ workspaceId, taskId });
       const current = await this.inputs(workspaceId, taskId);

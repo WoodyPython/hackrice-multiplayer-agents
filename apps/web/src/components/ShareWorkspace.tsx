@@ -12,7 +12,7 @@ import { Input, Label } from "./ui/field";
  * gesture it did not recognise — so a failure falls back to a selectable field
  * rather than leaving the reader with a button that silently does nothing.
  */
-export function ShareWorkspace({ id, compact = false }: { id: string; compact?: boolean }) {
+export function ShareWorkspace({ id }: { id: string }) {
   const [copied, setCopied] = useState(false);
   const [manual, setManual] = useState(false);
   const link = contributionLink(id);
@@ -23,7 +23,7 @@ export function ShareWorkspace({ id, compact = false }: { id: string; compact?: 
   }, [copied]);
   return (
     <div className="share-workspace relative shrink-0">
-      <Button className={compact ? "size-9 p-0" : "w-48"} title={copied ? "Link copied" : "Copy workspace link"} aria-label="Copy workspace link"
+      <Button className="whitespace-nowrap" title={copied ? "Link copied" : "Share workspace link"} aria-label="Share workspace link"
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(link);
@@ -40,7 +40,7 @@ export function ShareWorkspace({ id, compact = false }: { id: string; compact?: 
         ) : (
           <Link2 aria-hidden="true" />
         )}
-        <span role="status" className={compact ? "sr-only" : undefined}>{copied ? "Link copied" : "Copy workspace link"}</span>
+        <span role="status">{copied ? "Link copied" : "Share Workspace Link"}</span>
       </Button>
 
       {manual && (

@@ -323,13 +323,9 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
       expect(attachment.statusCode, attachment.body).toBe(409);
       expect(attachment.json().error.code).toBe('RUN_INTERRUPTED');
       expect(await db.db.selectFrom('material_links').select('id').where('task_id', '=', taskId).execute()).toEqual([]);
-      // Still refused, which is this test's subject -- but the reason changed
-      // with `admitReopenedTask`: a closed task is now re-admitted if it is
-      // writable, so `assertWritable` runs first and reports the unreconciled
-      // apply operation before the closed epoch is ever considered. That is the
-      // more specific of the two answers. If reopening was NOT meant to take
-      // priority here, this assertion is the place that says so.
-      await expect(runtime.collaboration.acquire({ workspaceId, taskId, draftFileId: peer.draft.id, epoch: peer.draft.epoch })).rejects.toMatchObject({ code: 'RUN_INTERRUPTED' });
+      // The published room stays permanently closed. The pending operation
+      // blocks new work, but it must not mask the identity of this old epoch.
+      await expect(runtime.collaboration.acquire({ workspaceId, taskId, draftFileId: peer.draft.id, epoch: peer.draft.epoch })).rejects.toMatchObject({ code: 'DOCUMENT_EPOCH_CLOSED' });
     } finally {
       await db.pool.query('drop trigger d07_fail_apply on task_events'); await db.pool.query('drop function d07_fail_apply()');
     }

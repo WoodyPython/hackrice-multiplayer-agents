@@ -12,7 +12,6 @@ import { GuestNameControl } from "./components/GuestNameControl";
 import { PresencePanel } from "./components/PresencePanel";
 import { usePresence } from "./presence";
 import { ShareWorkspace } from "./components/ShareWorkspace";
-import { Badge } from "./components/ui/badge";
 import { Button, ButtonLink } from "./components/ui/button";
 import { Notice, Skeleton } from "./components/ui/misc";
 import { CreateWorkspace } from "./pages/CreateWorkspace";
@@ -128,6 +127,7 @@ function LiveWorkspace({ id }: { id: string }) {
       items={items}
       guestName={session.getGuest().name}
       guestRole={visibleWorkspace.isOwner ? "Workspace owner" : "Contributor"}
+      profileControl={<GuestNameControl sidebar />}
       breadcrumb={<Breadcrumb trail={["Workspace", workspace.name]} />}
       topbarEnd={
         <div className="flex items-center gap-2.5">
@@ -135,14 +135,7 @@ function LiveWorkspace({ id }: { id: string }) {
             participants={participants}
             selfPresenceId={presenceId}
           />
-          <Badge
-            tone={visibleWorkspace.isOwner ? "brand" : "neutral"}
-            className="hidden sm:inline-flex"
-          >
-            {visibleWorkspace.isOwner ? "Owner" : "Contributor"}
-          </Badge>
-          <ShareWorkspace id={id} compact />
-          <GuestNameControl />
+          <ShareWorkspace id={id} />
         </div>
       }
     >
@@ -191,6 +184,8 @@ function LiveWorkspace({ id }: { id: string }) {
             <TaskDetailPage
               workspaceId={id}
               isOwner={visibleWorkspace.isOwner}
+              participants={participants}
+              presenceId={presenceId}
             />
           }
         />

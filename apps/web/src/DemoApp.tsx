@@ -157,6 +157,7 @@ function WorkspaceShell() {
       items={items}
       guestName={guest.name}
       guestRole="Guest contributor"
+      profileControl={<GuestNameControl sidebar />}
       breadcrumb={<Breadcrumb trail={["Workspace", workspace.name]} />}
       topbarEnd={
         <div className="flex items-center gap-2.5">
@@ -164,7 +165,6 @@ function WorkspaceShell() {
             <Dot tone="info" live />
             Sample workspace
           </Badge>
-          <GuestNameControl />
         </div>
       }
       strip={

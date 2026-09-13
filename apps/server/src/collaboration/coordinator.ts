@@ -70,6 +70,10 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
   private stopping = false;
   private closing?: Promise<void>;
   private readonly closedTasks = new Set<string>();
+  /** Exact room identities closed after publication, including when the
+   * database finalization later rolls back. Reopening a task must never make
+   * one of these old epochs writable again. */
+  private readonly closedRooms = new Set<string>();
   onAcceptedChange?: (taskId: string, revisionMark: string) => Promise<void>;
   assertWritable?: (taskId: string) => Promise<void>;
 
@@ -185,9 +189,13 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
     const parsed = liveRoomSchema.parse(input);
     const id = { ...parsed, workspaceId: parsed.workspaceId.toLowerCase(),
       taskId: parsed.taskId.toLowerCase(), draftFileId: parsed.draftFileId.toLowerCase() };
+    // Resolve the requested epoch before considering whether the task can be
+    // reopened. A finalized draft is permanently closed and should report that
+    // precise condition even when an unreconciled apply also blocks new work.
+    const draft = await this.deps.drafts.resolveRoom(id);
+    if (this.closedRooms.has(liveRoomPath(id))) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
     await this.gates.run(id.taskId, () => this.admitReopenedTask(id.workspaceId, id.taskId));
     await this.assertWritable?.(id.taskId);
-    const draft = await this.deps.drafts.resolveRoom(id);
     if (draft.epoch !== id.epoch) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
     if (this.stopping) throw new ApiError('DRAFT_NOT_SAVED');
     const key = liveRoomPath(id);
@@ -338,7 +346,11 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
 
   private closeInMemory(taskId: string): void {
     this.closedTasks.add(taskId);
-    for (const entry of this.entries.values()) if (entry.id.taskId === taskId) entry.room?.closeEpoch();
+    for (const entry of this.entries.values()) {
+      if (entry.id.taskId !== taskId) continue;
+      this.closedRooms.add(liveRoomPath(entry.id));
+      entry.room?.closeEpoch();
+    }
   }
 
   closeEpoch(input: { taskId: string }): Promise<void> {

@@ -3,8 +3,6 @@ import { TASK_STATUSES, type TaskSummary } from "@app/contracts";
 import { useState, type ReactNode } from "react";
 import {
   HelpCircle,
-  Eye,
-  EyeOff,
   Paperclip,
   Plus,
   Search,
@@ -19,11 +17,11 @@ import { Button, ButtonLink } from "../components/ui/button";
 import { Input, Select } from "../components/ui/field";
 import { Avatar } from "../components/ui/misc";
 
-function TaskCard({ task, base, hidden, onToggleHidden }: { task: TaskSummary; base: string; hidden: boolean; onToggleHidden: () => void }) {
+function TaskCard({ task, base }: { task: TaskSummary; base: string }) {
   const presentation = statusPresentation[task.status];
   return (
     <article className="group relative rounded-xl border border-border bg-card shadow-xs transition-all duration-150 hover:-translate-y-0.5 hover:border-navy-300 hover:shadow-md dark:hover:border-navy-600">
-      <Link to={`${base}/tasks/${task.id}`} className="block p-3.5 pr-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <Link to={`${base}/tasks/${task.id}`} className="block p-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <Badge tone={presentation.tone} size="sm">
         <Dot
           tone={presentation.tone}
@@ -61,16 +59,6 @@ function TaskCard({ task, base, hidden, onToggleHidden }: { task: TaskSummary; b
         )}
       </div>
       </Link>
-      <Button
-        size="icon-sm"
-        variant="ghost"
-        className="absolute top-2.5 right-2.5"
-        aria-label={hidden ? `Show ${task.title}` : `Hide ${task.title}`}
-        title={hidden ? "Show on board" : "Hide from board"}
-        onClick={onToggleHidden}
-      >
-        {hidden ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
-      </Button>
     </article>
   );
 }
@@ -79,24 +67,15 @@ export function TaskBoard({
   tasks,
   base,
   heading,
-  hiddenIds = [],
-  showHidden = false,
-  onToggleHidden,
-  onToggleShowHidden,
 }: {
   tasks: TaskSummary[];
   base: string;
   /** Replaces the default header, so a live workspace can show its own name. */
   heading?: ReactNode;
-  hiddenIds?: string[];
-  showHidden?: boolean;
-  onToggleHidden?: (taskId: string) => void;
-  onToggleShowHidden?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
-  const visibleTasks = showHidden ? tasks : tasks.filter((task) => !hiddenIds.includes(task.id));
-  const filtered = visibleTasks.filter(
+  const filtered = tasks.filter(
     (task) =>
       task.title.toLowerCase().includes(query.toLowerCase()) &&
       (status === "all" || task.status === status || (status === "ready_for_review" && task.status === "awaiting_confirmation")),
@@ -129,12 +108,6 @@ export function TaskBoard({
           </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {hiddenIds.length > 0 && (
-            <Button size="sm" variant="ghost" onClick={onToggleShowHidden}>
-              {showHidden ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-              {showHidden ? "Hide hidden tasks" : `Show hidden (${hiddenIds.length})`}
-            </Button>
-          )}
           <label className="sr-only" htmlFor="search">
             Search tasks
           </label>
@@ -192,20 +165,19 @@ export function TaskBoard({
         </EmptyState>
       ) : filtered.length === 0 ? (
         <EmptyState
-          title={visibleTasks.length === 0 ? "All tasks are hidden" : "No matching tasks"}
+          title="No matching tasks"
           icon={Search}
           action={
             <Button
               onClick={() => {
-                if (visibleTasks.length === 0) onToggleShowHidden?.();
-                else { setQuery(""); setStatus("all"); }
+                setQuery(""); setStatus("all");
               }}
             >
-              {visibleTasks.length === 0 ? "Show hidden tasks" : "Clear filters"}
+              Clear filters
             </Button>
           }
         >
-          {visibleTasks.length === 0 ? "Hidden tasks stay available in this browser." : "Try a different title or status."}
+          Try a different title or status.
         </EmptyState>
       ) : (
         <div className="-mx-4 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0">
@@ -238,8 +210,6 @@ export function TaskBoard({
                         key={task.id}
                         task={task}
                         base={base}
-                        hidden={hiddenIds.includes(task.id)}
-                        onToggleHidden={() => onToggleHidden?.(task.id)}
                       />
                     ))}
                     {column.tasks.length === 0 && (
@@ -260,10 +230,6 @@ export function TaskBoard({
         </div>
       )}
 
-      <p className="mt-6 text-[11.5px] text-muted-foreground">
-        Open a task to mark it complete or unmark it. Anyone in the workspace can
-        update completion, and you can run tasks again whenever you need to.
-      </p>
     </>
   );
 }

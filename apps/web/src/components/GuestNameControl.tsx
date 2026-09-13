@@ -6,7 +6,7 @@ import { Button } from "./ui/button";
 import { FieldError, Input, Label } from "./ui/field";
 import { Avatar } from "./ui/misc";
 
-export function GuestNameControl() {
+export function GuestNameControl({ sidebar = false }: { sidebar?: boolean }) {
   const { session } = useBrowser();
   const guest = useGuest();
   const [editing, setEditing] = useState(false);
@@ -57,10 +57,13 @@ export function GuestNameControl() {
         }}
         aria-label={`Edit display name: ${guest.name}`}
         aria-expanded={editing}
-        className="flex max-w-[220px] items-center gap-2 rounded-full border border-border bg-card py-1 pr-3 pl-1 text-[12px] font-medium transition-colors hover:bg-muted"
+        title="Edit display name"
+        className={sidebar
+          ? "grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          : "flex max-w-[220px] items-center gap-2 rounded-full border border-border bg-card py-1 pr-3 pl-1 text-[12px] font-medium transition-colors hover:bg-muted"}
       >
-        <Avatar name={guest.name} color={guest.color} size="sm" />
-        <span className="truncate">{guest.name}</span>
+        {!sidebar && <Avatar name={guest.name} color={guest.color} size="sm" />}
+        {!sidebar && <span className="truncate">{guest.name}</span>}
         <Pencil
           aria-hidden="true"
           className="size-3 shrink-0 text-muted-foreground"
@@ -70,7 +73,9 @@ export function GuestNameControl() {
       {editing && (
         <form
           onSubmit={save}
-          className="absolute top-full right-0 z-40 mt-2 w-[290px] max-w-[calc(100vw-2rem)] space-y-3 rounded-xl border border-border bg-card p-4 shadow-lg animate-[rise_0.2s_cubic-bezier(0.22,1,0.36,1)_both]"
+          className={sidebar
+            ? "absolute right-0 bottom-full z-40 mb-2 w-[250px] space-y-3 rounded-xl border border-border bg-card p-4 shadow-lg animate-[rise_0.2s_cubic-bezier(0.22,1,0.36,1)_both]"
+            : "absolute top-full right-0 z-40 mt-2 w-[290px] max-w-[calc(100vw-2rem)] space-y-3 rounded-xl border border-border bg-card p-4 shadow-lg animate-[rise_0.2s_cubic-bezier(0.22,1,0.36,1)_both]"}
         >
           <div className="space-y-1.5">
             <Label htmlFor="guest-name">Your display name</Label>

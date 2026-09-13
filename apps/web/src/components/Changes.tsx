@@ -10,6 +10,7 @@ import {
   type TaskDetail,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { refreshLoop } from "../realtime";
 import { apiMessage } from "../workspace-api";
 import { humanizeStatus, toneFor } from "../board";
 import { cn } from "../lib/utils";
@@ -25,10 +26,9 @@ import { ErrorText, Notice, Path, Skeleton } from "./ui/misc";
  *
  * The properties that matter here are all about not overstating what is known:
  *
- * **A review has to be asked for.** Nothing prepares one automatically — a task
- * reaches `ready_for_review` when its assignments integrate, and no review row
- * exists until someone requests it. So the absence of a review is reported as
- * "not requested yet", never as "no changes".
+ * Review candidates are prepared and refreshed automatically when the task is
+ * eligible. The component remains mounted behind its tab, so its last good
+ * snapshot stays visible while realtime hints reconcile newer server state.
  *
  * **Conflict sides are named.** §10.2: "'Current' must identify whether it
  * means the human draft or approved workspace; never label both simply
@@ -73,6 +73,17 @@ export function Changes({
   const appliedReview = useRef<string | null>(null);
   const readEpoch = useRef(0);
   const reload = useCallback(() => setNonce((value) => value + 1), []);
+  const canBuild = task.activeRunId === null && (
+    task.status === "ready_for_review" ||
+    (task.kind === "manual_edit" && task.status === "posted")
+  );
+
+  useEffect(() => refreshLoop(
+    task.workspaceId,
+    task.id,
+    async () => setNonce((value) => value + 1),
+    () => 5000,
+  ), [task.workspaceId, task.id]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -86,20 +97,30 @@ export function Changes({
           controller.signal,
         );
         if (controller.signal.aborted || epoch !== readEpoch.current) return;
-        const reconciled = appliedReview.current
+        let reconciled = appliedReview.current
           ? list.map((item) => item.id === appliedReview.current ? { ...item, status: "applied" as const } : item)
           : list;
+        let current = currentReview(reconciled);
+        const shouldBuild = canBuild && (
+          !current || current.status === "stale" ||
+          (current.status === "applied" && task.status === "ready_for_review")
+        );
+        let prepared: ReviewDetail | null = null;
+        if (shouldBuild) {
+          prepared = await api.prepareReview(task.workspaceId, task.id);
+          reconciled = [prepared.review, ...reconciled.filter((item) => item.id !== prepared!.review.id)];
+          current = prepared.review;
+        }
         setReviews(reconciled);
-        const current = currentReview(reconciled);
         // A building review has no candidate SHA, and reading its detail means
         // reading a Git artifact that does not exist yet.
-        const nextDetail = current && current.status !== "building"
+        const nextDetail = prepared ?? (current && current.status !== "building"
             ? await api.readReview(
                 task.workspaceId,
                 current.id,
                 controller.signal,
               )
-            : null;
+            : null);
         if (controller.signal.aborted || epoch !== readEpoch.current) return;
         setDetail(nextDetail);
         setFailure(null);
@@ -110,7 +131,7 @@ export function Changes({
       }
     })();
     return () => controller.abort();
-  }, [api, task.workspaceId, task.id, nonce, staleSignal, task.status, task.activeRunId]);
+  }, [api, task.workspaceId, task.id, nonce, staleSignal, task.status, task.activeRunId, canBuild]);
 
   async function act<T>(run: () => Promise<T>, commit?: (result: T) => void) {
     readEpoch.current += 1;
@@ -147,29 +168,10 @@ export function Changes({
       <>
         {failure && <ErrorText role="alert">{failure}</ErrorText>}
         <EmptyState
-          title="No review has been requested yet"
+          title="Changes will appear here"
           icon={GitCompare}
-          action={
-            <Button
-              variant="primary"
-              disabled={busy}
-              onClick={() =>
-                void act(
-                  () => api.prepareReview(task.workspaceId, task.id),
-                  (next) => {
-                    setReviews((current) => [next.review, ...(current ?? []).filter((item) => item.id !== next.review.id)]);
-                    setDetail(next);
-                  },
-                )
-              }
-            >
-              {busy ? "Preparing…" : "Prepare review"}
-            </Button>
-          }
         >
-          Preparing a review combines the approved files, the shared draft, and
-          any agent output into one candidate you can read before deciding.
-          Nothing is published by preparing it.
+          File changes update automatically as work progresses.
         </EmptyState>
       </>
     );
@@ -200,22 +202,7 @@ export function Changes({
             since this candidate was built. Applying it would publish something
             that no longer matches the workspace.
           </p>
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={busy}
-            onClick={() =>
-              void act(
-                () => api.prepareReview(task.workspaceId, task.id),
-                (next) => {
-                  setReviews((items) => [next.review, ...(items ?? []).filter((item) => item.id !== next.review.id)]);
-                  setDetail(next);
-                },
-              )
-            }
-          >
-            {busy ? "Refreshing…" : "Refresh review"}
-          </Button>
+          <p>The latest version is being rebuilt automatically.</p>
         </Notice>
       )}
 
@@ -226,14 +213,6 @@ export function Changes({
               ? "Your changes are saved. Anyone can choose Mark as Complete above."
               : "These changes are saved in your workspace. You can find them in History anytime."}
           </p>
-          {task.activeRunId === null && (task.status === "ready_for_review" || (task.kind === "manual_edit" && task.status === "posted")) && (
-            <Button disabled={busy} onClick={() => void act(() => api.prepareReview(task.workspaceId, task.id), (next) => {
-              setReviews((items) => [next.review, ...(items ?? []).filter((item) => item.id !== next.review.id)]);
-              setDetail(next);
-            })}>
-              Prepare new review
-            </Button>
-          )}
         </Notice>
       )}
 
@@ -284,11 +263,6 @@ export function Changes({
             )}
           </section>
 
-          {/* §13.2: generated code is never executed as part of review. */}
-          <p className="text-[11.5px] text-muted-foreground">
-            Generated content was not executed. Read it as text.
-          </p>
-
           {current.status === "ready" && (
             <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-muted/30 p-4">
               <Button
@@ -319,12 +293,7 @@ export function Changes({
                 <small className="text-[11.5px] text-muted-foreground">
                   Resolve the decisions above before applying.
                 </small>
-              ) : (
-                <small className="text-[11.5px] text-muted-foreground">
-                  This publishes the changes to the approved files for everyone
-                  in the workspace.
-                </small>
-              )}
+              ) : null}
             </div>
           )}
         </>

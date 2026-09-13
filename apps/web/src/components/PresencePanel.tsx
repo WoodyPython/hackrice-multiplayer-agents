@@ -75,7 +75,7 @@ export function PresencePanel({
   }, [open]);
 
   return (
-    <>
+    <div className="relative shrink-0">
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -99,16 +99,9 @@ export function PresencePanel({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50">
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={() => setOpen(false)}
-            className="absolute inset-0 bg-navy-950/40 backdrop-blur-[2px] animate-[fade_0.25s_ease-out_both]"
-          />
           <aside
             aria-label="Who is here"
-            className="absolute inset-y-0 right-0 flex w-[300px] max-w-[86vw] flex-col border-l border-border bg-card shadow-lg animate-[fade_0.25s_ease-out_both]"
+            className="absolute top-full right-0 z-50 mt-2 flex max-h-[min(420px,70vh)] w-[300px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-lg animate-[rise_0.2s_cubic-bezier(0.22,1,0.36,1)_both]"
           >
             <header className="flex items-start gap-3 border-b border-border p-4">
               <div className="min-w-0 flex-1">
@@ -164,8 +157,7 @@ export function PresencePanel({
               </p>
             </footer>
           </aside>
-        </div>
       )}
-    </>
+    </div>
   );
 }

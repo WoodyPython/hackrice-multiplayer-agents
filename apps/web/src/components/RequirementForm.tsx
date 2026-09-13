@@ -1,5 +1,10 @@
-import { useState, type FormEvent } from "react";
-import { postTaskRequestSchema } from "@app/contracts";
+import { useRef, useState, type FormEvent } from "react";
+import { Paperclip, Upload, X } from "lucide-react";
+import {
+  MAX_TEXT_FILE_BYTES,
+  SUPPORTED_TEXT_EXTENSIONS,
+  postTaskRequestSchema,
+} from "@app/contracts";
 import { inputIdentity, type TaskInputOption } from "../task-inputs";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
@@ -46,6 +51,7 @@ export function RequirementForm({
   error = null,
   submitLabel = "Post task",
   heading,
+  onUploadFile,
 }: {
   options: TaskInputOption[];
   optionsNote?: string;
@@ -57,11 +63,15 @@ export function RequirementForm({
   error?: string | null;
   submitLabel?: string;
   heading?: { eyebrow: string; title: string; blurb: string };
+  onUploadFile?: (file: File) => Promise<TaskInputOption>;
 }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<TaskInputOption["value"][]>(
     () => initial?.inputs ?? [],
   );
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const identity = inputIdentity;
   const choices = [
     ...options,
@@ -188,13 +198,49 @@ export function RequirementForm({
           <legend className="text-[13px] font-medium text-foreground/90">
             Selected inputs
           </legend>
+          <div className="flex justify-end">
+            {onUploadFile && (
+              <label className="inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-[12px] font-medium transition-colors hover:bg-muted">
+                <Upload aria-hidden="true" className="size-3.5" />
+                {uploading ? "Uploading…" : "Upload a file"}
+                <input
+                  ref={fileInput}
+                  type="file"
+                  className="sr-only"
+                  disabled={uploading || pending}
+                  accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    setUploading(true);
+                    setUploadError(null);
+                    void onUploadFile(file)
+                      .then((option) => {
+                        setSelected((current) =>
+                          current.some((value) => identity(value) === identity(option.value))
+                            ? current
+                            : [...current, option.value],
+                        );
+                      })
+                      .catch((error: unknown) =>
+                        setUploadError(error instanceof Error ? error.message : "The file could not be uploaded."),
+                      )
+                      .finally(() => {
+                        setUploading(false);
+                        if (fileInput.current) fileInput.current.value = "";
+                      });
+                  }}
+                />
+              </label>
+            )}
+          </div>
           <p className="text-[12px] text-muted-foreground">
             Give the task the context it needs.
           </p>
           {choices.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border px-3.5 py-4 text-[12.5px] text-muted-foreground">
-              Nothing to select yet. Upload a reference material, or open a file
-              with Edit together, and it will appear here.
+              Nothing selected yet. Upload a reference file here, or choose an
+              existing workspace file when one is available.
             </p>
           ) : (
             <div className="grid gap-1.5">
@@ -243,6 +289,18 @@ export function RequirementForm({
             <small className="block text-[11.5px] text-muted-foreground">
               {optionsNote}
             </small>
+          )}
+          {onUploadFile && (
+            <small className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Paperclip aria-hidden="true" className="size-3" />
+              Text, Markdown, and code up to {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB.
+            </small>
+          )}
+          {uploadError && (
+            <p role="alert" className="flex items-center gap-2 text-[11.5px] text-destructive">
+              <X aria-hidden="true" className="size-3.5" />
+              {uploadError}
+            </p>
           )}
         </fieldset>
 

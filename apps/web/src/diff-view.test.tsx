@@ -56,6 +56,11 @@ describe("unified diff parsing", () => {
     expect(parseDiff("Binary files a/logo.png and b/logo.png differ")).toBeNull();
     expect(parseDiff("")).toBeNull();
   });
+
+  it("omits Git's missing-newline marker from the review", () => {
+    const rows = parseDiff("@@ -1 +1 @@\n-old\n+new\n\\ No newline at end of file")!;
+    expect(rows.some((row) => row.text.includes("No newline at end of file"))).toBe(false);
+  });
 });
 
 describe("diff rendering", () => {

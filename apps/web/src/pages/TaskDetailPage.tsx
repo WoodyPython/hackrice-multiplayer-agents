@@ -13,6 +13,7 @@ import {
   type TaskDetail as Task,
   type SavedOutputOption,
   type TaskEvent,
+  type Participant,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { refreshLoop } from "../realtime";
@@ -54,6 +55,8 @@ const POLL_IDLE_MS = 5000;
 export function TaskDetailPage({
   workspaceId,
   isOwner,
+  participants,
+  presenceId,
 }: {
   workspaceId: string;
   /**
@@ -64,6 +67,8 @@ export function TaskDetailPage({
    * way -- hiding a control is never the enforcement (section 4.6).
    */
   isOwner: boolean;
+  participants: Participant[];
+  presenceId: string;
 }) {
   const { taskId } = useParams();
   return (
@@ -72,6 +77,8 @@ export function TaskDetailPage({
       workspaceId={workspaceId}
       taskId={taskId?.toLowerCase()}
       isOwner={isOwner}
+      participants={participants}
+      presenceId={presenceId}
     />
   );
 }
@@ -80,10 +87,14 @@ function TaskDetailState({
   workspaceId,
   taskId,
   isOwner,
+  participants,
+  presenceId,
 }: {
   workspaceId: string;
   taskId: string | undefined;
   isOwner: boolean;
+  participants: Participant[];
+  presenceId: string;
 }) {
   const [params, setParams] = useSearchParams();
   const { api, session } = useBrowser();
@@ -414,11 +425,6 @@ function TaskDetailState({
           </Button>
         )}
       </div>
-      {startable && (
-        <small className="text-[11px] leading-relaxed text-muted-foreground sm:text-right">
-          Each run starts with the current brief and conversation.
-        </small>
-      )}
       {actionError && (
         <small
           role="alert"
@@ -457,6 +463,8 @@ function TaskDetailState({
               materials={materials}
               onChanged={thread.refresh}
               busy={busy}
+              participants={participants}
+              presenceId={presenceId}
             />
           </>
         );

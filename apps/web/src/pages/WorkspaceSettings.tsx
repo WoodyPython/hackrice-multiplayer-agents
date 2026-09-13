@@ -127,9 +127,6 @@ export function WorkspaceSettings({
             rows={6}
             maxLength={20000}
           />
-          <small className="block text-[11.5px] text-muted-foreground">
-            Display names do not grant owner access.
-          </small>
         </div>
 
         {error && <ErrorText role="alert">{error}</ErrorText>}

@@ -27,24 +27,8 @@ export function TaskBoardPage({
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
-  const hiddenKey = `coflow.hidden-tasks.${workspace.id}`;
-  const [hiddenIds, setHiddenIds] = useState<string[]>(() => {
-    try {
-      const value = JSON.parse(localStorage.getItem(hiddenKey) ?? "[]");
-      return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-    } catch { return []; }
-  });
-  const [showHidden, setShowHidden] = useState(false);
   const reload = useCallback(() => setNonce((value) => value + 1), []);
   const base = `/w/${workspace.id}`;
-
-  function toggleHidden(taskId: string) {
-    setHiddenIds((current) => {
-      const next = current.includes(taskId) ? current.filter((id) => id !== taskId) : [...current, taskId];
-      try { localStorage.setItem(hiddenKey, JSON.stringify(next)); } catch { /* Remains hidden for this session. */ }
-      return next;
-    });
-  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -135,10 +119,6 @@ export function TaskBoardPage({
         tasks={tasks}
         base={base}
         heading={heading}
-        hiddenIds={hiddenIds}
-        showHidden={showHidden}
-        onToggleHidden={toggleHidden}
-        onToggleShowHidden={() => setShowHidden((value) => !value)}
       />
     </>
   );

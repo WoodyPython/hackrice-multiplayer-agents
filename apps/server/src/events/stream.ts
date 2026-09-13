@@ -81,6 +81,14 @@ export function registerRefreshStream(app: FastifyInstance, stream: RefreshStrea
     return reply.code(204).send();
   });
 
+  app.post('/api/workspaces/:workspaceId/presence/:presenceId/typing', async (request, reply) => {
+    const { workspaceId, presenceId } = parseOrThrow(
+      workspaceParams.extend({ presenceId: uuidSchema }), request.params);
+    const { taskId } = parseOrThrow(z.object({ taskId: uuidSchema.nullable() }).strict(), request.body);
+    if (presence.setTyping(workspaceId, presenceId, taskId)) broadcast(workspaceId);
+    return reply.code(204).send();
+  });
+
   app.get('/api/workspaces/:workspaceId/presence', async (request) => {
     const { workspaceId } = parseOrThrow(workspaceParams, request.params);
     return presenceRosterSchema.parse({ workspaceId, participants: presence.list(workspaceId) });

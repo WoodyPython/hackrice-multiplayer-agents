@@ -211,7 +211,7 @@ describe("A02 workspace interactions", () => {
     ).toHaveLength(1);
     expect(document.body.textContent).not.toContain(ownerKey);
     await user.click(
-      screen.getByRole("button", { name: "Copy workspace link" }),
+      screen.getByRole("button", { name: "Share workspace link" }),
     );
     expect(await navigator.clipboard.readText()).toBe(contributionLink(id));
   });

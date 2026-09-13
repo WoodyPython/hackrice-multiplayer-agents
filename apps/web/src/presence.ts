@@ -6,6 +6,27 @@ import {
 } from "@app/contracts";
 import { subscribePresence } from "./realtime";
 
+/** One call when a typing burst starts and one when it stops; no per-key traffic. */
+export function setPresenceTyping(
+  workspaceId: string,
+  presenceId: string,
+  taskId: string | null,
+): void {
+  try {
+    void fetch(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/presence/${encodeURIComponent(presenceId)}/typing`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ taskId }),
+        keepalive: taskId === null,
+      },
+    ).catch(() => {});
+  } catch {
+    /* Typing presence is best-effort and expires server-side. */
+  }
+}
+
 /**
  * Who else has this workspace open right now.
  *

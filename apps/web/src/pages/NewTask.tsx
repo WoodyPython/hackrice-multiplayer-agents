@@ -52,7 +52,7 @@ export function NewTask({ workspaceId }: { workspaceId: string }) {
       .catch(() => {
         if (!controller.signal.aborted)
           setInputError(
-            "Inputs could not be loaded. Reload to select existing files, or attach them after posting.",
+            "Existing inputs could not be loaded. You can still upload a new file here.",
           );
         // A picker that cannot load its options is not a reason to block
         // posting: title and outcome are the required fields, and inputs can be
@@ -93,6 +93,27 @@ export function NewTask({ workspaceId }: { workspaceId: string }) {
         guestLabel={session.getGuest().name}
         pending={pending}
         error={failure}
+        onUploadFile={async (file) => {
+          try {
+            const { material } = await api.uploadMaterial(
+              workspaceId,
+              file,
+              session.getGuest().name,
+            );
+            setMaterials((current) =>
+              current.some((item) => item.id === material.id)
+                ? current
+                : [...current, material],
+            );
+            return {
+              value: { materialId: material.id },
+              category: "Uploaded material",
+              label: material.filename,
+            };
+          } catch (error) {
+            throw new Error(apiMessage(error));
+          }
+        }}
         onSubmit={(fields) => void post(fields)}
         onCancel={() => navigate(`/w/${workspaceId}`)}
       />

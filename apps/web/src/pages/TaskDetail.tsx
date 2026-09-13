@@ -191,7 +191,7 @@ export function TaskDetail({
                 id={`tab-${name}`}
                 role="tab"
                 aria-selected={tab === name}
-                aria-controls="activity-panel"
+                aria-controls={`activity-panel-${name}`}
                 tabIndex={tab === name ? 0 : -1}
                 onClick={() => setTab(name)}
                 onKeyDown={(event) => {
@@ -231,15 +231,19 @@ export function TaskDetail({
               </button>
             ))}
           </div>
-          <div
-            role="tabpanel"
-            id="activity-panel"
-            aria-labelledby={`tab-${tab}`}
-            tabIndex={0}
-            className="p-5 outline-none sm:p-6"
-          >
-            {renderTab(tab)}
-          </div>
+          {tabs.map((name) => (
+            <div
+              key={name}
+              role="tabpanel"
+              id={`activity-panel-${name}`}
+              aria-labelledby={`tab-${name}`}
+              tabIndex={tab === name ? 0 : -1}
+              hidden={tab !== name}
+              className="p-5 outline-none sm:p-6"
+            >
+              {renderTab(name)}
+            </div>
+          ))}
         </section>
       </div>
     </>

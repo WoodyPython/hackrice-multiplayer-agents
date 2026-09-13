@@ -48,6 +48,19 @@ describe('workspace presence', () => {
     expect(registry.list('w').map((p) => p.presenceId)).toEqual([id(3), id(1), id(2)]);
   });
 
+  it('broadcasts typing by burst and expires it without persisting anything', () => {
+    let now = 1000;
+    const registry = new PresenceRegistry(() => now);
+    registry.announce('w', entry(1));
+    expect(registry.setTyping('w', id(1), id(90))).toBe(true);
+    expect(registry.list('w')[0]?.typingTaskId).toBe(id(90));
+    // Refreshing the same burst updates its clock without another broadcast.
+    now += 3_000;
+    expect(registry.setTyping('w', id(1), id(90))).toBe(false);
+    now += 5_001;
+    expect(registry.list('w')[0]?.typingTaskId).toBeUndefined();
+  });
+
   it('caps a room, because the presence ID is chosen by the browser', () => {
     const registry = new PresenceRegistry(() => 1000);
     for (let n = 0; n < PRESENCE_MAX_PARTICIPANTS; n++) {

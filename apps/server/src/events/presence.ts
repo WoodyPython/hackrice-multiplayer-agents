@@ -16,7 +16,10 @@ import {
  * One process owns it, matching the single-instance deployment in section 5.3.
  */
 export class PresenceRegistry {
-  private readonly rooms = new Map<string, Map<string, Participant & { lastSeen: number }>>();
+  private readonly rooms = new Map<string, Map<string, Participant & {
+    lastSeen: number;
+    typingSeen?: number;
+  }>>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -46,6 +49,21 @@ export class PresenceRegistry {
     return true;
   }
 
+  /** Updates typing once per typing burst; it is never persisted. */
+  setTyping(workspaceId: string, presenceId: string, taskId: string | null): boolean {
+    const entry = this.rooms.get(workspaceId)?.get(presenceId);
+    if (!entry) return false;
+    const changed = entry.typingTaskId !== (taskId ?? undefined);
+    if (taskId) {
+      entry.typingTaskId = taskId;
+      entry.typingSeen = this.now();
+    } else {
+      delete entry.typingTaskId;
+      delete entry.typingSeen;
+    }
+    return changed;
+  }
+
   list(workspaceId: string): Participant[] {
     const room = this.rooms.get(workspaceId);
     if (!room) return [];
@@ -53,7 +71,11 @@ export class PresenceRegistry {
     return [...room.values()]
       .filter((entry) => entry.lastSeen > cutoff)
       .sort((a, b) => a.since - b.since || a.presenceId.localeCompare(b.presenceId))
-      .map(({ lastSeen: _lastSeen, ...participant }) => participant);
+      .map(({ lastSeen: _lastSeen, typingSeen, ...participant }) => {
+        if (typingSeen !== undefined && typingSeen <= this.now() - 5_000)
+          delete participant.typingTaskId;
+        return participant;
+      });
   }
 
   /** Drops silent browsers; returns the workspaces whose roster changed. */
@@ -65,6 +87,13 @@ export class PresenceRegistry {
       for (const [presenceId, entry] of room) {
         if (entry.lastSeen <= cutoff) {
           room.delete(presenceId);
+          dropped = true;
+        }
+      }
+      for (const entry of room.values()) {
+        if (entry.typingSeen !== undefined && entry.typingSeen <= this.now() - 5_000) {
+          delete entry.typingTaskId;
+          delete entry.typingSeen;
           dropped = true;
         }
       }
