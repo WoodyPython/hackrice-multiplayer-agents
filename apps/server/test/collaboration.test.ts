@@ -20,8 +20,8 @@ import { MAX_LIVE_MESSAGE_BYTES } from '../src/collaboration/room.js';
 import { PgDraftStore } from '../src/drafts/store.js';
 import { LocalGitService } from '../src/git/service.js';
 import { startRuntime } from '../src/recovery/runtime.js';
-import { testConfig } from './app-helpers.js';
-import { connectTestDb, insertTask, insertWorkspace, testDatabaseUrl } from './helpers.js';
+import { testConfig, authenticateRuntime } from './app-helpers.js';
+import { connectTestDb, insertTask, insertWorkspace, sessionCookie, testDatabaseUrl } from './helpers.js';
 
 let db: ReturnType<typeof connectTestDb>;
 let store: PgDraftStore;
@@ -74,10 +74,17 @@ afterEach(async () => {
   if (root) { await rm(root, { recursive: true, force: true }); root = undefined; }
 });
 
+/** Presents the same session an ordinary request would; see capture.test.ts. */
+class AuthenticatedWebSocket extends WebSocket {
+  constructor(address: string, protocols?: string | string[]) {
+    super(address, protocols, { headers: sessionCookie() });
+  }
+}
+
 function client(room = id) {
   const doc = new Y.Doc();
   const provider = new WebsocketProvider(base, liveRoomPath(room).slice(1), doc, {
-    WebSocketPolyfill: WebSocket, connect: false, disableBc: true,
+    WebSocketPolyfill: AuthenticatedWebSocket, connect: false, disableBc: true,
   });
   const acks: Array<{ kind: number; revision: number }> = [];
   provider.messageHandlers[LIVE_MESSAGE_ACK] = (_encoder, decoder) => {
@@ -464,6 +471,7 @@ describe('D03 live documents', () => {
       config: testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl() }),
       createDatabase: () => runtimeDb, listen: { host: '127.0.0.1', port: 0 },
     });
+    await authenticateRuntime(runtime.app, db.db);
     try {
       const address = runtime.app.server.address() as { port: number };
       base = `ws://127.0.0.1:${address.port}`;

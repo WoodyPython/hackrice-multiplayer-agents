@@ -12,7 +12,7 @@ import { PgDraftStore } from '../src/drafts/store.js';
 import { PgReviewStore } from '../src/runs/review-store.js';
 import { hashOwnerKey } from '../src/workspaces/owner-key.js';
 import { connectTestDb, insertTask, insertWorkspace, insertRun, testDatabaseUrl } from './helpers.js';
-import { testConfig } from './app-helpers.js';
+import { testConfig, authenticateRuntime } from './app-helpers.js';
 import { appendEvent } from '../src/events/service.js';
 
 let db: ReturnType<typeof connectTestDb>, root: string, runtime: Awaited<ReturnType<typeof startRuntime>>;
@@ -26,6 +26,7 @@ beforeEach(async () => {
   await db.db.updateTable('workspaces').set({ owner_key_hash: hashOwnerKey(ownerKey) }).where('id', '=', workspaceId).execute();
   taskId = await insertTask(db.db, workspaceId, { kind: 'manual_edit', manual_source_path: path });
   runtime = await startRuntime({ config: testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl() }), listen: { host: '127.0.0.1', port: 0 } });
+  await authenticateRuntime(runtime.app, db.db);
   await runtime.git.checkpoint({ workspaceId, taskId, files: [{ path, text: 'approved by review\n' }, { path: 'code/example.ts', text: 'export const answer = 42;\n' }] });
 });
 afterEach(async () => {
@@ -68,6 +69,7 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     runtime = await startRuntime({ config: testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl(), bootId: randomUUID() }),
       listen: { host: '127.0.0.1', port: 0 }, attachLiveDocuments: async (server) => {
         expect(server.listening).toBe(false);
+    await authenticateRuntime(runtime.app, db.db);
         expect((await store.readOperation(review.review.id))!.status).toBe(outcome === 'candidate' ? 'applied' : outcome === 'expected' ? 'pending' : 'ambiguous');
         return { close: async () => {} };
       } });

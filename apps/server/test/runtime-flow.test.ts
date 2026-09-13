@@ -9,7 +9,7 @@ import { startRuntime } from '../src/recovery/runtime.js';
 import { buildApp } from '../src/http/app.js';
 import { RecordingBroadcaster } from '../src/events/broadcaster.js';
 import { connectTestDb, testDatabaseUrl } from './helpers.js';
-import { testConfig } from './app-helpers.js';
+import { fakeVerifier, testConfig } from './app-helpers.js';
 import { SweepModel } from './sweep-model.js';
 
 it('serves the app and carries live drafts and materials through parallel agents, review, apply, and restart', async () => {
@@ -22,14 +22,27 @@ it('serves the app and carries live drafts and materials through parallel agents
   const broadcaster = new RecordingBroadcaster();
   const config = testConfig({ gitDataRoot: join(root, 'git'), DATABASE_URL: testDatabaseUrl(), bootId: randomUUID() });
   const options = { config, frontendRoot, modelAdapter: adapter, listen: { host: '127.0.0.1', port: 0 },
-    applicationFactory: (deps: Parameters<typeof buildApp>[0]) => buildApp({ ...deps, broadcaster }) };
+    applicationFactory: (deps: Parameters<typeof buildApp>[0]) =>
+      buildApp({ ...deps, broadcaster, verifyIdentity: fakeVerifier() }) };
   let runtime = await startRuntime(options);
   const db = connectTestDb();
   const clients: LiveDocument[] = [];
   const address = () => `http://127.0.0.1:${(runtime.app.server.address() as { port: number }).port}`;
+  /** Set by signIn() below, then sent on every request and socket upgrade. */
+  let cookie = '';
+  async function signIn(): Promise<void> {
+    const res = await fetch(`${address()}/api/auth/session`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accessToken: 'sweep-owner@example.test' }),
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    cookie = (res.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    expect(cookie).toContain('coflow_session=');
+  }
   async function api(path: string, body?: unknown, key?: string, expected = 200) {
     const res = await fetch(`${address()}/api/workspaces${path}`, { method: body === undefined ? 'GET' : 'POST',
-      headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(key ? { 'x-owner-key': key } : {}) },
+      headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(key ? { 'x-owner-key': key } : {}), cookie },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const json = await res.json();
     expect(res.status, JSON.stringify(json)).toBe(expected);
@@ -37,15 +50,28 @@ it('serves the app and carries live drafts and materials through parallel agents
   }
   const peer = (workspaceId: string, taskId: string, draft: { id: string; epoch: number }) => {
     const client = new LiveDocument({ workspaceId, taskId, draftFileId: draft.id, epoch: draft.epoch },
-      (url) => new WebSocket(url) as unknown as globalThis.WebSocket, address());
+      (url) => new WebSocket(url, { headers: { cookie } }) as unknown as globalThis.WebSocket, address());
     clients.push(client); return client;
   };
   try {
+    await signIn();
     expect(await (await fetch(address())).text()).toContain('Workspace application');
     expect((await fetch(`${address()}/w/${randomUUID()}/tasks/${randomUUID()}`)).status).toBe(200);
     expect((await fetch(`${address()}/assets/editor.worker-abc.js`)).headers.get('content-type')).toContain('javascript');
     expect((await fetch(`${address()}/assets/missing.js`)).status).toBe(404);
     expect((await fetch(`${address()}/api/not-a-route`)).status).toBe(404);
+    await new Promise<void>((resolve, reject) => {
+      // No cookie: a live-document socket is a write surface, so holding the
+      // room URL is not permission to open it.
+      const rejected = new WebSocket(`${address().replace('http', 'ws')}/live/${randomUUID()}/${randomUUID()}/${randomUUID()}/1`);
+      rejected.on('unexpected-response', (_request, response) => {
+        expect(response.statusCode).toBe(401);
+        rejected.terminate();
+        resolve();
+      });
+      rejected.on('open', () => { rejected.terminate(); reject(new Error('unauthenticated upgrade was accepted')); });
+      rejected.on('error', () => resolve());
+    });
     const ws = await api('', { name: 'Complete runtime sweep' }, undefined, 201);
     const base = `/${ws.workspaceId}`;
     expect((await api(`${base}/files`)).files).toEqual([]);
@@ -59,7 +85,8 @@ it('serves the app and carries live drafts and materials through parallel agents
     await expect.poll(() => b.doc.getText('content').toString()).toBe('Captured shared source.\n');
     await expect.poll(() => [a.state, b.state]).toEqual(['saved', 'saved']);
     const form = new FormData(); form.append('guestLabel', 'Sweep'); form.append('file', new Blob(['Material input.']), 'brief.txt');
-    const uploaded = await fetch(`${address()}/api/workspaces${base}/materials`, { method: 'POST', body: form });
+    const uploaded = await fetch(`${address()}/api/workspaces${base}/materials`,
+      { method: 'POST', body: form, headers: { cookie } });
     expect(uploaded.status).toBe(201);
     const material = (await uploaded.json() as any).material;
     const task = await api(`${base}/tasks`, { title: 'Write both outputs', creatorGuestLabel: 'Sweep',

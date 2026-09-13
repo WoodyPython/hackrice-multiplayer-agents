@@ -13,8 +13,15 @@ import { LocalReviewService } from '../src/reviews/service.js';
 import { PgDraftStore } from '../src/drafts/store.js';
 import { PgReviewStore } from '../src/runs/review-store.js';
 import { runGit } from '../src/git/command.js';
-import { connectTestDb, insertTask, insertWorkspace, insertRun, testDatabaseUrl } from './helpers.js';
-import { testConfig } from './app-helpers.js';
+import { connectTestDb, insertTask, insertWorkspace, insertRun, sessionCookie, testDatabaseUrl } from './helpers.js';
+
+/** Presents the same session an ordinary request would; see capture.test.ts. */
+class AuthenticatedWebSocket extends WebSocket {
+  constructor(address: string, protocols?: string | string[]) {
+    super(address, protocols, { headers: sessionCookie() });
+  }
+}
+import { testConfig, authenticateRuntime } from './app-helpers.js';
 
 let db: ReturnType<typeof connectTestDb>, root: string;
 let runtime: Awaited<ReturnType<typeof startRuntime>>;
@@ -31,6 +38,7 @@ beforeEach(async () => {
   taskId = await insertTask(db.db, workspaceId, { kind: 'manual_edit', manual_source_path: path });
   runtime = await startRuntime({ config: testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl() }),
     listen: { host: '127.0.0.1', port: 0 } });
+  await authenticateRuntime(runtime.app, db.db);
   await runtime.git.checkpoint({ workspaceId, taskId, files: [{ path, text: 'human draft\n' }] });
 });
 afterEach(async () => {
@@ -81,7 +89,7 @@ describe('D06 review HTTP and persistence', { timeout: 60_000 }, () => {
     const room = { workspaceId, taskId, draftFileId: draft.id, epoch: draft.epoch };
     const connect = async () => {
       const doc = new Y.Doc();
-      const provider = new WebsocketProvider(base, liveRoomPath(room).slice(1), doc, { WebSocketPolyfill: WebSocket, disableBc: true });
+      const provider = new WebsocketProvider(base, liveRoomPath(room).slice(1), doc, { WebSocketPolyfill: AuthenticatedWebSocket, disableBc: true });
       const acks: number[] = [];
       provider.messageHandlers[LIVE_MESSAGE_ACK] = (_encoder, decoder) => {
         const kind = decoding.readVarUint(decoder), revision = decoding.readVarUint(decoder);

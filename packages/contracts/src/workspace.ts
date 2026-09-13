@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { accessLevelSchema } from './auth.js';
 import { timestampSchema, workspaceIdSchema } from './ids.js';
 import { workspaceStatusSchema } from './enums.js';
 
@@ -28,10 +29,22 @@ export const workspaceSchema = z.object({
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
   /**
-   * True only when this request carried a valid owner key. Advisory: it drives
-   * what the UI renders, never what the server permits.
+   * True only when the caller is an owner of this workspace. Advisory: it
+   * drives what the UI renders, never what the server permits.
    */
   isOwner: z.boolean(),
+  /**
+   * The caller's level in this workspace. `viewer` is a link holder with no
+   * membership -- signed in or not -- who may read and nothing else.
+   *
+   * Optional so a response from an older server still parses.
+   */
+  access: accessLevelSchema.optional(),
+  /**
+   * True while a pre-accounts workspace is still waiting to be claimed, so the
+   * UI can offer the claim flow rather than a dead end.
+   */
+  unclaimed: z.boolean().optional(),
 });
 export type Workspace = z.infer<typeof workspaceSchema>;
 
@@ -52,7 +65,13 @@ export const createWorkspaceResponseSchema = z.object({
   workspaceId: workspaceIdSchema,
   /** Contains no secret. Safe to paste anywhere. */
   contributionUrl: z.string().url(),
-  ownerKey: z.string(),
+  /**
+   * Null for a workspace created by an account, which is every new one.
+   *
+   * Ownership is a membership row now. The key survives only so a workspace
+   * made before accounts can be claimed, and no fresh one is ever minted.
+   */
+  ownerKey: z.string().nullable(),
 });
 export type CreateWorkspaceResponse = z.infer<typeof createWorkspaceResponseSchema>;
 

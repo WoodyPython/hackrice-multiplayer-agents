@@ -10,6 +10,8 @@ import {
   GUEST_STORAGE_KEY,
 } from "./session";
 import { contributionLink, WorkspaceApi } from "./workspace-api";
+import type { AuthApi } from "./auth-api";
+import type { SessionState } from "@app/contracts";
 import { workspace as sample } from "./fixtures";
 
 const id = "abcdef01-0000-4000-8000-000000000001";
@@ -37,7 +39,7 @@ function fixture(
   const api = new WorkspaceApi(session, transport);
   render(
     <MemoryRouter initialEntries={[path]}>
-      <App session={session} api={api} />
+      <App session={session} api={api} authApi={signedIn()} />
     </MemoryRouter>,
   );
   return { api, session };
@@ -45,6 +47,30 @@ function fixture(
 beforeEach(() => {
   localStorage.clear();
 });
+
+/**
+ * A signed-in account, without a network.
+ *
+ * Screens behind `RequireAccount` need one; supplying it explicitly keeps each
+ * test honest about whether it is exercising a signed-in path or a signed-out
+ * one, rather than depending on whatever the default happens to be.
+ */
+function signedIn(overrides: Partial<SessionState> = {}): AuthApi {
+  const state: SessionState = {
+    account: { id: "acc-1", email: "ada@example.test", displayName: "Ada" },
+    workspaces: [],
+    preferences: { theme: "system", lastWorkspace: null },
+    ...overrides,
+  };
+  return {
+    configured: true,
+    current: async () => state,
+    signOut: async () => {},
+    savePreferences: async () => state.preferences!,
+    members: async () => [],
+    invitations: async () => [],
+  } as unknown as AuthApi;
+}
 
 describe("browser identity and document awareness", () => {
   it("keeps a stable contributor ID through renames and reloads, validates names, and treats markup as text", () => {
@@ -102,85 +128,65 @@ describe("browser identity and document awareness", () => {
   });
 });
 
-describe("workspace API key boundaries", () => {
-  it("stores the one-time creation key and sends it only in the matching workspace header", async () => {
+describe("workspace API credential boundaries", () => {
+  /*
+   * These replace the owner-key tests.
+   *
+   * There is no key any more: ownership is a membership row, so the risks the
+   * old tests guarded -- a key leaking into a URL, a key sent to the wrong
+   * workspace, a key lost with browser storage -- are gone by construction.
+   * What is worth asserting now is the new equivalent: the client holds no
+   * credential at all, and authority travels as a cookie the browser attaches
+   * and this code cannot read.
+   */
+  it("mints no credential on creation and puts none in the DOM or share link", async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(
+      response({
+        workspaceId: id,
+        ownerKey: null,
+        contributionUrl: `https://app.invalid/w/${id}`,
+      }),
+    );
+    const session = new BrowserSession();
+    const api = new WorkspaceApi(session, transport);
+    const created = await api.create({ name: "Team room" });
+
+    expect(created).toBe(id);
+    // Nothing was stored, because there is nothing a browser needs to keep.
+    expect(window.localStorage.getItem(`common.owner.v1.${id}`)).toBeNull();
+    expect(contributionLink(id)).not.toContain("ownerKey");
+  });
+
+  it("never sends an owner-key header, and lets the browser carry the cookie", async () => {
     const transport = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        response({
-          workspaceId: id,
-          ownerKey,
-          contributionUrl: `https://untrusted.invalid/w/${id}?ownerKey=${ownerKey}`,
-        }),
-      )
-      .mockResolvedValueOnce(response(workspace))
-      .mockResolvedValueOnce(
-        response({ ...workspace, id: otherId, isOwner: false }),
-      )
-      .mockResolvedValueOnce(response(workspace));
-    const session = new BrowserSession();
-    const api = new WorkspaceApi(session, transport);
-    expect(await api.create({ name: "Team room" })).toBe(id);
-    expect(new BrowserSession().getOwnerKey(id)).toBe(ownerKey);
+      .mockResolvedValue(response({ ...workspace, isOwner: true }));
+    const api = new WorkspaceApi(new BrowserSession(), transport);
     await api.read(id);
+
+    const init = transport.mock.calls[0]![1]!;
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    expect(Object.keys(headers).map((key) => key.toLowerCase())).not.toContain(
+      OWNER_KEY_HEADER,
+    );
+    // The session cookie is HttpOnly, so this is the only way it can travel.
+    // Same-origin rather than `include`: nothing needs to be sent cross-site.
+    expect(init.credentials).toBe("same-origin");
+  });
+
+  it("carries no credential when a request goes to another workspace", async () => {
+    // The old failure this guarded against -- one workspace's key being
+    // attached to another workspace's request -- cannot happen when the client
+    // holds no per-workspace secret at all. Asserted so that stays true.
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(response({ ...workspace, id: otherId, isOwner: false }));
+    const api = new WorkspaceApi(new BrowserSession(), transport);
     await api.read(otherId);
-    await api.update(id, { guidance: "Clear writing" });
-    expect(transport.mock.calls[0]![1]!.headers).not.toHaveProperty(
-      OWNER_KEY_HEADER,
-    );
-    expect(transport.mock.calls[1]![1]!.headers).toHaveProperty(
-      OWNER_KEY_HEADER,
-      ownerKey,
-    );
-    expect(transport.mock.calls[2]![1]!.headers).not.toHaveProperty(
-      OWNER_KEY_HEADER,
-    );
-    expect(transport.mock.calls[3]![1]!.headers).toHaveProperty(
-      OWNER_KEY_HEADER,
-      ownerKey,
-    );
-    for (const [url, init] of transport.mock.calls) {
-      expect(String(url)).not.toContain(ownerKey);
-      expect(init?.body ?? "").not.toContain(ownerKey);
-      expect(init?.redirect).toBe("error");
-    }
-    expect(contributionLink(id, "https://app.example/")).toBe(
-      `https://app.example/w/${id}`,
-    );
-  });
-  it("blocks creation before requesting when owner storage is unavailable", async () => {
-    const transport = vi.fn<typeof fetch>();
-    const api = new WorkspaceApi(
-      new BrowserSession(() => {
-        throw new Error("blocked");
-      }),
-      transport,
-    );
-    await expect(api.create({ name: "Room" })).rejects.toThrow(
-      "BROWSER_STORAGE_UNAVAILABLE",
-    );
-    expect(transport).not.toHaveBeenCalled();
-  });
-  it("retains a creation key in memory if storage fails after creation, then retries saving", async () => {
-    const session = new BrowserSession();
-    const write = vi.spyOn(Storage.prototype, "setItem");
-    const transport = vi.fn<typeof fetch>().mockImplementation(async () => {
-      write.mockImplementation(() => {
-        throw new Error("full");
-      });
-      return response({
-        workspaceId: id,
-        ownerKey,
-        contributionUrl: `https://app.example/w/${id}`,
-      });
-    });
-    const api = new WorkspaceApi(session, transport);
-    await api.create({ name: "Room" });
-    expect(session.hasUnsavedOwner(id)).toBe(true);
-    expect(session.getOwnerKey(id)).toBe(ownerKey);
-    write.mockRestore();
-    expect(session.retryOwnerSave(id)).toBe(true);
-    expect(new BrowserSession().getOwnerKey(id)).toBe(ownerKey);
+
+    const [url, init] = transport.mock.calls[0]!;
+    expect(String(url)).toContain(otherId);
+    expect(JSON.stringify(init)).not.toContain(ownerKey);
   });
 });
 
@@ -198,7 +204,7 @@ describe("A02 workspace interactions", () => {
       )
       .mockImplementation(async () => response(workspace));
     fixture("/", transport);
-    await user.type(screen.getByLabelText("Workspace name"), "Team room");
+    await user.type(await screen.findByLabelText("Workspace name"), "Team room");
     await user.type(screen.getByLabelText(/Purpose/), "Build together");
     await user.dblClick(
       screen.getByRole("button", { name: "Create workspace" }),
@@ -251,8 +257,8 @@ describe("A02 workspace interactions", () => {
       );
     fixture(`/w/${id}/settings`, transport, session);
     await screen.findByRole("button", { name: "Save workspace settings" });
-    await user.clear(screen.getByLabelText("Workspace name"));
-    await user.type(screen.getByLabelText("Workspace name"), "New room");
+    await user.clear(await screen.findByLabelText("Workspace name"));
+    await user.type(await screen.findByLabelText("Workspace name"), "New room");
     await user.clear(screen.getByLabelText("Guidance"));
     await user.type(screen.getByLabelText("Guidance"), "Be kind");
     await user.click(
@@ -354,13 +360,13 @@ describe("A02 workspace interactions", () => {
         .fn<typeof fetch>()
         .mockResolvedValue(errorResponse("RATE_LIMITED", 429)),
     );
-    await user.type(screen.getByLabelText("Workspace name"), "New room");
+    await user.type(await screen.findByLabelText("Workspace name"), "New room");
     await user.click(screen.getByRole("button", { name: "Create workspace" }));
     expect((await screen.findByRole("alert")).textContent).toContain(
       "Wait a moment",
     );
     expect(
-      (screen.getByLabelText("Workspace name") as HTMLInputElement).value,
+      (await screen.findByLabelText("Workspace name") as HTMLInputElement).value,
     ).toBe("New room");
   });
   it("shows a missing-workspace response without rendering the sample workspace", async () => {

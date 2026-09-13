@@ -12,7 +12,7 @@ import { ReviewEvidenceComposer } from '../src/orchestration/review-evidence.js'
 import { startRuntime } from '../src/recovery/runtime.js';
 import { appendEvent } from '../src/events/service.js';
 import { connectTestDb, insertAgentInstance, insertBudget, insertRun, insertTask, insertWorkspace, testDatabaseUrl } from './helpers.js';
-import { testConfig } from './app-helpers.js';
+import { testConfig, authenticateRuntime } from './app-helpers.js';
 
 let db: DbHandle;
 const sha = () => randomUUID().replace(/-/g, '').padEnd(40, '0');
@@ -335,6 +335,7 @@ describe('C07 review routes', () => {
     root = await mkdtemp(join(tmpdir(), 'c07-routes-'));
     runtime = await startRuntime({ config: testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl() }),
       listen: { host: '127.0.0.1', port: 0 } });
+    await authenticateRuntime(runtime.app, db.db);
   });
   afterEach(async () => { vi.restoreAllMocks(); await runtime?.close(); await db?.close(); await rm(root, { recursive: true, force: true }); });
 

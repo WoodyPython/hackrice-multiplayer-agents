@@ -163,3 +163,31 @@ export async function createWorkspaceViaApi(
   }
   return res.json();
 }
+
+/**
+ * Give a runtime-built app the same signed-in default as `buildTestApp`.
+ *
+ * Suites that call `startRuntime` build their own Fastify instance, so they
+ * miss the harness patch and every request arrives as nobody. Their subject is
+ * Git, capture, review or apply behaviour, not authorization -- which is
+ * `permissions.test.ts`, and which deliberately opts out of all of this.
+ *
+ * Returns the cookie for calls that go over real HTTP, where `inject` is not
+ * involved and the default cannot reach.
+ */
+export async function authenticateRuntime(
+  app: FastifyInstance, db: DbHandle['db'],
+): Promise<{ cookie: string }> {
+  await ensureTestUser(db);
+  const original = app.inject.bind(app);
+  app.inject = ((opts?: Parameters<typeof original>[0]) => {
+    if (opts && typeof opts === 'object') {
+      const headers = (opts as { headers?: Record<string, unknown> }).headers ?? {};
+      if (!('cookie' in headers)) {
+        (opts as { headers?: Record<string, unknown> }).headers = { ...headers, ...sessionCookie() };
+      }
+    }
+    return original(opts as never);
+  }) as typeof app.inject;
+  return { cookie: sessionCookie().cookie };
+}

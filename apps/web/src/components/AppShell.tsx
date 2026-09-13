@@ -121,8 +121,10 @@ function SidebarBody({
   guestName,
   guestRole,
   profileControl,
+  switcher,
   onNavigate,
 }: {
+  switcher?: ReactNode;
   workspaceName: string;
   workspaceSubtitle: string;
   settingsTo?: string;
@@ -143,10 +145,11 @@ function SidebarBody({
         <Wordmark />
       </Link>
 
-      <WorkspaceCard
-        name={workspaceName}
-        subtitle={workspaceSubtitle}
-      />
+      {/* The switcher replaces the static card once an account is signed in,
+          so moving between teams is where the workspace name already is. */}
+      {switcher ?? (
+        <WorkspaceCard name={workspaceName} subtitle={workspaceSubtitle} />
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <p className="mb-2 px-3 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
@@ -200,6 +203,7 @@ export function AppShell({
   guestName,
   guestRole,
   profileControl,
+  switcher,
   breadcrumb,
   topbarEnd,
   strip,
@@ -212,6 +216,8 @@ export function AppShell({
   guestName: string;
   guestRole: string;
   profileControl?: ReactNode;
+  /** Workspace switcher, rendered in place of the static workspace name. */
+  switcher?: ReactNode;
   breadcrumb: ReactNode;
   topbarEnd?: ReactNode;
   strip?: ReactNode;
@@ -231,6 +237,7 @@ export function AppShell({
 
   const sidebar = (onNavigate?: () => void) => (
     <SidebarBody
+      switcher={switcher}
       workspaceName={workspaceName}
       workspaceSubtitle={workspaceSubtitle}
       settingsTo={settingsTo}

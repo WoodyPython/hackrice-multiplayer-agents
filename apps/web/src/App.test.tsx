@@ -8,6 +8,7 @@ import {
   taskSummarySchema,
 } from "@app/contracts";
 import { App } from "./App";
+import { stubAuthApi } from "./test-auth";
 import {
   createFixtureTask,
   initialTasks,
@@ -20,7 +21,7 @@ const base = `/demo/w/${workspace.id}`;
 function open(path = base) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <App />
+      <App authApi={stubAuthApi()} />
     </MemoryRouter>,
   );
 }

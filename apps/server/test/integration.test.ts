@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { reviewDetailSchema } from '@app/contracts';
 import { startRuntime } from '../src/recovery/runtime.js';
 import { connectTestDb, testDatabaseUrl } from './helpers.js';
-import { testConfig } from './app-helpers.js';
+import { testConfig, authenticateRuntime } from './app-helpers.js';
 
 /**
  * B08 acceptance: workspace/object scoping, owner-key isolation, material
@@ -49,6 +49,7 @@ beforeEach(async () => {
     config: testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl() }),
     listen: { host: '127.0.0.1', port: 0 },
   });
+  await authenticateRuntime(runtime.app, db.db);
 });
 
 afterEach(async () => {

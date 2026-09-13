@@ -10,6 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter } from "react-router-dom";
 import { App } from "./App";
+import { stubAuthApi } from "./test-auth";
 import { BrowserSession } from "./session";
 import { WorkspaceApi } from "./workspace-api";
 import { workspace as sampleWorkspace } from "./fixtures";
@@ -192,7 +193,7 @@ function open(path: string, transport: typeof fetch) {
       <Link to={`/w/${workspaceId}/tasks/20000000-0000-4000-8000-000000000aa2`}>
         Other task
       </Link>
-      <App session={session} api={api} />
+      <App session={session} api={api} authApi={stubAuthApi()} />
     </MemoryRouter>,
   );
   return { session, api };
@@ -907,7 +908,7 @@ async function openChanges(
   const api = new WorkspaceApi(session, transport);
   render(
     <MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
-      <App session={session} api={api} />
+      <App session={session} api={api} authApi={stubAuthApi()} />
     </MemoryRouter>,
   );
   await user.click(await screen.findByRole("tab", { name: /Changes/ }));
@@ -924,7 +925,7 @@ describe("review is announced, not buried in a tab", () => {
     });
     render(
       <MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
-        <App session={session} api={new WorkspaceApi(session, transport)} />
+        <App session={session} api={new WorkspaceApi(session, transport)} authApi={stubAuthApi()} />
       </MemoryRouter>,
     );
     return { user, calls };
@@ -1520,7 +1521,7 @@ describe("A08 cross-flow integration", () => {
       session.saveOwner(workspaceId, "owner-key-for-tests-1234567890");
       render(
         <MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
-          <App session={session} api={new WorkspaceApi(session, transport)} />
+          <App session={session} api={new WorkspaceApi(session, transport)} authApi={stubAuthApi()} />
         </MemoryRouter>,
       );
       const user = userEvent.setup();
@@ -1655,7 +1656,7 @@ describe("finishing and rerunning tasks", () => {
       },
     });
     render(<MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
-      <App session={session} api={new WorkspaceApi(session, transport)} />
+      <App session={session} api={new WorkspaceApi(session, transport)} authApi={stubAuthApi()} />
     </MemoryRouter>);
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Mark as Complete" }));

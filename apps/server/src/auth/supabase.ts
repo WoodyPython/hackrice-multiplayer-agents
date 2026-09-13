@@ -64,13 +64,21 @@ export function createSupabaseVerifier(
   config: Pick<AppConfig, 'SUPABASE_URL' | 'SUPABASE_PUBLISHABLE_KEY'>,
   fetchImpl: typeof fetch = fetch,
 ): IdentityVerifier {
-  const url = config.SUPABASE_URL?.replace(/\/+$/, '');
-  const key = config.SUPABASE_PUBLISHABLE_KEY;
-  if (!url || !key) {
-    throw new Error('SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are required for account sign-in.');
-  }
-
   return async (accessToken: string): Promise<VerifiedIdentity> => {
+    /*
+     * Checked here, not at construction.
+     *
+     * Everything except signing in works without a Supabase project -- the same
+     * courtesy section 5.1 extends to realtime -- so a missing key must not
+     * stop the server booting. It fails at the one operation that needs it,
+     * with a message naming what to set.
+     */
+    const url = config.SUPABASE_URL?.replace(/\/+$/, '');
+    const key = config.SUPABASE_PUBLISHABLE_KEY;
+    if (!url || !key) {
+      throw new ApiError('AUTH_REQUIRED',
+        'Sign-in is not configured on this server. Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.');
+    }
     let response: Response;
     try {
       response = await fetchImpl(`${url}/auth/v1/user`, {

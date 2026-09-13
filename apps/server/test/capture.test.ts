@@ -22,8 +22,8 @@ import { PgDraftStore } from '../src/drafts/store.js';
 import { LocalGitService } from '../src/git/service.js';
 import { buildApp } from '../src/http/app.js';
 import { startRuntime } from '../src/recovery/runtime.js';
-import { testConfig } from './app-helpers.js';
-import { connectTestDb, insertTask, insertWorkspace, testDatabaseUrl } from './helpers.js';
+import { testConfig, authenticateRuntime } from './app-helpers.js';
+import { connectTestDb, insertTask, insertWorkspace, sessionCookie, testDatabaseUrl } from './helpers.js';
 
 let db: ReturnType<typeof connectTestDb>;
 let store: PgDraftStore;
@@ -58,6 +58,8 @@ beforeEach(async () => {
   const deps = { drafts: store, git, debounceMs: 60_000 };
   coordinator = new LiveDocumentCoordinator(deps, { drafts: store, git, checkpoints });
   app = await buildApp({ db: db.db, config: testConfig({ gitDataRoot: root }) });
+  // Checkpoint routes are workspace routes, so they sit behind the gate now.
+  await authenticateRuntime(app, db.db);
   await registerCheckpointRoutes(app, coordinator);
   live = attachLiveDocuments(app.server, deps, coordinator);
   await app.listen({ host: '127.0.0.1', port: 0 });
@@ -74,10 +76,21 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
+/**
+ * The live socket authorizes from a cookie, because a browser cannot set
+ * headers on a WebSocket handshake. `ws` can, which is how the test client
+ * presents the same session an ordinary request would.
+ */
+class AuthenticatedWebSocket extends WebSocket {
+  constructor(address: string, protocols?: string | string[]) {
+    super(address, protocols, { headers: sessionCookie() });
+  }
+}
+
 function client(room = id) {
   const doc = new Y.Doc();
   const provider = new WebsocketProvider(base, liveRoomPath(room).slice(1), doc, {
-    WebSocketPolyfill: WebSocket, connect: false, disableBc: true,
+    WebSocketPolyfill: AuthenticatedWebSocket, connect: false, disableBc: true,
   });
   const acks: Array<{ kind: number; revision: number }> = [];
   provider.messageHandlers[LIVE_MESSAGE_ACK] = (_encoder, decoder) => {
@@ -399,6 +412,7 @@ describe('D04 checkpoint HTTP', () => {
       config: testConfig({ gitDataRoot: join(root, 'runtime'), DATABASE_URL: testDatabaseUrl() }),
       listen: { host: '127.0.0.1', port: 0 },
     });
+    await authenticateRuntime(runtime.app, db.db);
     try {
       base = `ws://127.0.0.1:${(runtime.app.server.address() as { port: number }).port}`;
       const a = await connect(); a.text.insert(0, 'runtime draft'); await accepted(a, 1);

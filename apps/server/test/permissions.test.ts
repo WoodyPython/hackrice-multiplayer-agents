@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SESSION_COOKIE } from '@app/contracts';
+import { hashOwnerKey } from '../src/workspaces/owner-key.js';
 import { buildTestApp, type TestApp } from './app-helpers.js';
 import { signInAs } from './helpers.js';
 
@@ -257,3 +258,151 @@ describe('sessions', () => {
       { guidance: 'x' })).statusCode).toBe(401);
   });
 });
+
+describe('invitations', () => {
+  async function invite(cookie: string, body: Record<string, unknown> = {}) {
+    const res = await call('POST', `/api/workspaces/${workspaceA}/invitations`, cookie, body);
+    expect(res.statusCode, res.body).toBe(201);
+    return res.json() as { id: string; token: string };
+  }
+
+  it('admits exactly one person and then is spent', async () => {
+    const { token } = await invite(ownerA.cookie);
+    const first = await signInAs(t.handle.db, { label: 'invitee-1' });
+    const second = await signInAs(t.handle.db, { label: 'invitee-2' });
+
+    const joined = await call('POST', `/api/invitations/${token}/accept`, first.cookie);
+    expect(joined.statusCode, joined.body).toBe(200);
+    expect(joined.json()).toMatchObject({ workspaceId: workspaceA, role: 'member' });
+    // They can now write, which is the whole point of the invitation.
+    expect((await call('POST', `/api/workspaces/${workspaceA}/tasks`, first.cookie,
+      { title: 'Joined', kind: 'agent_task', creatorGuestLabel: 'Invitee' })).statusCode).toBe(201);
+
+    // Single use: a link forwarded on afterwards is worthless.
+    const reused = await call('POST', `/api/invitations/${token}/accept`, second.cookie);
+    expect(reused.statusCode).toBe(400);
+    expect(reused.json().error.code).toBe('INVITATION_INVALID');
+    expect(await sessionAccess(second, workspaceA)).toBe('viewer');
+  });
+
+  it('refuses an expired invitation', async () => {
+    const { id, token } = await invite(ownerA.cookie);
+    await t.handle.db.updateTable('workspace_invitations')
+      .set({ expires_at: new Date(Date.now() - 1000) }).where('id', '=', id).execute();
+    const invitee = await signInAs(t.handle.db, { label: 'late' });
+    const res = await call('POST', `/api/invitations/${token}/accept`, invitee.cookie);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVITATION_INVALID');
+  });
+
+  it('refuses a revoked invitation', async () => {
+    const { id, token } = await invite(ownerA.cookie);
+    expect((await call('DELETE', `/api/workspaces/${workspaceA}/invitations/${id}`,
+      ownerA.cookie)).statusCode).toBe(204);
+    const invitee = await signInAs(t.handle.db, { label: 'revoked' });
+    expect((await call('POST', `/api/invitations/${token}/accept`, invitee.cookie)).statusCode).toBe(400);
+  });
+
+  it('honours an invitation locked to one address', async () => {
+    const invitee = await signInAs(t.handle.db, { label: 'locked' });
+    const wrong = await signInAs(t.handle.db, { label: 'wrong-address' });
+    const email = (await t.handle.db.selectFrom('users').select('email')
+      .where('id', '=', invitee.userId).executeTakeFirstOrThrow()).email;
+    const { token } = await invite(ownerA.cookie, { email });
+
+    // An invite that leaks is useless to whoever found it.
+    expect((await call('POST', `/api/invitations/${token}/accept`, wrong.cookie)).statusCode).toBe(400);
+    expect((await call('POST', `/api/invitations/${token}/accept`, invitee.cookie)).statusCode).toBe(200);
+  });
+
+  it('refuses an unguessable-token guess and requires an account to accept', async () => {
+    const { token } = await invite(ownerA.cookie);
+    // Neither the workspace id nor a plausible-looking token is a credential.
+    expect((await call('POST', `/api/invitations/${'z'.repeat(43)}/accept`,
+      stranger.cookie)).statusCode).toBe(400);
+    // The token alone is not enough either: acceptance needs an account to
+    // attach the membership to.
+    const anonymousAccept = await call('POST', `/api/invitations/${token}/accept`, '');
+    expect(anonymousAccept.statusCode).toBe(401);
+  });
+
+  it('never returns a usable token after creation', async () => {
+    await invite(ownerA.cookie);
+    const listed = await call('GET', `/api/workspaces/${workspaceA}/invitations`, ownerA.cookie);
+    expect(listed.statusCode).toBe(200);
+    // Only the hash is stored, so the list cannot reproduce a working link --
+    // the same rule the owner key followed.
+    expect(listed.body).not.toMatch(/"token"/);
+  });
+
+  it('grants the invited role, not a role the invitee asks for', async () => {
+    const { token } = await invite(ownerA.cookie, { role: 'member' });
+    const invitee = await signInAs(t.handle.db, { label: 'ambitious' });
+    const res = await t.app.inject({ method: 'POST', url: `/api/invitations/${token}/accept`,
+      headers: { cookie: invitee.cookie }, payload: { role: 'owner' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().role).toBe('member');
+  });
+});
+
+describe('claiming a workspace made before accounts', () => {
+  async function legacyWorkspace() {
+    // What a pre-accounts row looks like: an owner-key hash and no members.
+    const key = 'legacy-owner-key-for-tests-0000000000';
+    const row = await t.handle.db.insertInto('workspaces')
+      .values({ name: 'Legacy', owner_key_hash: hashOwnerKey(key) })
+      .returning('id').executeTakeFirstOrThrow();
+    return { workspaceId: row.id, ownerKey: key };
+  }
+
+  it('never grants ownership from the workspace address alone', async () => {
+    const legacy = await legacyWorkspace();
+    const opportunist = await signInAs(t.handle.db, { label: 'opportunist' });
+
+    // Reading it is fine -- that is what a link has always been worth.
+    expect((await call('GET', `/api/workspaces/${legacy.workspaceId}`,
+      opportunist.cookie)).statusCode).toBe(200);
+    // Claiming without the key is not.
+    const noKey = await call('POST', `/api/workspaces/${legacy.workspaceId}/claim`,
+      opportunist.cookie, { ownerKey: 'not-the-key' });
+    expect(noKey.statusCode).toBe(403);
+    expect(noKey.json().error.code).toBe('OWNER_KEY_REQUIRED');
+    expect(await sessionAccess(opportunist, legacy.workspaceId)).toBe('viewer');
+  });
+
+  it('makes the key holder an owner, then retires the key', async () => {
+    const legacy = await legacyWorkspace();
+    const holder = await signInAs(t.handle.db, { label: 'key-holder' });
+    const claimed = await call('POST', `/api/workspaces/${legacy.workspaceId}/claim`,
+      holder.cookie, { ownerKey: legacy.ownerKey });
+    expect(claimed.statusCode, claimed.body).toBe(200);
+    expect(claimed.json()).toMatchObject({ role: 'owner' });
+    expect(await sessionAccess(holder, legacy.workspaceId)).toBe('owner');
+
+    const row = await t.handle.db.selectFrom('workspaces').selectAll()
+      .where('id', '=', legacy.workspaceId).executeTakeFirstOrThrow();
+    expect(row.owner_key_hash).toBeNull();
+    expect(row.claimed_at).not.toBeNull();
+
+    // A key pasted into a chat months ago must not buy co-ownership later.
+    const second = await signInAs(t.handle.db, { label: 'second-holder' });
+    const again = await call('POST', `/api/workspaces/${legacy.workspaceId}/claim`,
+      second.cookie, { ownerKey: legacy.ownerKey });
+    expect(again.statusCode).toBe(403);
+    expect(again.json().error.code).toBe('FORBIDDEN');
+    expect(await sessionAccess(second, legacy.workspaceId)).toBe('viewer');
+  });
+
+  it('requires an account, not just the key', async () => {
+    const legacy = await legacyWorkspace();
+    const res = await call('POST', `/api/workspaces/${legacy.workspaceId}/claim`, '',
+      { ownerKey: legacy.ownerKey });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+/** The caller's own view of their access, straight from the API. */
+async function sessionAccess(who: { cookie: string }, workspaceId: string): Promise<string> {
+  const res = await call('GET', `/api/workspaces/${workspaceId}`, who.cookie);
+  return res.json().access as string;
+}

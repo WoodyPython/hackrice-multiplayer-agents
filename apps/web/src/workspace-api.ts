@@ -2,7 +2,6 @@ import {
   ApiError,
   approvedFilesSchema,
   approvedFileContentSchema,
-  OWNER_KEY_HEADER,
   answerQuestionResponseSchema,
   apiErrorBodySchema,
   createWorkspaceRequestSchema,
@@ -97,8 +96,9 @@ export class WorkspaceApi {
   ): Promise<unknown> {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    const key = workspaceId ? this.session.getOwnerKey(workspaceId) : undefined;
-    if (key) headers[OWNER_KEY_HEADER] = key;
+    // No owner-key header any more. Authority is the session cookie, which the
+    // browser attaches itself; `workspaceId` is kept only for call signatures.
+    void workspaceId;
     return this.send(path, {
       method,
       headers,
@@ -111,7 +111,12 @@ export class WorkspaceApi {
   private async send(path: string, init: RequestInit): Promise<unknown> {
     const response = await this.transport(`/api/workspaces${path}`, {
       ...init,
-      credentials: "omit",
+      // The session cookie is HttpOnly, so it can only travel this way. Same
+      // origin rather than `include`: the app is served by the same service in
+      // production and proxied through Vite in development, so nothing needs
+      // to be sent cross-site, and not sending it there is one less way to be
+      // party to a cross-site request.
+      credentials: "same-origin",
       redirect: "error",
       cache: "no-store",
     });
@@ -131,14 +136,16 @@ export class WorkspaceApi {
 
   // --- workspace -----------------------------------------------------------
 
+  /**
+   * Create a workspace. Ownership is the membership row the server writes for
+   * the signed-in account, so there is no key to store and nothing is lost if
+   * this browser's storage is cleared.
+   */
   async create(input: CreateWorkspaceRequest): Promise<string> {
-    if (!this.session.canPersist())
-      throw new Error("BROWSER_STORAGE_UNAVAILABLE");
     const body = createWorkspaceRequestSchema.parse(input);
     const result = createWorkspaceResponseSchema.parse(
       await this.request("", "POST", body),
     );
-    this.session.saveOwner(result.workspaceId, result.ownerKey);
     return result.workspaceId;
   }
 
@@ -151,7 +158,6 @@ export class WorkspaceApi {
 
   async update(id: string, input: UpdateWorkspaceRequest): Promise<Workspace> {
     uuidSchema.parse(id);
-    if (!this.session.getOwnerKey(id)) throw new ApiError("OWNER_KEY_REQUIRED");
     return workspaceSchema.parse(
       await this.request(
         `/${id}`,
@@ -721,12 +727,8 @@ export class WorkspaceApi {
     if (link?.discussionEntryId)
       form.append("discussionEntryId", link.discussionEntryId);
     form.append("file", file, file.name);
-    const headers: Record<string, string> = {};
-    const key = this.session.getOwnerKey(workspaceId);
-    if (key) headers[OWNER_KEY_HEADER] = key;
     const data = await this.send(`/${workspaceId}/materials`, {
       method: "POST",
-      headers,
       body: form,
     });
     return z

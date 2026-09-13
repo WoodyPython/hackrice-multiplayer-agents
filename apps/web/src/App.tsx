@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Route, Routes, useLocation, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { TriangleAlert } from "lucide-react";
 import { ApiError, uuidSchema, type Workspace } from "@app/contracts";
 import { BrowserContext, useBrowser } from "./browser-context";
 import { BrowserSession } from "./session";
 import { WorkspaceApi, workspaceError } from "./workspace-api";
 import { DemoApp } from "./DemoApp";
+import { AuthProvider, useAuth } from "./auth-context";
+import type { AuthApi } from "./auth-api";
+import { SignIn } from "./pages/SignIn";
+import { AcceptInvite } from "./pages/AcceptInvite";
+import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
+import { ClaimWorkspace } from "./components/ClaimWorkspace";
 import { AppShell, Breadcrumb, type NavItem } from "./components/AppShell";
 import { EmptyState } from "./components/EmptyState";
 import { GuestNameControl } from "./components/GuestNameControl";
@@ -26,6 +32,7 @@ import { History } from "./pages/History";
 
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
+  const { account, workspaces, setPreferences } = useAuth();
   const revision = useSyncExternalStore(session.subscribe, session.getRevision);
   // Per tab, not per contributor: two tabs are two open browsers and should
   // appear as such, and it must not survive a reload as a ghost.
@@ -64,6 +71,14 @@ function LiveWorkspace({ id }: { id: string }) {
       ? `${workspace.name} — CoFlow`
       : "Workspace — CoFlow";
   }, [workspace?.name]);
+  // Follows the account rather than this browser, so the next device opens
+  // where the last one left off. Only recorded for a workspace you belong to;
+  // the server refuses to store a pointer to one you merely visited.
+  useEffect(() => {
+    if (account && workspaces.some((item) => item.workspaceId === id)) {
+      void setPreferences({ lastWorkspace: id });
+    }
+  }, [account, workspaces, id, setPreferences]);
   useEffect(() => {
     document.getElementById("main")?.focus({ preventScroll: true });
   }, [location.pathname]);
@@ -126,7 +141,22 @@ function LiveWorkspace({ id }: { id: string }) {
       settingsTo={`${base}/settings`}
       items={items}
       guestName={session.getGuest().name}
-      guestRole={visibleWorkspace.isOwner ? "Workspace owner" : "Contributor"}
+      switcher={
+        account ? (
+          <WorkspaceSwitcher
+            workspaces={workspaces}
+            currentId={id}
+            currentName={workspace.name}
+          />
+        ) : undefined
+      }
+      guestRole={
+        visibleWorkspace.isOwner
+          ? "Workspace owner"
+          : visibleWorkspace.access === "member"
+            ? "Member"
+            : "Viewing by link"
+      }
       profileControl={<GuestNameControl sidebar />}
       breadcrumb={<Breadcrumb trail={["Workspace", workspace.name]} />}
       topbarEnd={
@@ -139,21 +169,20 @@ function LiveWorkspace({ id }: { id: string }) {
         </div>
       }
     >
-      {session.hasUnsavedOwner(id) && (
-        <Notice
-          role="alert"
-          tone="warn"
-          className="mb-6"
-          title="Owner access was not saved in this browser"
-        >
-          <p>
-            Workspace created, but this browser could not save owner access.
-            Keep this tab open and retry saving before leaving.
-          </p>
-          <Button size="sm" onClick={() => session.retryOwnerSave(id)}>
-            Retry saving owner access
-          </Button>
-        </Notice>
+      {/*
+        The "owner access was not saved in this browser" warning that used to
+        live here is gone with the thing it warned about: ownership is a
+        membership row now, so clearing storage loses nothing.
+
+        What replaces it is the other direction -- a workspace made before
+        accounts, which somebody holding its key can bring across.
+      */}
+      {account && visibleWorkspace.unclaimed && !visibleWorkspace.isOwner && (
+        <ClaimWorkspace
+          workspaceId={id}
+          workspaceName={workspace.name}
+          onClaimed={() => setRetry((value) => value + 1)}
+        />
       )}
       {!!failure && (
         <Notice role="alert" tone="warn" className="mb-6">
@@ -249,7 +278,13 @@ function WorkspaceRoute() {
 export function App({
   session: injectedSession,
   api: injectedApi,
-}: { session?: BrowserSession; api?: WorkspaceApi } = {}) {
+  authApi,
+}: {
+  session?: BrowserSession;
+  api?: WorkspaceApi;
+  /** Injectable so tests can render as a signed-in account. */
+  authApi?: AuthApi;
+} = {}) {
   const [session] = useState(() => injectedSession ?? new BrowserSession());
   const api = useMemo(
     () => injectedApi ?? new WorkspaceApi(session),
@@ -258,8 +293,18 @@ export function App({
   useEffect(() => session.connect(), [session]);
   return (
     <BrowserContext.Provider value={{ session, api }}>
+      <AuthProvider {...(authApi ? { api: authApi } : {})}>
       <Routes>
-        <Route path="/" element={<CreateWorkspace />} />
+        <Route path="/signin" element={<SignIn />} />
+        <Route path="/invite/:token" element={<AcceptInvite />} />
+        <Route
+          path="/"
+          element={
+            <RequireAccount>
+              <CreateWorkspace />
+            </RequireAccount>
+          }
+        />
         <Route path="/w/:workspaceId/*" element={<WorkspaceRoute />} />
         <Route path="/demo/*" element={<DemoApp />} />
         <Route
@@ -280,6 +325,35 @@ export function App({
           }
         />
       </Routes>
+      </AuthProvider>
     </BrowserContext.Provider>
   );
+}
+
+/**
+ * Gate for screens that make no sense without an account.
+ *
+ * Presentation only, as ever: every route behind it is enforced by the server
+ * too. `loading` is held distinct from "signed out" so a refresh does not
+ * bounce a signed-in person to the sign-in page for a frame.
+ */
+function RequireAccount({ children }: { children: ReactNode }) {
+  const { account, loading } = useAuth();
+  const location = useLocation();
+  if (loading)
+    return (
+      <main aria-busy="true" className="mx-auto w-full max-w-2xl px-6 py-20">
+        <p role="status" className="sr-only">
+          Checking your session…
+        </p>
+      </main>
+    );
+  if (!account)
+    return (
+      <Navigate
+        replace
+        to={`/signin?next=${encodeURIComponent(location.pathname + location.search)}`}
+      />
+    );
+  return <>{children}</>;
 }

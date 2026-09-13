@@ -6,6 +6,7 @@ import {
   type Workspace,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { Members } from "../components/Members";
 import { workspaceError } from "../workspace-api";
 import { PageHeading } from "../components/PageHeading";
 import { Button } from "../components/ui/button";
@@ -28,7 +29,7 @@ export function WorkspaceSettings({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
-  const canEdit = workspace.isOwner && !!session.getOwnerKey(workspace.id);
+  const canEdit = workspace.isOwner;
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -145,6 +146,10 @@ export function WorkspaceSettings({
           </Button>
         )}
       </form>
+
+      <div className="mt-8">
+        <Members workspaceId={workspace.id} isOwner={workspace.isOwner} />
+      </div>
     </>
   );
 }
