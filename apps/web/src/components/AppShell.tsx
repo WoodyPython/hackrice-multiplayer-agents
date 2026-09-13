@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import {
   Clock3,
+  Compass,
   FileText,
   LayoutGrid,
   Menu,
@@ -17,12 +18,13 @@ import { Badge } from "./ui/badge";
 export type NavItem = {
   to: string;
   label: string;
-  icon: "board" | "files" | "history" | "settings";
+  icon: "overview" | "board" | "files" | "history" | "settings";
   end?: boolean;
   count?: number;
 };
 
 const ICONS = {
+  overview: Compass,
   board: LayoutGrid,
   files: FileText,
   history: Clock3,

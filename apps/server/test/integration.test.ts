@@ -260,35 +260,33 @@ describe('workspace and object scoping survive a completed flow', { timeout: 90_
 // --- 2. owner-key isolation -------------------------------------------------
 
 describe('owner keys stay bound to their own workspace', { timeout: 90_000 }, () => {
-  it('will not apply one workspace review with another workspace key', async () => {
-    // Stops before applying: §2.4 makes a completed task read-only, and
-    // `prepare` correctly refuses a second review on one — so the key check
-    // has to happen against the review that is actually appliable.
+  it('will not apply one workspace review through another workspace', async () => {
+    // Apply is deliberately open to any link holder now (apply.test.ts asserts
+    // that a missing or wrong key succeeds), so an owner key no longer decides
+    // anything here. What must still hold is the workspace boundary: another
+    // workspace's own valid key, sent through that workspace's path, cannot
+    // reach this review. Stops before applying, since a completed task is
+    // read-only and would refuse for an unrelated reason.
     const used = await usedWorkspace('Key space', false);
     const other = await createSpace('Other key space');
     const second = used.review;
 
-    for (const [label, key] of [
-      ['another workspace key', other.ownerKey],
-      ['a forged key', 'not-the-owner-key-at-all-000000'],
-    ] as const) {
-      const res = await app().inject({
-        method: 'POST',
-        url: `/api/workspaces/${used.space.id}/reviews/${second.review.id}/apply`,
-        payload: { candidateSha: second.candidateSha },
-        headers: { 'x-owner-key': key },
-      });
-      // Section 12.2: a wrong key and a missing key are the same answer, so
-      // neither confirms that some other key would have worked.
-      expect(res.statusCode, `${label} was accepted`).toBe(403);
-    }
-
-    const absent = await app().inject({
+    const crossed = await app().inject({
       method: 'POST',
-      url: `/api/workspaces/${used.space.id}/reviews/${second.review.id}/apply`,
+      url: `/api/workspaces/${other.id}/reviews/${second.review.id}/apply`,
       payload: { candidateSha: second.candidateSha },
+      headers: { 'x-owner-key': other.ownerKey },
     });
-    expect(absent.statusCode).toBe(403);
+    // Absent rather than forbidden, like every other cross-workspace object.
+    expect(crossed.statusCode, crossed.body).toBe(404);
+
+    // Nothing was published: the review is still waiting in its own workspace.
+    const review = await app().inject({
+      method: 'GET',
+      url: `/api/workspaces/${used.space.id}/reviews/${second.review.id}`,
+    });
+    expect(review.statusCode).toBe(200);
+    expect(review.json().review.status).toBe('ready');
   });
 
   it('never reports another workspace as owned, and never echoes the key', async () => {

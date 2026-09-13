@@ -23,6 +23,7 @@ import { NewTask } from "./pages/NewTask";
 import { Files } from "./pages/Files";
 import { ApprovedFile } from "./pages/ApprovedFile";
 import { History } from "./pages/History";
+import { Overview } from "./pages/Overview";
 
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
@@ -117,6 +118,7 @@ function LiveWorkspace({ id }: { id: string }) {
       workspace.isOwner && !loading && !failure && !!session.getOwnerKey(id),
   };
   const items: NavItem[] = [
+    { to: `${base}/overview`, label: "Overview", icon: "overview" },
     { to: base, label: "Tasks", icon: "board", end: true },
     { to: `${base}/files`, label: "Files", icon: "files" },
     { to: `${base}/history`, label: "History", icon: "history" },
@@ -201,6 +203,7 @@ function LiveWorkspace({ id }: { id: string }) {
         <Route path="files/view" element={<ApprovedFile workspaceId={id} />} />
         <Route path="files" element={<Files workspaceId={id} />} />
         <Route path="history" element={<History workspaceId={id} />} />
+        <Route path="overview" element={<Overview workspaceId={id} />} />
         <Route
           path="*"
           element={

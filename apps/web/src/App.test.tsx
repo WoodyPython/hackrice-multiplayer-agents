@@ -185,9 +185,7 @@ describe("A01 workspace shell", () => {
     ).toBeTruthy();
     await user.click(screen.getByRole("link", { name: "History" }));
     expect(screen.getByRole("heading", { name: "History" })).toBeTruthy();
-    await user.click(
-      screen.getByText("Launch room", { selector: "summary span" }),
-    );
+    // Settings is a sidebar link, no longer inside the workspace card's menu.
     await user.click(screen.getByRole("link", { name: "Workspace settings" }));
     expect(
       screen.getByRole("heading", { name: "Workspace guidance" }),

@@ -1,6 +1,7 @@
 import { guestLabelSchema, ownerKeySchema, uuidSchema } from "@app/contracts";
 
 export const GUEST_STORAGE_KEY = "common.guest.v1";
+export const BRIEFING_SESSION_STORAGE_KEY = "common.briefing-session.v1";
 const OWNER_PREFIX = "common.owner.v1.";
 export type GuestIdentity = Readonly<{
   contributorId: string;
@@ -23,6 +24,7 @@ export class BrowserSession {
   private revision = 0;
   private unsavedOwners = new Map<string, string>();
   private guestSaved = true;
+  private briefingSession: string | undefined;
 
   constructor(private storage: () => Storage = () => window.localStorage) {
     this.guest = this.readGuest() ?? this.newGuest();
@@ -115,6 +117,26 @@ export class BrowserSession {
     } catch {
       return undefined;
     }
+  }
+  /**
+   * Scopes "Catch me up" history to this browser.
+   *
+   * Separate from `contributorId` on purpose: that one is broadcast to every
+   * collaborator through editor awareness, and this one is never shared. It is
+   * not a credential — it only decides whose briefing history is shown. Without
+   * storage it lasts for this tab, so history simply starts fresh next time.
+   */
+  getBriefingSessionKey(): string {
+    if (this.briefingSession) return this.briefingSession;
+    try {
+      const stored = this.storage().getItem(BRIEFING_SESSION_STORAGE_KEY);
+      if (uuidSchema.safeParse(stored).success) return (this.briefingSession = stored!);
+    } catch {
+      /* Fall through to a key for this tab. */
+    }
+    const key = crypto.randomUUID();
+    this.write(BRIEFING_SESSION_STORAGE_KEY, key);
+    return (this.briefingSession = key);
   }
   hasUnsavedOwner = (workspaceId: string) =>
     this.unsavedOwners.has(workspaceId);

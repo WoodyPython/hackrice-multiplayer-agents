@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AGENT_TIMEOUT_MS, retryTaskRequestSchema, postTaskRequestSchema } from '@app/contracts';
+import { DEFAULT_OUTPUT_ALLOWANCE } from '../src/agents/execution.js';
 import { PgAgentLedger } from '../src/agents/ledger.js';
 import { PgCheckpointStore } from '../src/collaboration/checkpoint-store.js';
 import { LiveDocumentCoordinator } from '../src/collaboration/coordinator.js';
@@ -104,19 +105,24 @@ describe('C08 explicit retries', { timeout: 120000 }, () => {
   });
 
   it('keeps unknown reservations across retry and settles late billing without accepting old effects', async () => {
+    // A call that may have been billed keeps its hold. Since the per-call
+    // allowance was bounded (DEFAULT_OUTPUT_ALLOWANCE), that hold no longer
+    // swallows the whole task budget, so a retry proceeds -- but the uncertain
+    // tokens are still never spent twice.
+    const held = 10 + DEFAULT_OUTPUT_ALLOWANCE;
     const f = await fixture([planned, { inputTokens: 10, result: new ModelAdapterError('provider_error', 'Uncertain', false) },
       { inputTokens: 10, result: done() }]);
+    const budget = () => db.db.selectFrom('task_agent_budgets').selectAll().where('task_id', '=', f.task.id).where('agent_key', '=', 'writer').executeTakeFirstOrThrow();
     const first = await f.start(); await settled(first.run.id);
     const old = (await agents(first.run.id)).find((a) => a.agent_key === 'writer')!;
-    const second = await f.retry(); await settled(second.run.id);
-    expect((await agents(second.run.id)).find((a) => a.agent_key === 'writer')!.status).toBe('token_exhausted');
-    expect(f.adapter.calls).toHaveLength(2);
+    expect(await budget()).toMatchObject({ consumed_tokens: 0, reserved_tokens: held });
+    const second = await f.retry(); expect((await settled(second.run.id)).status).toBe('completed');
+    expect(f.adapter.calls).toHaveLength(3);
+    expect(await budget()).toMatchObject({ consumed_tokens: 100, reserved_tokens: held });
     const call = await db.db.selectFrom('model_calls').selectAll().where('agent_id', '=', old.id).executeTakeFirstOrThrow();
     await expect(f.ledger.withActiveWrite(old.id, async () => {})).rejects.toBeDefined();
     await f.ledger.recordUsage({ agentInstanceId: old.id, requestKey: call.request_key, usage: { status: 'reported', totalTokens: 40 } });
-    const third = await f.retry(); expect((await settled(third.run.id)).status).toBe('completed');
-    const budget = await db.db.selectFrom('task_agent_budgets').selectAll().where('task_id', '=', f.task.id).where('agent_key', '=', 'writer').executeTakeFirstOrThrow();
-    expect(budget).toMatchObject({ consumed_tokens: 140, reserved_tokens: 0 });
+    expect(await budget()).toMatchObject({ consumed_tokens: 140, reserved_tokens: 0 });
   });
 
   it('times out a late result, retains its usage, and grants only the manual retry a fresh clock', async () => {
@@ -137,13 +143,14 @@ describe('C08 explicit retries', { timeout: 120000 }, () => {
     await vi.waitFor(() => expect(release).toBeTypeOf('function'), { timeout: 60000 });
     const old = (await agents(first.run.id)).find((a) => a.agent_key === 'writer')!;
     await f.tasks.cancel(f.workspaceId, f.task.id);
-    // Unknown in-flight usage cannot be spent again, even in a fresh attempt.
-    const second = await f.retry(); await settled(second.run.id);
-    expect((await agents(second.run.id)).find((a) => a.agent_key === 'writer')!.status).toBe('token_exhausted');
+    // Unknown in-flight usage cannot be spent again, even in a fresh attempt:
+    // its hold stays reserved while the bounded allowance leaves room to retry.
+    const writerBudget = () => db.db.selectFrom('task_agent_budgets').selectAll().where('task_id', '=', f.task.id).where('agent_key', '=', 'writer').executeTakeFirstOrThrow();
+    const second = await f.retry(); expect((await settled(second.run.id)).status).toBe('completed');
+    expect(await writerBudget()).toMatchObject({ consumed_tokens: 100, reserved_tokens: 10 + DEFAULT_OUTPUT_ALLOWANCE });
     release(done());
     await vi.waitFor(async () => {
-      const budget = await db.db.selectFrom('task_agent_budgets').selectAll().where('task_id', '=', f.task.id).where('agent_key', '=', 'writer').executeTakeFirstOrThrow();
-      expect(budget).toMatchObject({ consumed_tokens: 100, reserved_tokens: 0 });
+      expect(await writerBudget()).toMatchObject({ consumed_tokens: 200, reserved_tokens: 0 });
     });
     expect((await agents(first.run.id)).find((a) => a.id === old.id)).toMatchObject({ status: 'canceled', result_sha: null });
   });

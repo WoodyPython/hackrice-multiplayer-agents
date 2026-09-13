@@ -1,5 +1,12 @@
 import {
   ApiError,
+  BRIEFING_SESSION_HEADER,
+  briefingSchema,
+  generateBriefingRequestSchema,
+  listBriefingsResponseSchema,
+  type Briefing,
+  type BriefingWindow,
+  type ListBriefingsResponse,
   approvedFilesSchema,
   approvedFileContentSchema,
   OWNER_KEY_HEADER,
@@ -434,6 +441,53 @@ export class WorkspaceApi {
         signal,
       ),
     ).entries;
+  }
+
+  // --- briefings -----------------------------------------------------------
+
+  /**
+   * "Catch me up" history for this browser, newest first, and the cutoff that
+   * "Since last briefing" starts from.
+   *
+   * Carries the briefing session key and nothing else: a briefing reads what
+   * any link holder can read, so the owner key has no business on the request.
+   */
+  async listBriefings(
+    workspaceId: string,
+    signal?: AbortSignal,
+  ): Promise<ListBriefingsResponse> {
+    uuidSchema.parse(workspaceId);
+    return listBriefingsResponseSchema.parse(
+      await this.send(`/${workspaceId}/briefings`, {
+        method: "GET",
+        headers: { [BRIEFING_SESSION_HEADER]: this.session.getBriefingSessionKey() },
+        signal,
+      }),
+    );
+  }
+
+  /**
+   * Generate a briefing. Gemini runs on the server; the browser only names the
+   * window. A model failure is not an error here — it arrives as a briefing
+   * whose `source` is `fallback`, carrying the factual recap.
+   */
+  async generateBriefing(
+    workspaceId: string,
+    window: BriefingWindow,
+    signal?: AbortSignal,
+  ): Promise<Briefing> {
+    uuidSchema.parse(workspaceId);
+    return briefingSchema.parse(
+      await this.send(`/${workspaceId}/briefings`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [BRIEFING_SESSION_HEADER]: this.session.getBriefingSessionKey(),
+        },
+        body: JSON.stringify(generateBriefingRequestSchema.parse({ window })),
+        signal,
+      }),
+    );
   }
 
   // --- reviews -------------------------------------------------------------

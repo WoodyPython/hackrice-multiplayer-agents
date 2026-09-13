@@ -296,7 +296,7 @@ describe("discussion", () => {
     expect(await screen.findByText("Too late")).toBeTruthy();
     // §2.3: a run's inputs freeze at Start. Without this label a contributor
     // cannot tell that what they just wrote reaches no agent in this run.
-    expect(screen.getByText("Added after this run started")).toBeTruthy();
+    expect(screen.getByText("After run started")).toBeTruthy();
   });
 
   it("sends an answer to the question endpoint, never as an ordinary comment", async () => {
@@ -366,20 +366,20 @@ describe("discussion", () => {
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
 
     await user.type(
-      await screen.findByLabelText("Add to the discussion"),
+      await screen.findByLabelText("Message"),
       "Worth adding",
     );
-    await user.click(screen.getByRole("button", { name: "Post comment" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
 
     // The text survives the failure, so a retry is one click rather than
     // retyping.
     await screen.findByRole("alert");
     expect(
-      (screen.getByLabelText("Add to the discussion") as HTMLTextAreaElement)
+      (screen.getByLabelText("Message") as HTMLTextAreaElement)
         .value,
     ).toBe("Worth adding");
 
-    await user.click(screen.getByRole("button", { name: "Post comment" }));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(attempts).toBe(2));
 
     const posts = calls.filter(
@@ -576,7 +576,9 @@ describe("files", () => {
     await user.click(
       await screen.findByRole("button", { name: "Edit a file together" }),
     );
-    await user.click(await screen.findByRole("button", { name: /guide\.md/ }));
+    // The same file also sits in the explorer beside it, so pick from the picker.
+    const picker = await screen.findByRole("region", { name: "Choose a file to edit together" });
+    await user.click(await within(picker).findByRole("button", { name: /guide\.md/ }));
 
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith("/drafts/open"))).toBe(
@@ -1044,7 +1046,7 @@ describe("review", () => {
     expect(screen.queryByText(/Only the workspace owner can apply/)).toBeNull();
   });
 
-  it("blocks Apply on a stale review and offers a refresh", async () => {
+  it("blocks Apply on a stale review and says it is being rebuilt", async () => {
     await openChanges({
       [`GET /tasks/${taskId}/reviews`]: () =>
         json({ reviews: [reviewRow({ status: "stale" })] }),
@@ -1052,12 +1054,28 @@ describe("review", () => {
         json(reviewDetail({ review: reviewRow({ status: "stale" }) })),
     });
 
-    // §4.7: "Review stale | Disable Apply and offer Refresh review".
+    // §4.7 disables Apply on a stale review. Refreshing is now automatic
+    // rather than a button, so the notice says so instead of offering one.
     expect(await screen.findByText("This review is out of date")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Refresh review" })).toBeTruthy();
+    expect(screen.getByText("The latest version is being rebuilt automatically.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Refresh review" })).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Apply these changes" }),
     ).toBeNull();
+  });
+
+  it("rebuilds a stale review on its own once the task is eligible", async () => {
+    const { calls } = await openChanges({
+      [`GET /tasks/${taskId}`]: () => json({ ...task, status: "ready_for_review" }),
+      [`GET /tasks/${taskId}/reviews`]: () =>
+        json({ reviews: [reviewRow({ status: "stale" })] }),
+      [`POST /tasks/${taskId}/review`]: () => json(reviewDetail()),
+    });
+
+    await waitFor(() =>
+      expect(calls.some((call) => call.method === "POST" && call.url.endsWith(`/tasks/${taskId}/review`))).toBe(true),
+    );
+    expect(await screen.findByRole("button", { name: "Apply these changes" })).toBeTruthy();
   });
 
   it("names each conflicting side and refuses Apply until every file is decided", async () => {
@@ -1532,8 +1550,8 @@ describe("A08 cross-flow integration", () => {
       // Someone keeps typing (§7.6). The task page already polls the event
       // record, so this arrives without the Changes tab polling on its own.
       stale = true;
-      // §4.7: "Review stale | Disable Apply and offer Refresh review" -- before
-      // the click, not after it fails.
+      // §4.7: a stale review disables Apply -- before the click, not after it
+      // fails. The rebuild is automatic, so there is no Refresh button to offer.
       expect(
         await screen.findByText(
           "This review is out of date",
@@ -1545,7 +1563,7 @@ describe("A08 cross-flow integration", () => {
         screen.queryByRole("button", { name: "Apply these changes" }),
       ).toBeNull();
       expect(
-        screen.getByRole("button", { name: "Refresh review" }),
+        screen.getByText("The latest version is being rebuilt automatically."),
       ).toBeTruthy();
     },
   );

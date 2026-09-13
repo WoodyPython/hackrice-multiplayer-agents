@@ -3,6 +3,7 @@ import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
+  BRIEFING_SESSION_HEADER,
   NullOrchestrationHook,
   NullWorkspaceLifecycleHook,
   OWNER_KEY_HEADER,
@@ -116,6 +117,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           `req.headers["${OWNER_KEY_HEADER}"]`,
           `headers["${OWNER_KEY_HEADER}"]`,
           `*.headers["${OWNER_KEY_HEADER}"]`,
+          `req.headers["${BRIEFING_SESSION_HEADER}"]`,
+          `headers["${BRIEFING_SESSION_HEADER}"]`,
           'ownerKey',
           '*.ownerKey',
           '*.*.ownerKey',
@@ -146,7 +149,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: config.isProduction ? false : [config.PUBLIC_APP_URL, /^http:\/\/localhost:\d+$/],
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['content-type', OWNER_KEY_HEADER],
+    allowedHeaders: ['content-type', OWNER_KEY_HEADER, BRIEFING_SESSION_HEADER],
     credentials: false,
     maxAge: 86_400,
   });
