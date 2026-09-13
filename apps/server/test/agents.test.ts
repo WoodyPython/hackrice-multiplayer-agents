@@ -313,9 +313,38 @@ describe('budgeted model execution', () => {
     clock += 2000;
     await scope.generate('attempt2', request, { maxOutputTokens: 100 });
     expect(adapter.counts).toHaveLength(2);
-    expect(await budget(f.taskId)).toMatchObject({ consumed_tokens: 40, reserved_tokens: 120 });
+    /*
+     * The refused attempt releases its reservation; only the successful one
+     * consumes.
+     *
+     * This asserted `reserved_tokens: 120` — the refused attempt's hold, kept
+     * forever. That is right for a call that got a response whose total we
+     * could not read (it may have been billed), and wrong for one the provider
+     * refused: a 429 does no work and bills nothing.
+     *
+     * It mattered because `reserve` takes input plus the whole remaining
+     * allowance, so in production one transient 503 stranded ~62000 of a 64000
+     * budget and the planner's next attempt died as `token_exhausted`. The
+     * README puts backoff in application code, which cannot work if every
+     * refused attempt permanently burns its share.
+     *
+     * The conservative rule is unchanged where it applies — see the two tests
+     * below, which pin a failed response carrying usage and a permanent
+     * failure, both of which still hold their reservation.
+     */
+    expect(await budget(f.taskId)).toMatchObject({ consumed_tokens: 40, reserved_tokens: 0 });
     expect(scope.deadlineAt).toBe(deadline);
     expect(new Date((await ledger.start(f.agent.id)).deadline_at!).getTime()).toBe(deadline);
+  });
+
+  it('keeps the reservation when a permanent failure could have been billed', async () => {
+    // Narrowness check: only a *refused* request releases. A non-retryable
+    // failure may have generated something we cannot count, so it still holds.
+    const f = await fixture(); const adapter = new FakeModelAdapter([{ inputTokens: 20,
+      result: new ModelAdapterError('invalid_response', 'Malformed response', false) }]);
+    const scope = await open(f.agent.id, adapter);
+    await expect(scope.generate('r', request, { maxOutputTokens: 100 })).rejects.toMatchObject({ code: 'invalid_response' });
+    expect(await budget(f.taskId)).toMatchObject({ consumed_tokens: 0, reserved_tokens: 120 });
   });
 
   it('records reported usage carried by a failed response', async () => {

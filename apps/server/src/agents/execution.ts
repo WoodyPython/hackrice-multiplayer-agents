@@ -105,7 +105,30 @@ export class AgentExecution {
         sent = true;
         response = await adapter.generate(structuredClone(snapshot), { maxOutputTokens: allowance.maxOutputTokens }, signal);
       } catch (error) {
-        await ledger.recordUsage({ agentInstanceId, requestKey, usage: !sent
+        /*
+         * A refused request was never billed, so its reservation must not be
+         * held (section 9.3).
+         *
+         * `sent` is set before the call on purpose: once the request leaves,
+         * an error can still mean the provider generated something, and
+         * charging nothing would understate the budget. But a request the
+         * provider *refused* — a transport failure, 408, 429, or a 5xx — did no
+         * work and reported no counters, and the adapter already distinguishes
+         * exactly that case as `retryable`.
+         *
+         * Holding those reservations is what turned one transient 503 into a
+         * dead run: `reserve` takes input + the whole remaining allowance, so a
+         * single unsettled call leaves nothing for the retry the README says
+         * belongs to application code, and the run dies as `token_exhausted`
+         * several layers from the cause.
+         *
+         * Deliberately narrow. A permanent 4xx keeps the old behaviour: the
+         * agent is failing anyway, and the reservation cannot matter. Only a
+         * refusal that carries no counters at all releases.
+         */
+        const refused = error instanceof ModelAdapterError && error.retryable &&
+          error.usage.status !== 'reported' && error.usage.totalTokens === undefined;
+        await ledger.recordUsage({ agentInstanceId, requestKey, usage: !sent || refused
           ? { status: 'reported', totalTokens: 0 }
           : error instanceof ModelAdapterError ? error.usage : { status: 'unknown' } });
         throw error;

@@ -225,6 +225,29 @@ Not urgent. The rest of A05 does not wait on it.
 
 ---
 
+## A refused request now releases its reservation
+
+`WorkerExecutionScope` settles a refused model request at zero tokens: a
+transport failure, 408, 429 or 5xx carrying no counters did no work and billed
+nothing. Previously every such attempt kept its full hold, and because `reserve`
+takes input plus the whole remaining allowance, one transient 503 stranded most
+of a 64000 budget and the next attempt died as `token_exhausted`.
+
+This does not touch `retryOptions: { attempts: 1 }`, which stays as your README
+describes it — one call, one billable request, backoff in application code. The
+point is that backoff could not work while each refused attempt burned its
+share.
+
+Narrow on purpose: a failed response that carries reported usage still consumes
+it, and a permanent non-retryable failure still holds its reservation because it
+may have generated something uncountable. `test/agents.test.ts` pins both.
+
+One assertion changed meaning there: *retains budget/deadline across provider
+retries* asserted the stranded `reserved_tokens: 120` and now asserts `0`. Its
+deadline assertions are untouched.
+
+---
+
 ## Plan validation
 
 `OrchestratorPlanner` implements the new `OrchestratorPlanningService` seam in

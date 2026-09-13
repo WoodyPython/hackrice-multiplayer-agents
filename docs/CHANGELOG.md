@@ -2,6 +2,49 @@
 
 Newest first. One entry per landed ticket.
 
+## Fix — one transient provider failure no longer kills a run
+**Landed:** 2026-09-13 · Role B (in Role C files; see below)
+**Affects:** agent execution and token accounting
+**Action required:** None.
+
+A refused model request kept its full token reservation. `reserve` takes the
+input count plus the whole remaining allowance, so a single transient 503 —
+which these models do return under load — stranded roughly 62000 of a 64000
+budget, and the planner's next attempt died as `token_exhausted` several layers
+from the cause. That is the fragility flagged when agents started working again.
+
+**Not fixed with SDK retries, deliberately.** `retryOptions: { attempts: 1 }`
+is principled: `src/models/README.md` states that one `generate` call makes at
+most one generation request and that "scheduling and backoff belong to
+application code", which is what keeps §9.3's accounting exact. Turning SDK
+retries on would make one reservation cover several billable requests.
+
+The actual defect was that application-level backoff *cannot work* while every
+refused attempt permanently burns its share of the budget. So
+`WorkerExecutionScope` now settles a refused request at zero: a transport
+failure, 408, 429 or 5xx that carries no counters did no work and billed
+nothing.
+
+Deliberately narrow, and pinned by tests in both directions:
+
+- A failed response that *carries* reported usage still consumes it.
+- A permanent (non-retryable) failure still holds its reservation, because it
+  may have generated something we cannot count.
+- `sent` still guards the case where nothing left the process.
+
+**This edits Role C files** (`src/agents/execution.ts`, `test/agents.test.ts`).
+One existing assertion changed meaning: *recounts repeated context and retains
+budget/deadline across provider retries* asserted `reserved_tokens: 120` — the
+refused attempt's stranded hold — and now asserts `0`. The deadline assertions,
+which are that test's actual subject, are untouched. Flagging it explicitly
+because an assertion that encodes a leak is easy to restore by accident.
+
+Verified: `npm run build`, `agents` (**28**), `workers` (**35**), and
+`agents`/`start`/`scheduler` together (**57**). Mutation-checked by releasing on
+every failure and watching both boundary tests fail.
+
+---
+
 ## Fix — agents run again: the configured Gemini models were retired
 **Landed:** 2026-09-13 · Role B
 **Affects:** everyone. `.env` change required.
