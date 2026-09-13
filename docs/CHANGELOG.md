@@ -2,6 +2,45 @@
 
 Newest first. One entry per landed ticket.
 
+## Fix — a Gemini provider failure is now diagnosable
+**Landed:** 2026-09-13 · Role B
+**Affects:** anyone debugging a Start that fails
+**Action required:** Run `npm run gemini:smoke --workspace @app/server` when a
+Start reports `provider_error`. It names the cause in one command.
+
+Every Start reached the orchestrator and died ~230ms later reporting
+`provider_error` — far too fast to be generation, so the API was rejecting the
+request outright. Which rejection was unrecoverable.
+
+`safeError()` in the Gemini adapter mapped everything except 429 to
+`provider_error` and discarded the original. `ModelAdapterError` is documented
+as safe to report anywhere and deliberately carries no provider text, so nothing
+downstream could recover it either. §13.3 forbids provider text reaching the
+browser; it does not ask us to destroy it.
+
+- The adapter now reports model, HTTP status and the provider's own message to a
+  diagnostic sink, wired in `runtime.ts` to the server log. `ModelAdapterError`
+  is unchanged and still carries nothing.
+- `redactProviderDetail` strips `key=` values and `AIza…` tokens first, because
+  Google echoes the request in some errors and a key in a log file is still a
+  key. Mutation-checked.
+- **New:** `npm run gemini:smoke --workspace @app/server`, modelled on
+  `supabase:smoke`. It probes the configured orchestrator and worker models with
+  `countTokens` then `generateContent`, prints the real status and message, and
+  names the likely fix. It never prints the key.
+- Also fixed: `@fastify/static` was declared in `apps/server/package.json` but
+  missing from `node_modules`, so `tsc -b` failed on `http/frontend.ts` once the
+  incremental cache was invalidated.
+
+This does not itself fix a failing Start — it makes the next one say what is
+wrong. Recorded in [pitfalls](pitfalls.md): a redaction boundary belongs at the
+edge that publishes, not the edge that catches.
+
+Verified: `npm run build`, `models` (**39**, up from 36), `runtime` and `start`
+(**21**).
+
+---
+
 ## A08 — Cross-flow UI integration
 **Landed:** 2026-09-12 · Role A
 **Affects:** Role A. Frontend only — no route, migration, or dependency.

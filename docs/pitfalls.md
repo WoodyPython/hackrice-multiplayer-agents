@@ -119,6 +119,43 @@ and would cost the next person the same.
 
 ---
 
+## A safe error class made the failure unfixable
+
+**MVP blocker, orchestrator Start.** Every Start reached the orchestrator and
+died about 230 milliseconds later. All the evidence said the same four words:
+`agent.failed` with `code: provider_error`, start reason
+`model_provider_error`. Which rejection it was — a bad key, a model the key
+cannot reach, a malformed request — was not recoverable from anywhere.
+
+`safeError()` in the Gemini adapter reads `status` off the upstream error, maps
+429 to `rate_limited`, and returns `provider_error` for everything else. The
+original is dropped on the floor. `ModelAdapterError` is documented "safe to
+report: never retains raw provider errors, prompts, or credentials", so nothing
+downstream could recover it either. That comment is correct about what the class
+should carry to a browser, and it had quietly become a rule about what the
+process may *know*.
+
+**Why it took so long to see:** the code was behaving exactly as designed at
+every layer. Section 13.3 is real, the class honours it, the reason codes are
+stable and documented, and the UI renders them properly. Nothing was broken. The
+information was simply destroyed at the one point where it existed.
+
+**Instead:** a redaction boundary belongs at the edge that publishes, not at the
+edge that catches. The adapter now reports model, HTTP status and the provider's
+message to a diagnostic sink wired to the server log, with `key=` values and
+`AIza…` tokens stripped — a key in a log file is still a key —
+and `ModelAdapterError` is unchanged.
+
+**The general shape:** when a redaction rule and a diagnosis both want the same
+string, keep the string and move the redaction. "We never retain it" reads as
+discipline and behaves as data loss. Ask what a person debugging this at 2am
+would need, and check that something, somewhere, still has it.
+
+`npm run gemini:smoke --workspace @app/server` now answers the question in one
+command, the same way `supabase:smoke` does for storage.
+
+---
+
 ## A filtered query made three routes answer the wrong question
 
 **B08.** Asking for another workspace's task returned **200 and an empty list**
