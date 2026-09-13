@@ -39,6 +39,9 @@ export function attachLiveDocuments(server: Server, deps: LiveDocumentDeps,
     let release: (() => void) | undefined;
     try {
       if (stopping) { socket.destroy(); return; }
+      // Live edits are tiny and latency-sensitive. Disable Nagle buffering on
+      // the server side of the upgraded TCP connection before any Yjs frames.
+      request.socket.setNoDelay(true);
       const acquired = await coordinator.acquire(parseRoom(request.url));
       release = acquired.release;
       if (stopping || socket.destroyed) { socket.destroy(); return; }

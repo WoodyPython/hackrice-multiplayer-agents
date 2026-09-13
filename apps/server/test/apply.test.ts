@@ -159,6 +159,39 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     } finally { acquired.release(); }
   });
 
+  it('fans out a typing burst without waiting for database guards or review persistence', async () => {
+    const a = await connect(), b = await connect();
+    const originalWritable = runtime.collaboration.assertWritable;
+    let releaseWritable!: () => void, releaseInvalidation!: () => void, enteredInvalidation!: () => void;
+    const writableBlocked = new Promise<void>((resolve) => { releaseWritable = resolve; });
+    const invalidationBlocked = new Promise<void>((resolve) => { releaseInvalidation = resolve; });
+    const invalidationEntered = new Promise<void>((resolve) => { enteredInvalidation = resolve; });
+    const writable = vi.fn(async () => writableBlocked);
+    runtime.collaboration.assertWritable = writable;
+    const invalidate = vi.spyOn(runtime.reviews, 'invalidate').mockImplementation(async () => {
+      enteredInvalidation();
+      await invalidationBlocked;
+    });
+
+    try {
+      const start = a.text.length;
+      a.text.insert(start, 'a');
+      await invalidationEntered;
+      for (const character of ' low-latency burst') a.text.insert(a.text.length, character);
+
+      await vi.waitFor(() => expect(b.text.toString()).toBe(a.text.toString()), { timeout: 1_000 });
+      expect(writable).not.toHaveBeenCalled();
+      expect(invalidate).toHaveBeenCalledTimes(1);
+
+      releaseInvalidation();
+      await vi.waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
+    } finally {
+      releaseWritable();
+      releaseInvalidation();
+      runtime.collaboration.assertWritable = originalWritable;
+    }
+  });
+
   it('rejects typing queued after the Apply gate without modifying the candidate', async () => {
     const peer = await connect(); const review = await prepare();
     peer.provider.on('connection-close', () => { peer.provider.shouldConnect = false; });

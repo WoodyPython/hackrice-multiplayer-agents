@@ -31,6 +31,14 @@ interface Entry {
   users: number;
 }
 
+interface PendingInvalidation {
+  draftFileId: string;
+  latestReason: string;
+  requested: number;
+  completed: number;
+  running: Promise<void>;
+}
+
 function restore(loaded: LoadedDraft): Y.Doc {
   const doc = new Y.Doc();
   try {
@@ -52,6 +60,13 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
   private readonly entries = new Map<string, Entry>();
   private readonly gates = new TaskDocumentGate();
   private readonly captures = new Set<Promise<DraftCapture>>();
+  /**
+   * Review metadata is a durable projection of the authoritative in-memory
+   * revision. Keep it off the WebSocket fanout path and collapse a typing burst
+   * into one in-flight write plus catch-up writes for changes that arrived
+   * together while the database was busy.
+   */
+  private readonly invalidations = new Map<string, PendingInvalidation>();
   private stopping = false;
   private closing?: Promise<void>;
   private readonly closedTasks = new Set<string>();
@@ -59,6 +74,36 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
   assertWritable?: (taskId: string) => Promise<void>;
 
   constructor(private readonly deps: LiveDocumentDeps, private readonly captureDeps?: CaptureDeps) {}
+
+  private invalidateAfterAcceptedChange(taskId: string, draftFileId: string, reason: string): void {
+    if (!this.onAcceptedChange) return;
+    const existing = this.invalidations.get(taskId);
+    if (existing) {
+      existing.latestReason = reason;
+      existing.requested++;
+      return;
+    }
+
+    const pending: PendingInvalidation = {
+      draftFileId,
+      latestReason: reason,
+      requested: 1,
+      completed: 0,
+      running: Promise.resolve(),
+    };
+    this.invalidations.set(taskId, pending);
+    pending.running = (async () => {
+      while (pending.completed < pending.requested) {
+        const target = pending.requested;
+        const latestReason = pending.latestReason;
+        await this.onAcceptedChange!(taskId, latestReason).catch(() =>
+          this.deps.onError?.({ draftFileId: pending.draftFileId, code: 'DRAFT_NOT_SAVED' }));
+        pending.completed = target;
+      }
+    })().finally(() => {
+      if (this.invalidations.get(taskId) === pending) this.invalidations.delete(taskId);
+    });
+  }
 
   private evict(key: string, entry: Entry): void {
     const room = entry.room;
@@ -108,11 +153,14 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
         store: this.deps.drafts, debounceMs: this.deps.debounceMs,
         processUpdate: (operation) => this.gates.run(id.taskId, async () => {
           if (this.closedTasks.has(id.taskId)) { entry.room?.closeEpoch(); return; }
-          await this.assertWritable?.(id.taskId);
           const before = entry.room?.revision;
           operation();
           if (entry.room && before !== entry.room.revision) {
-            await this.onAcceptedChange?.(id.taskId, `${id.draftFileId}:${entry.room.revision}`).catch(() => this.deps.onError?.({ draftFileId: id.draftFileId, code: 'DRAFT_NOT_SAVED' }));
+            this.invalidateAfterAcceptedChange(
+              id.taskId,
+              id.draftFileId,
+              `${id.draftFileId}:${entry.room.revision}`,
+            );
           }
         }),
         onError: () => this.deps.onError?.({ draftFileId: id.draftFileId, code: 'DRAFT_NOT_SAVED' }),
@@ -299,6 +347,7 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
       const rooms = [...this.entries.values()].flatMap((entry) => entry.room ? [entry.room] : []);
       for (const room of rooms) room.stop();
       await this.gates.drain();
+      await Promise.allSettled([...this.invalidations.values()].map((pending) => pending.running));
       const saved = await Promise.allSettled(rooms.map((room) => room.flush()));
       for (const room of rooms) room.destroy();
       this.entries.clear();
