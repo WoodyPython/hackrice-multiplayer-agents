@@ -165,6 +165,11 @@ export class PgDiscussionService {
         clientRequestId: input.clientRequestId ?? null,
       });
 
+      await appendEvent(trx, {
+        workspaceId, taskId, eventKey: `discussion:${entryId}:posted`,
+        type: 'discussion.posted',
+      });
+
       if (input.materialIds.length > 0) {
         await this.attachMaterials(trx, workspaceId, taskId, entryId, input.materialIds);
         await invalidateTaskReviews(trx, taskId, `attachment:${entryId}`);
