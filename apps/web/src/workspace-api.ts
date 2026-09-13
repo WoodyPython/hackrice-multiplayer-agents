@@ -880,13 +880,14 @@ export class WorkspaceApi {
     workspaceId: string,
     path: string,
     guestLabel: string,
+    materialId?: string,
   ): Promise<OpenDraftResponse> {
     uuidSchema.parse(workspaceId);
     return openDraftResponseSchema.parse(
       await this.request(
         `/${workspaceId}/drafts/open`,
         "POST",
-        { path, guestLabel },
+        { path, guestLabel, ...(materialId ? { materialId } : {}) },
         workspaceId,
       ),
     );

@@ -10,6 +10,7 @@ import type { LocalGitService } from '../git/service.js';
 import type { PgCheckpointStore } from './checkpoint-store.js';
 import { TaskDocumentGate } from './gate.js';
 import { LiveRoom, MAX_LIVE_MESSAGE_BYTES } from './room.js';
+import { normalizeEditorText } from './editor-text.js';
 
 export interface LiveDocumentDeps {
   drafts: Pick<PgDraftStore, 'resolveRoom' | 'load' | 'initialize' | 'persist'>;
@@ -78,6 +79,31 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
   assertWritable?: (taskId: string) => Promise<void>;
 
   constructor(private readonly deps: LiveDocumentDeps, private readonly captureDeps?: CaptureDeps) {}
+
+  /** Repairs snapshots created before line endings were normalized. */
+  private async restoreForEditor(loaded: LoadedDraft): Promise<{ doc: Y.Doc; revision: number }> {
+    const doc = restore(loaded);
+    const text = doc.getText(LIVE_TEXT_NAME);
+    const normalized = normalizeEditorText(text.toString());
+    let revision = loaded.draftFile.persistedRevision;
+    if (normalized !== text.toString()) {
+      doc.transact(() => {
+        text.delete(0, text.length);
+        text.insert(0, normalized);
+      });
+      revision += 1;
+      const saved = await this.deps.drafts.persist(loaded.draftFile.id, {
+        revision,
+        yjsState: Y.encodeStateAsUpdate(doc),
+        stateVector: Y.encodeStateVector(doc),
+      });
+      if (!saved.applied || saved.persistedRevision !== revision) {
+        doc.destroy();
+        throw new ApiError('DRAFT_NOT_SAVED', 'The shared draft changed while its line endings were being repaired.');
+      }
+    }
+    return { doc, revision };
+  }
 
   private invalidateAfterAcceptedChange(taskId: string, draftFileId: string, reason: string): void {
     if (!this.onAcceptedChange) return;
@@ -154,15 +180,16 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
       if (loaded.yjsState === null) {
         const seed = new Y.Doc();
         try {
-          seed.getText(LIVE_TEXT_NAME).insert(0, source?.text ?? '');
+          seed.getText(LIVE_TEXT_NAME).insert(0, normalizeEditorText(source?.text ?? ''));
           loaded = (await this.deps.drafts.initialize(id.draftFileId, {
             yjsState: Y.encodeStateAsUpdate(seed), stateVector: Y.encodeStateVector(seed), baseBlobSha: source?.hash ?? null,
           })).draft;
         } finally { seed.destroy(); }
       }
-      const doc = restore(loaded);
+      const restored = await this.restoreForEditor(loaded);
+      const doc = restored.doc;
       const room = new LiveRoom({
-        draftFileId: id.draftFileId, doc, revision: loaded.draftFile.persistedRevision,
+        draftFileId: id.draftFileId, doc, revision: restored.revision,
         store: this.deps.drafts, debounceMs: this.deps.debounceMs,
         processUpdate: (operation) => this.gates.run(id.taskId, async () => {
           if (this.closedTasks.has(id.taskId)) { entry.room?.closeEpoch(); return; }
@@ -275,16 +302,17 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
                 const source = await git.readText(draft.path);
                 const seed = new Y.Doc();
                 try {
-                  seed.getText(LIVE_TEXT_NAME).insert(0, source.text ?? '');
+                  seed.getText(LIVE_TEXT_NAME).insert(0, normalizeEditorText(source.text ?? ''));
                   loaded = (await this.deps.drafts.initialize(draft.id, {
                     yjsState: Y.encodeStateAsUpdate(seed), stateVector: Y.encodeStateVector(seed), baseBlobSha: source.hash,
                   })).draft;
                 } finally { seed.destroy(); }
               }
-              const doc = restore(loaded);
+              const restored = await this.restoreForEditor(loaded);
+              const doc = restored.doc;
               try { files.push({ path: draft.path, text: doc.getText(LIVE_TEXT_NAME).toString() }); }
               finally { doc.destroy(); }
-              revisions[draft.id] = loaded.draftFile.persistedRevision;
+              revisions[draft.id] = restored.revision;
             }
           }
           // Recheck epochs even for clean rooms, which have no pending save to detect closure.

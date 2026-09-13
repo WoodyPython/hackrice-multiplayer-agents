@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, CircleCheckBig, Loader2 } from "lucide-react";
 import { currentReview, type Review, type TaskDetail } from "@app/contracts";
 import { useBrowser } from "../browser-context";
-import { apiMessage } from "../workspace-api";
 import { Button } from "./ui/button";
-import { ErrorText } from "./ui/misc";
 
 /**
  * "The work is done and it is your turn", said where someone will see it.
@@ -30,15 +28,13 @@ export function ReviewReady({
   staleSignal,
 }: {
   task: TaskDetail;
-  /** Switches the task screen to Changes; also used after preparing. */
+  /** Switches the task screen to Changes. */
   onOpenReview: () => void;
   /** Re-reads when §7.6 invalidation fires, so "waiting" cannot go stale. */
   staleSignal?: string;
 }) {
   const { api } = useBrowser();
   const [reviews, setReviews] = useState<Review[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
   const relevant = task.status === "ready_for_review";
 
   useEffect(() => {
@@ -56,19 +52,6 @@ export function ReviewReady({
       });
     return () => controller.abort();
   }, [api, task.workspaceId, task.id, relevant, staleSignal]);
-
-  const prepareAndOpen = useCallback(async () => {
-    setBusy(true);
-    setFailure(null);
-    try {
-      await api.prepareReview(task.workspaceId, task.id);
-      onOpenReview();
-    } catch (error) {
-      setFailure(apiMessage(error));
-    } finally {
-      setBusy(false);
-    }
-  }, [api, task.workspaceId, task.id, onOpenReview]);
 
   if (!relevant) return null;
   const review = reviews ? currentReview(reviews) : null;
@@ -106,7 +89,7 @@ export function ReviewReady({
           detail:
             "The changes need to be rebuilt against the current text before they can be applied.",
           label: "Rebuild and read",
-          action: prepareAndOpen,
+          action: onOpenReview,
         };
       default:
         return {
@@ -114,7 +97,7 @@ export function ReviewReady({
           detail:
             "Nothing has been published yet. Put the changes together to read them, then decide whether to apply.",
           label: "Review the changes",
-          action: prepareAndOpen,
+          action: onOpenReview,
         };
     }
   })();
@@ -149,18 +132,12 @@ export function ReviewReady({
         <Button
           variant="primary"
           className="shrink-0"
-          disabled={busy}
-          onClick={() => void action()}
+          onClick={action}
         >
-          {busy ? "Preparing…" : label}
-          {!busy && <ArrowRight aria-hidden="true" />}
+          {label}
+          <ArrowRight aria-hidden="true" />
         </Button>
       </div>
-      {failure && (
-        <ErrorText role="alert" className="mt-3">
-          {failure}
-        </ErrorText>
-      )}
     </section>
   );
 }

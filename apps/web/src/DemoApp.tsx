@@ -308,14 +308,11 @@ function WorkspaceShell() {
                 />
                 <section className="max-w-2xl space-y-3 rounded-xl border border-border bg-card p-6 shadow-xs">
                   <h2 className="text-[17px] font-semibold tracking-tight">
-                    Workspace guidance
+                    Workspace details
                   </h2>
+                  <h3 className="text-[12px] font-medium text-muted-foreground">Description</h3>
                   <p className="text-[13px] leading-relaxed text-muted-foreground">
-                    {workspace.guidance}
-                  </p>
-                  <p className="text-[13px] text-muted-foreground">
-                    Host controls will be available when workspace creation is
-                    connected.
+                    {workspace.guidance || workspace.purpose}
                   </p>
                 </section>
               </>

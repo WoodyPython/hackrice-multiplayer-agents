@@ -486,6 +486,12 @@ export class PgTaskService {
           .as('open_question_count'),
       ])
       .where('workspace_id', '=', workspaceId)
+      // Applied manual-edit sessions remain in History through their review,
+      // but they are not durable work items on the task board.
+      .where((eb) => eb.or([
+        eb('kind', '!=', 'manual_edit'),
+        eb('status', 'not in', ['completed', 'awaiting_confirmation']),
+      ]))
       .limit(options.limit);
 
     query = options.order === 'id'

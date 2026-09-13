@@ -97,9 +97,17 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
 
   private async finalizeApplied(db: Db, review: Review, operation: ApplyOperationRow) {
     const now = new Date();
+    const task = await db.selectFrom('tasks').select('kind').where('id', '=', review.taskId).executeTakeFirstOrThrow();
     await db.updateTable('apply_operations').set({ status: 'applied', settled_at: now, error_code: null }).where('id', '=', operation.id).execute();
     await db.updateTable('reviews').set({ status: 'applied', updated_at: now }).where('id', '=', review.id).where('status', '=', 'ready').execute();
-    await db.updateTable('tasks').set({ status: 'awaiting_confirmation', active_run_id: null, updated_at: now }).where('id', '=', review.taskId).execute();
+    // Manual-edit tasks are implementation details of the shared editor. Once
+    // their file is applied they are finished and should leave the task stack;
+    // agent tasks still retain the explicit confirmation step.
+    await db.updateTable('tasks').set({
+      status: task.kind === 'manual_edit' ? 'completed' : 'awaiting_confirmation',
+      active_run_id: null,
+      updated_at: now,
+    }).where('id', '=', review.taskId).execute();
     await db.updateTable('draft_files').set({ status: 'closed', updated_at: now }).where('task_id', '=', review.taskId).where('status', '=', 'active').execute();
     await appendEvent(db, { workspaceId: operation.workspace_id, taskId: review.taskId, runId: review.runId,
       type: 'task.applied', eventKey: eventKeys.taskApplied(operation.id),

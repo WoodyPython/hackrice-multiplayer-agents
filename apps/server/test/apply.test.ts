@@ -18,7 +18,7 @@ import { appendEvent } from '../src/events/service.js';
 let db: ReturnType<typeof connectTestDb>, root: string, runtime: Awaited<ReturnType<typeof startRuntime>>;
 let workspaceId: string, taskId: string;
 const ownerKey = 'd07-owner-key-for-tests-only';
-const path = 'documents/shared.md';
+const path = 'code/shared.py';
 const peers: Array<{ provider: WebsocketProvider; doc: Y.Doc }> = [];
 beforeEach(async () => {
   db = connectTestDb(); root = await mkdtemp(join(tmpdir(), 'd07-apply-'));
@@ -26,7 +26,7 @@ beforeEach(async () => {
   await db.db.updateTable('workspaces').set({ owner_key_hash: hashOwnerKey(ownerKey) }).where('id', '=', workspaceId).execute();
   taskId = await insertTask(db.db, workspaceId, { kind: 'manual_edit', manual_source_path: path });
   runtime = await startRuntime({ config: testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl() }), listen: { host: '127.0.0.1', port: 0 } });
-  await runtime.git.checkpoint({ workspaceId, taskId, files: [{ path, text: 'approved by review\n' }, { path: 'code/example.ts', text: 'export const answer = 42;\n' }] });
+  await runtime.git.checkpoint({ workspaceId, taskId, files: [{ path, text: 'def first():\r\n    return 1\r\n\r\ndef second():\n    return 2\r\n' }, { path: 'code/example.ts', text: 'export const answer = 42;\n' }] });
 });
 afterEach(async () => {
   for (const peer of peers.splice(0)) { peer.provider.destroy(); peer.doc.destroy(); }
@@ -115,11 +115,51 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     for (const result of results) expect(result.statusCode, result.body).toBe(200);
     expect(results.map((r) => r.json().alreadyApplied).sort()).toEqual([false, true, true]);
     expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(review.candidateSha);
-    expect((await db.db.selectFrom('tasks').select('status').where('id', '=', taskId).executeTakeFirstOrThrow()).status).toBe('awaiting_confirmation');
+    expect((await db.db.selectFrom('tasks').select('status').where('id', '=', taskId).executeTakeFirstOrThrow()).status).toBe('completed');
     expect((await new PgReviewStore({ db: db.db }).read(review.review.id))!.status).toBe('applied');
     expect(await db.db.selectFrom('apply_operations').select('id').where('review_id', '=', review.review.id).execute()).toHaveLength(1);
     expect(await db.db.selectFrom('task_events').select('id').where('task_id', '=', taskId).where('type', '=', 'task.applied').execute()).toHaveLength(1);
     for (const file of [path, 'code/example.ts']) expect((await runtime.git.readText({ workspaceId, target: { kind: 'commit', commitSha: review.candidateSha }, path: file, allowedPaths: [file] })).text).not.toBeNull();
+  });
+
+  it('publishes exactly what the shared Python editor saved, with line boundaries intact', async () => {
+    // Simulate a snapshot created before editor line endings were normalized.
+    const drafts = new PgDraftStore({ db: db.db });
+    const oldDraft = await drafts.openForTask(workspaceId, taskId, path);
+    const oldDoc = new Y.Doc();
+    oldDoc.getText(LIVE_TEXT_NAME).insert(0, 'def first():\r\n    return 1\r\n\r\ndef second():\n    return 2\r\n');
+    await drafts.initialize(oldDraft.id, {
+      yjsState: Y.encodeStateAsUpdate(oldDoc),
+      stateVector: Y.encodeStateVector(oldDoc),
+      baseBlobSha: null,
+    });
+    oldDoc.destroy();
+
+    const peer = await connect();
+    expect(peer.text.toString()).toBe('def first():\n    return 1\n\ndef second():\n    return 2\n');
+    peer.text.insert(0, '# Added in the shared editor\n');
+    await vi.waitFor(async () => {
+      const loaded = await drafts.load(workspaceId, peer.draft.id);
+      expect(loaded?.draftFile.persistedRevision).toBeGreaterThan(1);
+    });
+
+    const expected = '# Added in the shared editor\ndef first():\n    return 1\n\ndef second():\n    return 2\n';
+    const review = await prepare();
+    const response = await apply(review);
+    expect(response.statusCode, response.body).toBe(200);
+    expect((await runtime.git.readText({
+      workspaceId,
+      target: { kind: 'commit', commitSha: review.candidateSha },
+      path,
+      allowedPaths: [path],
+    })).text).toBe(expected);
+    const mainSha = (await runtime.git.initialize(workspaceId)).mainSha;
+    expect((await runtime.git.readText({
+      workspaceId,
+      target: { kind: 'commit', commitSha: mainSha },
+      path,
+      allowedPaths: [path],
+    })).text).toBe(expected);
   });
 
   it.each(['task', 'guidance', 'human', 'main', 'candidate', 'extra_document'] as const)('refuses changed %s without publication', async (change) => {

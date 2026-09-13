@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { workspaceFilePathSchema } from './paths.js';
 import {
   draftFileIdSchema,
+  materialIdSchema,
   repoPathSchema,
   shaSchema,
   taskIdSchema,
@@ -95,6 +96,8 @@ export type PersistSnapshotResult = z.infer<typeof persistSnapshotResultSchema>;
 export const openDraftRequestSchema = z.object({
   path: workspaceFilePathSchema,
   guestLabel: z.string().trim().min(1).max(80),
+  /** Optional immutable source used only to seed a newly opened document. */
+  materialId: materialIdSchema.optional(),
 });
 export type OpenDraftRequest = z.infer<typeof openDraftRequestSchema>;
 

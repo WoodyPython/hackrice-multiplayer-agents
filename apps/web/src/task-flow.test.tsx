@@ -590,6 +590,24 @@ describe("files", () => {
     ).toBeTruthy();
   });
 
+  it("opens a reference material as a collaborative working file", async () => {
+    const user = userEvent.setup();
+    const { transport, calls } = server({
+      "POST /drafts/open": () =>
+        json({ taskId, draftFile: { ...draft, path: "documents/brief.md" }, created: true }, 201),
+    });
+    open(`/w/${workspaceId}/files`, transport);
+
+    await user.click(await screen.findByRole("button", { name: /brief\.md/ }));
+    await user.click(await screen.findByRole("button", { name: "Edit together" }));
+
+    await waitFor(() => expect(calls.find((call) => call.url.endsWith("/drafts/open"))?.body).toEqual({
+      path: "documents/brief.md",
+      guestLabel: expect.any(String),
+      materialId,
+    }));
+  });
+
   it("reports an empty approved branch from the actual listing", async () => {
     const { transport } = server();
     open(`/w/${workspaceId}/files`, transport);

@@ -225,7 +225,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerMaterialRoutes(app, { materials });
 
   const drafts = new PgDraftStore({ db: deps.db });
-  await registerDraftRoutes(app, { drafts });
+  await registerDraftRoutes(app, { drafts, materials });
 
   const stream = new RefreshStream();
   registerRefreshStream(app, stream);

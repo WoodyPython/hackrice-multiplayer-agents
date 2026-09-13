@@ -1,7 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { draftFileSchema, openDraftRequestSchema, uuidSchema } from '@app/contracts';
+import * as Y from 'yjs';
+import { LIVE_TEXT_NAME, draftFileSchema, openDraftRequestSchema, uuidSchema } from '@app/contracts';
 import { parseOrThrow } from '../http/errors.js';
+import { normalizeEditorText } from '../collaboration/editor-text.js';
+import type { PgMaterialService } from '../materials/service.js';
 import type { PgDraftStore } from './store.js';
 
 /**
@@ -19,6 +22,7 @@ const taskParams = z.object({ workspaceId: uuidSchema, taskId: uuidSchema });
 
 export interface DraftRouteDeps {
   drafts: PgDraftStore;
+  materials: Pick<PgMaterialService, 'readSelected'>;
 }
 
 export async function registerDraftRoutes(
@@ -37,7 +41,24 @@ export async function registerDraftRoutes(
   app.post('/api/workspaces/:workspaceId/drafts/open', async (request, reply) => {
     const { workspaceId } = parseOrThrow(workspaceParams, request.params);
     const body = parseOrThrow(openDraftRequestSchema, request.body ?? {});
+    const material = body.materialId
+      ? await deps.materials.readSelected(workspaceId, body.materialId)
+      : undefined;
     const result = await deps.drafts.openManualEdit(workspaceId, body);
+    if (material) {
+      const source = normalizeEditorText(Buffer.from(material.bytes).toString('utf8'));
+      const doc = new Y.Doc();
+      try {
+        doc.getText(LIVE_TEXT_NAME).insert(0, source);
+        await deps.drafts.initialize(result.draftFile.id, {
+          yjsState: Y.encodeStateAsUpdate(doc),
+          stateVector: Y.encodeStateVector(doc),
+          baseBlobSha: null,
+        });
+      } finally {
+        doc.destroy();
+      }
+    }
     return reply.status(result.created ? 201 : 200).send(result);
   });
 
