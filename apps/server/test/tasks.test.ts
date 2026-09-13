@@ -636,7 +636,7 @@ describe('task list', () => {
     const tasks = res.json().tasks;
     expect(tasks).toHaveLength(2);
     for (const task of tasks) {
-      expect(task).toMatchObject({ materialCount: 0, openQuestionCount: 0 });
+      expect(task).toMatchObject({ materialCount: 0, discussionCount: 0, openQuestionCount: 0 });
       expect(typeof task.creatorGuestLabel).toBe('string');
     }
   });

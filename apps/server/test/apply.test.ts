@@ -11,13 +11,20 @@ import { startRuntime } from '../src/recovery/runtime.js';
 import { PgDraftStore } from '../src/drafts/store.js';
 import { PgReviewStore } from '../src/runs/review-store.js';
 import { hashOwnerKey } from '../src/workspaces/owner-key.js';
-import { connectTestDb, insertTask, insertWorkspace, insertRun, testDatabaseUrl } from './helpers.js';
+import { connectTestDb, insertTask, insertWorkspace, insertRun, testDatabaseUrl, signInAs, sessionCookie } from './helpers.js';
 import { testConfig, authenticateRuntime } from './app-helpers.js';
 import { appendEvent } from '../src/events/service.js';
 
 let db: ReturnType<typeof connectTestDb>, root: string, runtime: Awaited<ReturnType<typeof startRuntime>>;
 let workspaceId: string, taskId: string;
 const ownerKey = 'd07-owner-key-for-tests-only';
+/** Presents the same session an ordinary request would; see capture.test.ts. */
+class AuthenticatedWebSocket extends WebSocket {
+  constructor(address: string, protocols?: string | string[]) {
+    super(address, protocols, { headers: sessionCookie() });
+  }
+}
+
 const path = 'documents/shared.md';
 const peers: Array<{ provider: WebsocketProvider; doc: Y.Doc }> = [];
 beforeEach(async () => {
@@ -44,7 +51,7 @@ async function connect() {
   const base = `ws://127.0.0.1:${(runtime.app.server.address() as { port: number }).port}`;
   const doc = new Y.Doc();
   const provider = new WebsocketProvider(base, liveRoomPath({ workspaceId, taskId, draftFileId: draft.id, epoch: draft.epoch }).slice(1), doc,
-    { WebSocketPolyfill: WebSocket, disableBc: true });
+    { WebSocketPolyfill: AuthenticatedWebSocket, disableBc: true });
   provider.messageHandlers[LIVE_MESSAGE_ACK] = () => {};
   peers.push({ provider, doc });
   await vi.waitFor(() => expect(provider.synced).toBe(true), { timeout: 10_000 });
@@ -69,10 +76,12 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     runtime = await startRuntime({ config: testConfig({ gitDataRoot: root, DATABASE_URL: testDatabaseUrl(), bootId: randomUUID() }),
       listen: { host: '127.0.0.1', port: 0 }, attachLiveDocuments: async (server) => {
         expect(server.listening).toBe(false);
-    await authenticateRuntime(runtime.app, db.db);
         expect((await store.readOperation(review.review.id))!.status).toBe(outcome === 'candidate' ? 'applied' : outcome === 'expected' ? 'pending' : 'ambiguous');
         return { close: async () => {} };
       } });
+    // After the restart completes: `runtime` is only assigned once
+    // startRuntime returns, so this cannot go inside the callback above.
+    await authenticateRuntime(runtime.app, db.db);
     expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(main);
     await expect(runtime.collaboration.acquire({ workspaceId, taskId, draftFileId: peer.draft.id, epoch: peer.draft.epoch }))
       .rejects.toMatchObject({ code: outcome === 'candidate' ? 'DOCUMENT_EPOCH_CLOSED' : 'RUN_INTERRUPTED' });
@@ -104,10 +113,13 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     expect(wrong.json().alreadyApplied).toBe(true);
 
     // Settings stay owner-only: this change widened apply, nothing else.
+    // As somebody who is not a member, since the harness signs every other
+    // request in this suite in as the workspace owner.
+    const outsider = await signInAs(db.db, { label: 'apply-outsider' });
     const settings = await runtime.app.inject({ method: 'PATCH', url: `/api/workspaces/${workspaceId}`,
-      payload: { guidance: 'No key supplied.' } });
+      headers: { cookie: outsider.cookie }, payload: { guidance: 'No key supplied.' } });
     expect(settings.statusCode).toBe(403);
-    expect(settings.json().error.code).toBe('OWNER_KEY_REQUIRED');
+    expect(settings.json().error.code).toBe('FORBIDDEN');
   });
 
   it('publishes the exact multi-file candidate once', async () => {

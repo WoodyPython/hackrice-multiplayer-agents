@@ -183,6 +183,31 @@ describe('writes are denied by default', () => {
     expect(presence.statusCode, presence.body).toBe(200);
   });
 
+  it('decides the host badge itself, and refuses one a caller claims', async () => {
+    // The roster feeds a "Host" badge next to somebody's name in discussion.
+    // A marker a link holder could assert about themselves would be worse than
+    // no marker at all (section 1.3), so the client cannot send one...
+    const claimed = await call('POST', `/api/workspaces/${workspaceA}/presence`, stranger.cookie,
+      { presenceId: randomUUID(), name: 'Impostor', color: '#2c4270', isHost: true });
+    expect(claimed.statusCode).toBe(400);
+
+    // ...and the server marks the real owner without being told.
+    const ownerPresence = randomUUID();
+    const asOwner = await call('POST', `/api/workspaces/${workspaceA}/presence`, ownerA.cookie,
+      { presenceId: ownerPresence, name: 'Owner A', color: '#2c4270' });
+    expect(asOwner.statusCode, asOwner.body).toBe(200);
+    const mine = (asOwner.json().participants as Array<{ presenceId: string; isHost?: boolean }>)
+      .find((p) => p.presenceId === ownerPresence);
+    expect(mine?.isHost).toBe(true);
+
+    const viewerPresence = randomUUID();
+    const asViewer = await call('POST', `/api/workspaces/${workspaceA}/presence`, stranger.cookie,
+      { presenceId: viewerPresence, name: 'Guest Cedar', color: '#7248a8' });
+    const theirs = (asViewer.json().participants as Array<{ presenceId: string; isHost?: boolean }>)
+      .find((p) => p.presenceId === viewerPresence);
+    expect(theirs?.isHost).toBeUndefined();
+  });
+
   it('keeps the member list away from link holders', async () => {
     // Names of colleagues are not part of "read the work".
     expect((await call('GET', `/api/workspaces/${workspaceA}/members`, stranger.cookie)).statusCode).toBe(403);

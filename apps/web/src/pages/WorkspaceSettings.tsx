@@ -68,7 +68,7 @@ export function WorkspaceSettings({
         description={workspace.purpose}
         actions={
           <Badge tone={canEdit ? "brand" : "neutral"}>
-            {canEdit ? "Owner" : "Read only"}
+            {canEdit ? "Host" : "Read only"}
           </Badge>
         }
       />
@@ -87,9 +87,9 @@ export function WorkspaceSettings({
             <p className="flex gap-2">
               <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
               <span>
-                Owner controls are unavailable in this browser. You can still
+                Host controls are unavailable in this browser. You can still
                 participate through the workspace link. If browser storage was
-                cleared, owner access cannot be recovered.
+                cleared, host access cannot be recovered.
               </span>
             </p>
           </Notice>

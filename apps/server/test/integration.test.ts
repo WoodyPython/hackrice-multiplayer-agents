@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { reviewDetailSchema } from '@app/contracts';
 import { startRuntime } from '../src/recovery/runtime.js';
-import { connectTestDb, testDatabaseUrl } from './helpers.js';
+import { connectTestDb, testDatabaseUrl, signInAs } from './helpers.js';
 import { testConfig, authenticateRuntime } from './app-helpers.js';
 
 /**
@@ -261,71 +261,76 @@ describe('workspace and object scoping survive a completed flow', { timeout: 90_
 // --- 2. owner-key isolation -------------------------------------------------
 
 describe('owner keys stay bound to their own workspace', { timeout: 90_000 }, () => {
-  it('will not apply one workspace review with another workspace key', async () => {
-    // Stops before applying: §2.4 makes a completed task read-only, and
-    // `prepare` correctly refuses a second review on one — so the key check
-    // has to happen against the review that is actually appliable.
+  it('will not apply one workspace review through another workspace', async () => {
+    // Apply is deliberately open to any link holder now (apply.test.ts asserts
+    // that a missing or wrong key succeeds), so an owner key no longer decides
+    // anything here. What must still hold is the workspace boundary: another
+    // workspace's own valid key, sent through that workspace's path, cannot
+    // reach this review. Stops before applying, since a completed task is
+    // read-only and would refuse for an unrelated reason.
     const used = await usedWorkspace('Key space', false);
     const other = await createSpace('Other key space');
     const second = used.review;
 
-    for (const [label, key] of [
-      ['another workspace key', other.ownerKey],
-      ['a forged key', 'not-the-owner-key-at-all-000000'],
-    ] as const) {
-      const res = await app().inject({
-        method: 'POST',
-        url: `/api/workspaces/${used.space.id}/reviews/${second.review.id}/apply`,
-        payload: { candidateSha: second.candidateSha },
-        headers: { 'x-owner-key': key },
-      });
-      // Section 12.2: a wrong key and a missing key are the same answer, so
-      // neither confirms that some other key would have worked.
-      expect(res.statusCode, `${label} was accepted`).toBe(403);
-    }
-
-    const absent = await app().inject({
+    const crossed = await app().inject({
       method: 'POST',
-      url: `/api/workspaces/${used.space.id}/reviews/${second.review.id}/apply`,
+      url: `/api/workspaces/${other.id}/reviews/${second.review.id}/apply`,
       payload: { candidateSha: second.candidateSha },
+      headers: { 'x-owner-key': other.ownerKey },
     });
-    expect(absent.statusCode).toBe(403);
+    // Absent rather than forbidden, like every other cross-workspace object.
+    expect(crossed.statusCode, crossed.body).toBe(404);
+
+    // Nothing was published: the review is still waiting in its own workspace.
+    const review = await app().inject({
+      method: 'GET',
+      url: `/api/workspaces/${used.space.id}/reviews/${second.review.id}`,
+    });
+    expect(review.statusCode).toBe(200);
+    expect(review.json().review.status).toBe('ready');
   });
 
-  it('never reports another workspace as owned, and never echoes the key', async () => {
+  it('never reports another account\'s workspace as owned', async () => {
+    // Same subject as before, expressed against accounts: a credential for one
+    // workspace grants nothing in another. The credential is now a session
+    // rather than a key, so the caller here is a second account which owns its
+    // own workspace and nothing else.
     const used = await usedWorkspace('Echo space');
-    const other = await createSpace('Echo other');
+    const mine = await signInAs(db.db, { label: 'echo-owner' });
+    const theirs = await createSpace('Echo other');
+    await db.db.insertInto('workspace_members')
+      .values({ workspace_id: used.space.id, user_id: mine.userId, role: 'owner' }).execute();
 
-    const foreign = await app().inject({
-      method: 'GET',
-      url: `/api/workspaces/${other.id}`,
-      headers: { 'x-owner-key': used.space.ownerKey },
-    });
+    const foreign = await app().inject({ method: 'GET',
+      url: `/api/workspaces/${theirs.id}`, headers: { cookie: mine.cookie } });
     expect(foreign.statusCode).toBe(200);
-    expect(foreign.json().isOwner).toBe(false);
+    expect(foreign.json()).toMatchObject({ isOwner: false, access: 'viewer' });
 
-    const own = await app().inject({
-      method: 'GET',
-      url: `/api/workspaces/${used.space.id}`,
-      headers: { 'x-owner-key': used.space.ownerKey },
-    });
-    expect(own.json().isOwner).toBe(true);
-    // The key is write-only: section 1.2 says no endpoint reads it back, and a
-    // workspace read is the one most likely to drift into returning it.
-    expect(own.body).not.toContain(used.space.ownerKey);
+    const own = await app().inject({ method: 'GET',
+      url: `/api/workspaces/${used.space.id}`, headers: { cookie: mine.cookie } });
+    expect(own.json()).toMatchObject({ isOwner: true, access: 'owner' });
+    // Nothing credential-shaped comes back from a workspace read. There is no
+    // key to echo any more, and the session cookie is HttpOnly and never in a body.
+    expect(own.body).not.toContain('coflow_session');
+    expect(own.body).not.toContain('owner_key');
   });
 
   it('ignores ownership claimed in a request body', async () => {
     const used = await usedWorkspace('Claim space');
+    // A signed-in account with no membership here, so the body is the only
+    // thing claiming anything.
+    const outsider = await signInAs(db.db, { label: 'claimant' });
 
     const res = await app().inject({
       method: 'PATCH',
       url: `/api/workspaces/${used.space.id}`,
-      payload: { name: 'Renamed by a contributor', isOwner: true },
+      headers: { cookie: outsider.cookie },
+      payload: { name: 'Renamed by a contributor', isOwner: true, role: 'owner' },
     });
-    // Section 12.2: an isOwner flag in a body is not a credential. Without the
-    // header this is a contributor, whatever the body says.
+    // Section 12.2: an isOwner flag in a body is not a credential, and neither
+    // is a role. Membership decides, and this caller has none.
     expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
   });
 });
 

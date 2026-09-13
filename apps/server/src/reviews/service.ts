@@ -281,9 +281,12 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
     workspaceId = uuidSchema.parse(workspaceId).toLowerCase(); taskId = uuidSchema.parse(taskId).toLowerCase();
     return this.operations.run(taskId, async () => {
       // Automatic clients can arrive together. Reuse the current candidate so
-      // opening the Changes tab in several browsers never creates duplicates.
+      // opening the Changes tab in several browsers never creates duplicates —
+      // but only while it still describes the task. A newer run result, changed
+      // inputs, or a moved main must rebuild (and be validated) rather than
+      // quietly hand back a candidate built from older sources.
       const existing = currentReview(await this.store.listForTask(taskId));
-      if (existing && ["ready", "conflict"].includes(existing.status))
+      if (existing && ['ready', 'conflict'].includes(existing.status) && await this.stillCurrent(workspaceId, taskId, existing))
         return this.read(workspaceId, existing.id);
       const initial = await this.inputs(workspaceId, taskId);
       const capture = await this.deps.collaboration.capture({ workspaceId, taskId });
@@ -301,6 +304,24 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
       if (digest(final.context) !== digest(current.context)) throw new ApiError('INPUT_CONFLICT', 'Review inputs changed while building. Request review again.');
       return this.finish(workspaceId, review, built.data, null);
     });
+  }
+
+  /**
+   * Whether a stored candidate was built from exactly today's sources. Any
+   * doubt answers false, which only costs a rebuild; the rebuild path performs
+   * the full source validation and reports its own error.
+   */
+  private async stillCurrent(workspaceId: string, taskId: string, review: Review): Promise<boolean> {
+    try {
+      const current = await this.inputs(workspaceId, taskId);
+      if ((review.runId ?? null) !== (current.run?.id ?? null)) return false;
+      if ((await this.deps.git.initialize(workspaceId)).mainSha !== review.source.mainSha) return false;
+      const { artifact } = await this.artifact(workspaceId, review);
+      // Same comparison Apply makes: current metadata plus the draft it captured.
+      return digest({ ...current.context, draft: artifact.context.draft }) === review.source.contextHash;
+    } catch {
+      return false;
+    }
   }
 
   private async scoped(workspaceId: string, reviewId: string) {

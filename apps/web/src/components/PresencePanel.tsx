@@ -138,6 +138,11 @@ export function PresencePanel({
                       <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">
                         {participant.name}
                       </span>
+                      {participant.isHost && (
+                        <span className="shrink-0 rounded-full bg-navy-100 px-2 py-0.5 text-[10px] font-semibold text-navy-800 dark:bg-navy-900 dark:text-navy-200">
+                          Host
+                        </span>
+                      )}
                       {participant.presenceId === selfPresenceId && (
                         <span className="shrink-0 text-[10.5px] text-muted-foreground">
                           you
@@ -149,13 +154,6 @@ export function PresencePanel({
               )}
             </div>
 
-            <footer className="border-t border-border p-4">
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
-                Names are chosen in each person's own browser and are not
-                verified. This list is who is connected now — it is not a
-                membership record, and it grants nobody anything.
-              </p>
-            </footer>
           </aside>
       )}
     </div>

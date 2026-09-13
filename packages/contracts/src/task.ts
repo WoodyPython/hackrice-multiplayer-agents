@@ -57,6 +57,7 @@ export const taskSummarySchema = postedTaskSchema.extend({
   creatorGuestLabel: z.string(),
   activeRunId: runIdSchema.nullable(),
   materialCount: z.number().int().nonnegative(),
+  discussionCount: z.number().int().nonnegative(),
   openQuestionCount: z.number().int().nonnegative(),
   updatedAt: timestampSchema,
 });

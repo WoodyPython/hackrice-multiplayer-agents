@@ -27,8 +27,23 @@ export function TaskBoardPage({
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const starredKey = `coflow.starred-tasks.${workspace.id}`;
+  const [starredIds, setStarredIds] = useState<string[]>(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(starredKey) ?? "[]");
+      return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+    } catch { return []; }
+  });
   const reload = useCallback(() => setNonce((value) => value + 1), []);
   const base = `/w/${workspace.id}`;
+
+  function toggleStar(taskId: string) {
+    setStarredIds((current) => {
+      const next = current.includes(taskId) ? current.filter((id) => id !== taskId) : [...current, taskId];
+      try { localStorage.setItem(starredKey, JSON.stringify(next)); } catch { /* The star remains for this tab. */ }
+      return next;
+    });
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -119,6 +134,8 @@ export function TaskBoardPage({
         tasks={tasks}
         base={base}
         heading={heading}
+        starredIds={starredIds}
+        onToggleStar={toggleStar}
       />
     </>
   );

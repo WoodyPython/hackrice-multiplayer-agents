@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { PgRunStore } from '../src/runs/run-store.js';
 import { LocalReviewService } from '../src/reviews/service.js';
-import { insertWorkspace, insertTask, insertRun, insertBudget, insertAgentInstance, insertDiscussionEntry } from './helpers.js';
+import { insertWorkspace, insertTask, insertRun, insertBudget, insertAgentInstance, insertDiscussionEntry, sessionCookie } from './helpers.js';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -14,7 +14,7 @@ import { GitWorkspaceLifecycleHook } from '../src/git/lifecycle.js';
 import { LocalGitService } from '../src/git/service.js';
 import { registerShutdownSignals, startRuntime } from '../src/recovery/runtime.js';
 import { connectTestDb, testDatabaseUrl } from './helpers.js';
-import { createWorkspaceViaApi, LogCapture, testConfig } from './app-helpers.js';
+import { createWorkspaceViaApi, LogCapture, testConfig, authenticateRuntime } from './app-helpers.js';
 
 let root: string;
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'd01-runtime-')); });
@@ -43,6 +43,7 @@ describe('D01 runtime integration', () => {
         expect((await db.db.selectFrom('agent_questions').select('status').where('id', '=', question.id).executeTakeFirst())!.status).toBe('canceled');
         return { close: async () => {} };
       } });
+      await authenticateRuntime(runtime.app, db.db);
       const old = new PgRunStore({ db: db.db, bootId: BOOT_ID });
       await expect(old.recordResultHead(runId, 'a'.repeat(40))).rejects.toMatchObject({ code: 'RUN_INTERRUPTED' });
       const response = await runtime.app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/tasks/${taskId}/retry`, payload: { clientRequestId: randomUUID() } });
@@ -87,8 +88,11 @@ describe('D01 runtime integration', () => {
       if (!address || typeof address === 'string') throw new Error('Expected TCP address');
       const base = `http://127.0.0.1:${address.port}`;
       expect(await (await fetch(`${base}/health`)).json()).toEqual({ status: 'ok', bootId: config.bootId });
+      await authenticateRuntime(runtime.app, db.db);
       const response = await fetch(`${base}/api/workspaces`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Persistent' }),
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...sessionCookie() },
+        body: JSON.stringify({ name: 'Persistent' }),
       });
       expect(response.status).toBe(201);
       id = (await response.json() as { workspaceId: string }).workspaceId;
@@ -119,6 +123,7 @@ describe('D01 runtime integration', () => {
       },
     }, (fields) => { app.log.error(fields, 'repository initialization failed'); });
     const app = await buildApp({ db: db.db, config: testConfig({ gitDataRoot: root }), lifecycle: hook, logStream: logs });
+    await authenticateRuntime(app, db.db);
     try {
       const { workspaceId } = await createWorkspaceViaApi(app);
       await hook.drain();

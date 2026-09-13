@@ -3,6 +3,7 @@ import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
+  BRIEFING_SESSION_HEADER,
   NullOrchestrationHook,
   NullWorkspaceLifecycleHook,
   OWNER_KEY_HEADER,
@@ -127,6 +128,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           `req.headers["${OWNER_KEY_HEADER}"]`,
           `headers["${OWNER_KEY_HEADER}"]`,
           `*.headers["${OWNER_KEY_HEADER}"]`,
+          `req.headers["${BRIEFING_SESSION_HEADER}"]`,
+          `headers["${BRIEFING_SESSION_HEADER}"]`,
           'ownerKey',
           '*.ownerKey',
           '*.*.ownerKey',
@@ -157,9 +160,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: config.isProduction ? false : [config.PUBLIC_APP_URL, /^http:\/\/localhost:\d+$/],
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['content-type', OWNER_KEY_HEADER],
-    // Required for the session cookie. Safe here only because `origin` above is
-    // an explicit allowlist and never a reflection of the caller's Origin.
+    allowedHeaders: ['content-type', OWNER_KEY_HEADER, BRIEFING_SESSION_HEADER],
+    // Required for the session cookie, which is the only way the SSE stream and
+    // the document socket can authenticate. Safe here only because `origin`
+    // above is an explicit allowlist, never a reflection of the caller's.
     credentials: true,
     maxAge: 86_400,
   });

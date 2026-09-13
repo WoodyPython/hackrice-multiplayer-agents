@@ -85,8 +85,7 @@ export function History({ workspaceId }: { workspaceId: string }) {
             </ButtonLink>
           }
         >
-          When an owner applies a reviewed change, it appears here with the task
-          it came from.
+          When anyone applies a reviewed change, it appears here with the task it came from.
         </EmptyState>
       ) : (
         /* A rail down the left ties the entries into one timeline. */

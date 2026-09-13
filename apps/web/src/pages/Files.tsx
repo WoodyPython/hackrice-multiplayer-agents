@@ -24,7 +24,6 @@ import { PageHeading } from "../components/PageHeading";
 import { FileTree, type Entry } from "../components/FileTree";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Input, Label } from "../components/ui/field";
 import { ErrorText, Skeleton } from "../components/ui/misc";
 
 /**
@@ -83,7 +82,6 @@ export function Files({ workspaceId }: { workspaceId: string }) {
   const [failure, setFailure] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
-  const [path, setPath] = useState("");
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [nonce, setNonce] = useState(0);
@@ -242,28 +240,33 @@ export function Files({ workspaceId }: { workspaceId: string }) {
       </div>
 
       {creating && (
-        <form
-          className="mb-4 flex flex-col gap-2.5 rounded-xl border border-border bg-card p-4 shadow-xs sm:flex-row sm:items-end"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void editTogether(path);
-          }}
-        >
-          <div className="min-w-0 flex-1 space-y-1.5">
-            <Label htmlFor="edit-path">File path</Label>
-            <Input
-              id="edit-path"
-              autoFocus
-              value={path}
-              placeholder="documents/launch.md"
-              onChange={(event) => setPath(event.target.value)}
-              className="font-mono text-[12.5px]"
-            />
+        <section className="mb-4 max-w-md rounded-xl border border-border bg-card p-3 shadow-xs" aria-label="Choose a file to edit together">
+          <div className="mb-2 flex items-center justify-between gap-3 px-1">
+            <div>
+              <h2 className="text-[13px] font-semibold">Choose a file</h2>
+              <p className="text-[11.5px] text-muted-foreground">Select an approved file to open it in the shared editor.</p>
+            </div>
+            <Button size="icon-sm" variant="ghost" onClick={() => setCreating(false)} aria-label="Close file picker">
+              <X aria-hidden="true" />
+            </Button>
           </div>
-          <Button variant="primary" type="submit" disabled={busy || !path.trim()}>
-            {busy ? "Opening…" : "Open for editing"}
-          </Button>
-        </form>
+          {approved.length > 0 ? (
+            <FileTree
+              entries={entries.filter((entry) => entry.kind === "approved")}
+              roots={[CATEGORY.approved.label]}
+              selected={null}
+              onSelect={(entry) => {
+                if (entry.kind !== "approved") return;
+                setCreating(false);
+                void editTogether(entry.file.path);
+              }}
+            />
+          ) : (
+            <p className="rounded-lg border border-dashed border-border px-3 py-5 text-center text-[12px] text-muted-foreground">
+              No approved files are available yet.
+            </p>
+          )}
+        </section>
       )}
 
       {uploadError && (

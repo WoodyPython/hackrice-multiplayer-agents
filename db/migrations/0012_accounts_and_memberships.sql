@@ -126,3 +126,36 @@ alter table workspaces add column claimed_at timestamptz;
 -- workspace is waiting to be claimed" from "this workspace has owners".
 comment on column workspaces.owner_key_hash is
   'Legacy guest ownership proof. Present only until the workspace is claimed by an account, then cleared.';
+
+-- ---------------------------------------------------------------------------
+-- Row level security
+-- ---------------------------------------------------------------------------
+-- 0004 enabled RLS on every table that existed then; tables added later do not
+-- inherit it. That matters more here than anywhere else in the schema: this
+-- database is Supabase, PostgREST exposes public tables to the anon role by
+-- default, and `sessions` holds live session hashes while `users` holds email
+-- addresses.
+--
+-- Same mechanism as 0004: RLS on with zero policies denies every role that is
+-- neither the table owner nor BYPASSRLS, which is exactly what anon and
+-- authenticated are. The Node API connects as the owning role and is unaffected.
+alter table public.users enable row level security;
+alter table public.sessions enable row level security;
+alter table public.workspace_members enable row level security;
+alter table public.workspace_invitations enable row level security;
+alter table public.user_preferences enable row level security;
+
+-- Guarded by role existence, exactly as 0004 does it: anon and authenticated
+-- are Supabase's roles and do not exist on plain Postgres (local compose, CI).
+do $$
+declare
+  r text;
+begin
+  foreach r in array array['anon', 'authenticated'] loop
+    if exists (select 1 from pg_roles where rolname = r) then
+      execute format('revoke all on all tables in schema public from %I', r);
+      execute format('revoke all on all sequences in schema public from %I', r);
+    end if;
+  end loop;
+end
+$$;

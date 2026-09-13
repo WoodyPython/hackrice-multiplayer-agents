@@ -89,7 +89,7 @@ export function Discussion({ workspaceId, taskId, entries, activeRunCutoffSeq, m
         </div>
       ) : (
         <ol ref={listRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto px-4 py-5 sm:px-5">
-          {entries.map((entry) => <DiscussionItem key={entry.id} entry={entry} materials={materials} workspaceId={workspaceId} taskId={taskId} onChanged={onChanged} />)}
+          {entries.map((entry) => <DiscussionItem key={entry.id} entry={entry} materials={materials} workspaceId={workspaceId} taskId={taskId} participants={participants} onChanged={onChanged} />)}
         </ol>
       )}
       <div className="min-h-6 px-5 text-[11.5px] text-muted-foreground" aria-live="polite">
@@ -128,8 +128,8 @@ export function Discussion({ workspaceId, taskId, entries, activeRunCutoffSeq, m
 
 const ACTOR = { guest: { label: "Guest", Icon: null }, agent: { label: "Agent", Icon: Bot }, system: { label: "System", Icon: Settings2 } } as const;
 
-function DiscussionItem({ entry, materials, workspaceId, taskId, onChanged }: {
-  entry: DiscussionEntry; materials: Material[]; workspaceId: string; taskId: string; onChanged: () => void;
+function DiscussionItem({ entry, materials, workspaceId, taskId, participants, onChanged }: {
+  entry: DiscussionEntry; materials: Material[]; workspaceId: string; taskId: string; participants: Participant[]; onChanged: () => void;
 }) {
   const { api, session } = useBrowser();
   const [answer, setAnswer] = useState("");
@@ -149,11 +149,13 @@ function DiscussionItem({ entry, materials, workspaceId, taskId, onChanged }: {
   const attachments = entry.materialIds.map((id) => materials.find((material) => material.id === id)).filter((material): material is Material => material !== undefined);
   const author = entry.actorType === "guest" ? (entry.guestLabel ?? "Guest") : (ACTOR[entry.actorType]?.label ?? "System");
   const Icon = entry.actorType === "guest" ? null : ACTOR[entry.actorType]?.Icon;
+  const isHost = entry.actorType === "guest" && participants.some((person) => person.isHost && person.name === author);
   const sentAt = new Date(entry.createdAt);
   return <li className={cn("group flex gap-3 rounded-lg px-2 py-2.5 hover:bg-muted/35", open && "bg-amber-50/60 dark:bg-amber-950/20")}>
     <div className="pt-0.5">{Icon ? <span aria-hidden="true" className="grid size-6 shrink-0 place-items-center rounded-full border border-border bg-card text-muted-foreground"><Icon className="size-3.5" /></span> : <Avatar name={author} size="sm" />}</div>
     <div className="min-w-0 flex-1">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1"><span className="text-[12.5px] font-semibold">{author}</span>
+        {isHost && <Badge tone="brand" size="sm">Host</Badge>}
         <time dateTime={entry.createdAt} title={sentAt.toLocaleString()} className="text-[10.5px] text-muted-foreground">{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(sentAt)}</time>
         {entry.question && <Badge tone={toneFor(entry.question.status)} size="sm">{entry.question.role === "asked" ? `Question · ${entry.question.status}` : "Answer"}</Badge>}
         {entry.afterActiveRunCutoff && <Badge tone="warn" size="sm">After run started</Badge>}

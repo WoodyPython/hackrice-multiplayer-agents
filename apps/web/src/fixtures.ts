@@ -99,6 +99,7 @@ export function summarize(task: TaskDetail): TaskSummary {
     ...task,
     materialCount: task.inputs.filter((input) => input.materialId !== null)
       .length,
+    discussionCount: task.discussionSeq,
     openQuestionCount: task.status === "needs_input" ? 1 : 0,
   });
 }

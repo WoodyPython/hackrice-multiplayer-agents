@@ -12,7 +12,7 @@ import { SignIn } from "./pages/SignIn";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { ClaimWorkspace } from "./components/ClaimWorkspace";
-import { AppShell, Breadcrumb, type NavItem } from "./components/AppShell";
+import { AppShell, type NavItem } from "./components/AppShell";
 import { EmptyState } from "./components/EmptyState";
 import { GuestNameControl } from "./components/GuestNameControl";
 import { PresencePanel } from "./components/PresencePanel";
@@ -29,6 +29,7 @@ import { NewTask } from "./pages/NewTask";
 import { Files } from "./pages/Files";
 import { ApprovedFile } from "./pages/ApprovedFile";
 import { History } from "./pages/History";
+import { Overview } from "./pages/Overview";
 
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
@@ -38,15 +39,15 @@ function LiveWorkspace({ id }: { id: string }) {
   // appear as such, and it must not survive a reload as a ghost.
   const [presenceId] = useState(() => crypto.randomUUID());
   const guest = session.getGuest();
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [failure, setFailure] = useState<unknown>(null);
+  const [retry, setRetry] = useState(0);
+  const [loading, setLoading] = useState(true);
   const participants = usePresence(id, {
     presenceId,
     name: guest.name,
     color: guest.color,
   });
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [failure, setFailure] = useState<unknown>(null);
-  const [retry, setRetry] = useState(0);
-  const [loading, setLoading] = useState(true);
   const location = useLocation();
   const base = `/w/${id}`;
   useEffect(() => {
@@ -131,6 +132,7 @@ function LiveWorkspace({ id }: { id: string }) {
       workspace.isOwner && !loading && !failure && !!session.getOwnerKey(id),
   };
   const items: NavItem[] = [
+    { to: `${base}/overview`, label: "Overview", icon: "overview" },
     { to: base, label: "Tasks", icon: "board", end: true },
     { to: `${base}/files`, label: "Files", icon: "files" },
     { to: `${base}/history`, label: "History", icon: "history" },
@@ -152,13 +154,12 @@ function LiveWorkspace({ id }: { id: string }) {
       }
       guestRole={
         visibleWorkspace.isOwner
-          ? "Workspace owner"
+          ? "Host"
           : visibleWorkspace.access === "member"
             ? "Member"
             : "Viewing by link"
       }
       profileControl={<GuestNameControl sidebar />}
-      breadcrumb={<Breadcrumb trail={["Workspace", workspace.name]} />}
       topbarEnd={
         <div className="flex items-center gap-2.5">
           <PresencePanel
@@ -170,8 +171,8 @@ function LiveWorkspace({ id }: { id: string }) {
       }
     >
       {/*
-        The "owner access was not saved in this browser" warning that used to
-        live here is gone with the thing it warned about: ownership is a
+        The "host access was not saved in this browser" warning that used to
+        live here is gone with the thing it warned about: being the Host is a
         membership row now, so clearing storage loses nothing.
 
         What replaces it is the other direction -- a workspace made before
@@ -230,6 +231,7 @@ function LiveWorkspace({ id }: { id: string }) {
         <Route path="files/view" element={<ApprovedFile workspaceId={id} />} />
         <Route path="files" element={<Files workspaceId={id} />} />
         <Route path="history" element={<History workspaceId={id} />} />
+        <Route path="overview" element={<Overview workspaceId={id} />} />
         <Route
           path="*"
           element={

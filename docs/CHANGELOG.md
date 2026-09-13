@@ -2,6 +2,58 @@
 
 Newest first. One entry per landed ticket.
 
+## Overview — "Catch me up" briefings
+**Landed:** 2026-09-13 (not yet merged) · contracts, server, frontend, one migration
+**Affects:** everyone. **Action required:** run `npm run db:migrate` (adds `0011_workspace_briefings.sql`).
+
+A new **Overview** page at the top of the sidebar generates a short briefing for
+"Since last briefing", "Last hour" or "Last 24 hours": what changed, open agent
+questions and reviews waiting on someone, and up to three suggested next steps.
+Every point links to the tasks, reviews, approved files or drafts behind it.
+
+**The model never sees an ID and never writes a link.** Records in the window are
+given short keys (T1, R1, F1, Q1, A1). Gemini cites keys, and the server maps
+them back. A "what changed" point must cite at least one real activity record or
+it is dropped, invented keys are discarded, and text with URLs or markup is
+refused. Open questions, unresolved reviews and every count come from records,
+not from the model. The browser builds routes from typed IDs.
+
+**Read-only.** Generation writes one row to `workspace_briefings` and nothing
+else: no task, event, discussion or review changes, and next steps are text.
+
+**Gemini failure is not an error.** A missing key, provider error, timeout
+(60 s) or unusable answer returns the factual activity recap instead, labeled
+as such. It uses the existing server-side adapter (`analyst` preset), so the
+key never reaches the browser.
+
+**History and cutoff** are scoped to the workspace and a per-browser session key
+(`x-briefing-session`, stored as a sha256 hash). It is deliberately not the
+guest `contributorId`, which editor awareness broadcasts. A row is written only
+after a successful Gemini generation. "Since last briefing" always advances the
+cutoff. A fixed window advances it only if it reaches back past the previous
+one, so nothing in between is skipped. The first briefing covers 24 hours and
+the longest window is 14 days. Twenty rows are kept per session.
+
+Generation is rate limited to 12 per minute per client, because it spends model
+quota for anyone holding the link. It does not draw on per-task agent budgets:
+that table is keyed by task, and a briefing belongs to the workspace.
+
+**Also in this change: fixes after the "fixed up site" and "more general site
+fixes" merges.**
+- **Review reuse.** `prepare` now reuses a `ready`/`conflict` review only while
+  it still matches current inputs, the same run and approved main. Before this,
+  it returned the old candidate after a newer run result or a mismatched Git
+  head, where it should rebuild or refuse with `INPUT_CONFLICT`. That bypassed
+  source validation.
+- **Stale tests updated to the intended behavior:**
+  - Apply is open to all link holders, so `integration.test.ts` now asserts the
+    workspace boundary instead of the owner key.
+  - Prepare reuses a freshly resolved review.
+  - Uncertain token holds stay reserved but no longer exhaust the budget. The
+    per-call allowance has been capped since `60b30df`.
+  - The web tests use the new discussion composer, automatic review rebuilds,
+    the Workspace settings sidebar link and the file picker.
+
 ## UI — review prominence, readable diffs, file explorer, presence
 **Landed:** 2026-09-13 · frontend, with two server changes
 **Affects:** everyone. **Action required:** read the Apply note below.

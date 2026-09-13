@@ -27,6 +27,8 @@ import { PgRunStore } from '../runs/run-store.js';
 import { registerFrontend } from '../http/frontend.js';
 import { registerApprovedFileRoutes } from '../git/routes.js';
 import type { ExecutionDeps } from '../agents/execution.js';
+import { BriefingService } from '../briefings/service.js';
+import { registerBriefingRoutes } from '../briefings/routes.js';
 
 export interface LiveDocumentAttachment {
   close(): Promise<void>;
@@ -153,6 +155,19 @@ export async function startRuntime(options: RuntimeOptions) {
       onBackgroundError: (error) => app?.log.error({ err: error }, 'review usage settlement failed after timeout') });
     const reviewEvidence = new ReviewEvidenceComposer({ db: db.db });
     await registerReviewRoutes(app, reviews, { evidence: reviewEvidence, assessments: reviewAssessments });
+    // "Catch me up": the same adapter as agents, so the key stays server-side
+    // and a missing key degrades to the factual recap rather than an error.
+    const briefings = new BriefingService({
+      db: db.db, adapter,
+      sources: {
+        approvedPaths: async (workspaceId) =>
+          new Set((await git.listApprovedFiles(workspaceId)).files.map((file) => file.path)),
+        reviewChangedPaths: async (workspaceId, reviewId) =>
+          (await reviews.read(workspaceId, reviewId)).changedFiles.map((file) => file.path),
+      },
+      onModelFailure: (info) => app?.log.warn(info, 'briefing fell back to the activity recap'),
+    });
+    await registerBriefingRoutes(app, { briefings });
     const applies = await reviews.reconcilePreviousApplies();
     const recovery = { interrupted, applies };
     app.log.info({ recovery }, 'startup recovery complete');

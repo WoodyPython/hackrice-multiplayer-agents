@@ -276,6 +276,18 @@ export interface ApplyOperationsTable {
   settled_at: Timestamp | null;
 }
 
+export interface WorkspaceBriefingsTable {
+  id: Generated<string>;
+  workspace_id: string;
+  viewer_hash: Buffer;
+  window_mode: 'since_last' | 'last_hour' | 'last_24h';
+  window_start: Timestamp;
+  window_end: Timestamp;
+  advances_cutoff: boolean;
+  content: Record<string, unknown>;
+  created_at: Timestamp;
+}
+
 export interface SchemaMigrationsTable {
   filename: string;
   checksum: string;
@@ -351,6 +363,7 @@ export interface Database {
   task_events: TaskEventsTable;
   reviews: ReviewsTable;
   apply_operations: ApplyOperationsTable;
+  workspace_briefings: WorkspaceBriefingsTable;
   schema_migrations: SchemaMigrationsTable;
 }
 

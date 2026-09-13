@@ -60,6 +60,7 @@ export function usePresence(
           {
             method: "POST",
             headers: { "content-type": "application/json" },
+            // No host flag: the server derives it from membership.
             body: JSON.stringify({ presenceId, name, color }),
             signal: controller.signal,
           },

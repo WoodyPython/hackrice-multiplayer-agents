@@ -68,7 +68,11 @@ export function registerRefreshStream(app: FastifyInstance, stream: RefreshStrea
   app.post('/api/workspaces/:workspaceId/presence', async (request, reply) => {
     const { workspaceId } = parseOrThrow(workspaceParams, request.params);
     const entry = parseOrThrow(announcePresenceRequestSchema, request.body);
-    if (presence.announce(workspaceId, entry)) broadcast(workspaceId);
+    // The host marker is the server's to decide. The authorization hook has
+    // already resolved this caller's membership, so the roster reports what
+    // they actually are rather than what they claimed.
+    const isHost = request.auth?.access === 'owner';
+    if (presence.announce(workspaceId, { ...entry, isHost })) broadcast(workspaceId);
     return reply.code(200).send(presenceRosterSchema.parse({
       workspaceId, participants: presence.list(workspaceId),
     }));

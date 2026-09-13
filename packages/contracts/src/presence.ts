@@ -30,6 +30,15 @@ export const participantSchema = z.object({
   since: z.number().int().nonnegative(),
   /** Ephemeral task-local typing state. Omitted when this browser is idle. */
   typingTaskId: uuidSchema.optional(),
+  /**
+   * Whether this browser belongs to a workspace owner.
+   *
+   * Derived by the server from the caller's membership, never sent by the
+   * client. It is display-only, but it is displayed as a badge beside somebody's
+   * name, and a marker a link holder could simply assert about themselves would
+   * be worse than no marker at all (section 1.3).
+   */
+  isHost: z.boolean().optional(),
 });
 export type Participant = z.infer<typeof participantSchema>;
 
@@ -44,6 +53,8 @@ export const announcePresenceRequestSchema = z
     presenceId: uuidSchema,
     name: guestLabelSchema,
     color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    // No `isHost` here on purpose, and `.strict()` means sending one is a
+    // validation error rather than a silently ignored field.
   })
   .strict();
 export type AnnouncePresenceRequest = z.infer<typeof announcePresenceRequestSchema>;

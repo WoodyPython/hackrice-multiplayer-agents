@@ -16,7 +16,7 @@ import {
   summarize,
   workspace,
 } from "./fixtures";
-import { AppShell, Breadcrumb, type NavItem } from "./components/AppShell";
+import { AppShell, type NavItem } from "./components/AppShell";
 import { EmptyState } from "./components/EmptyState";
 import { Wordmark } from "./components/Logo";
 import { BackLink, PageHeading } from "./components/PageHeading";
@@ -158,7 +158,6 @@ function WorkspaceShell() {
       guestName={guest.name}
       guestRole="Guest contributor"
       profileControl={<GuestNameControl sidebar />}
-      breadcrumb={<Breadcrumb trail={["Workspace", workspace.name]} />}
       topbarEnd={
         <div className="flex items-center gap-2.5">
           <Badge tone="info" className="hidden sm:inline-flex">
@@ -315,7 +314,7 @@ function WorkspaceShell() {
                     {workspace.guidance}
                   </p>
                   <p className="text-[13px] text-muted-foreground">
-                    Owner controls will be available when workspace creation is
+                    Host controls will be available when workspace creation is
                     connected.
                   </p>
                 </section>

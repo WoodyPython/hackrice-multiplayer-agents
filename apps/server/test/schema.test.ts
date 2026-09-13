@@ -65,6 +65,8 @@ describe('migrations', () => {
       '0008_security_hardening.sql',
       '0009_task_confirmation.sql',
       '0010_confirmation_file_ownership.sql',
+      '0011_workspace_briefings.sql',
+      '0012_accounts_and_memberships.sql',
     ]);
   });
 
@@ -75,7 +77,7 @@ describe('migrations', () => {
     );
     const unprotected = rows.filter((r) => !r.rowsecurity).map((r) => r.tablename);
     expect(unprotected).toEqual([]);
-    expect(rows.length).toBe(18);
+    expect(rows.length).toBe(24);
   });
 
   it('pins the agent write guard search path', async () => {

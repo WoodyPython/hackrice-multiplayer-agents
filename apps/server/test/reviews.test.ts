@@ -157,8 +157,11 @@ describe('D06 review HTTP and persistence', { timeout: 60_000 }, () => {
     const ready = await runtime.reviews.resolve({ workspaceId, reviewId: first.review.id,
       expectedCandidateSha: first.candidateSha, resolutions: [{ path, choice: 'approved_main' }] });
     expect(ready.status).toBe('ready'); expect(ready.source).toEqual(first.review.source);
+    // Prepare reuses a candidate still built from current sources (automatic
+    // clients arrive together), so it returns the resolved review rather than
+    // rebuilding the conflict and discarding the resolution.
     const prepared = await runtime.reviews.prepare({ workspaceId, taskId });
-    expect(prepared.id).not.toBe(ready.id); expect(prepared.status).toBe('conflict');
+    expect(prepared.id).toBe(ready.id); expect(prepared.status).toBe('ready');
   });
 
   it('records the authoritative completed result and captured context, rejecting a mismatched Git head', async () => {
