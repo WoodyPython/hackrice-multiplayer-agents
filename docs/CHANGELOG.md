@@ -2,6 +2,51 @@
 
 Newest first. One entry per landed ticket.
 
+## Fix — the orchestrator reserved the entire token budget on its first call
+**Landed:** 2026-09-13 · Role B (in Role C files)
+**Affects:** every agent call
+**Action required:** None.
+
+"Create a text file saying hello world" reported `token_exhausted` on three
+attempts. It was not the context, and not a real limit.
+
+`AgentExecution.generate` takes an optional `maxOutputTokens` and **no caller
+passes it**, so `reserve` used the model ceiling (65536) against a 64000 budget
+and held `inputTokens + 65536` — the whole budget, on the first call.
+
+Measured live, with accounting logging added for the purpose:
+
+```
+preset         input  granted  reserved   billed
+orchestrator     521    63479     64000     1311
+writer          1030    62970     64000     1313
+reviewer        1258    62742     64000     1405
+```
+
+~1300 tokens billed against a 64000 reservation. Fine while calls succeed —
+settlement releases the hold. Fatal when one does not: attempts 2 and 3 made
+**no model call at all**, because nothing was left to reserve.
+
+- An unspecified ceiling now defaults to `DEFAULT_OUTPUT_ALLOWANCE` (8192, about
+  3.5x the largest total observed). Callers needing more still pass one.
+- **New logging**: per-call `inputTokens / requested / granted / reserved /
+  billed`, via `onAccounting` wired to the server log. The three numbers being
+  indistinguishable is what made this look like a quota problem.
+
+**Verified live.** After the change, reservations are 8714–9570 instead of
+64000, and a writer survived **nine consecutive `rate_limited` refusals** —
+each refunded by the previous fix — and then completed. Under the old behaviour
+the first refusal would have ended the run. Final budgets: all reservations 0,
+consumed 708 and 4592 of 64000.
+
+Recorded in [pitfalls](pitfalls.md): every number involved was plausible, which
+is why it read as a limit rather than an unset default.
+
+Verified: `npm run build`, `agents`/`start`/`scheduler` (**57**), `workers`
+(**35**).
+
+---
+
 ## Fix — one transient provider failure no longer kills a run
 **Landed:** 2026-09-13 · Role B (in Role C files; see below)
 **Affects:** agent execution and token accounting

@@ -119,6 +119,49 @@ and would cost the next person the same.
 
 ---
 
+## A default of "no limit" meant "the whole budget, every call"
+
+**MVP blocker, third pass.** A task whose entire content was "create a text
+file saying hello world" reported `token_exhausted` on three consecutive
+attempts, the orchestrator dying before it produced anything.
+
+`AgentExecution.generate` takes an optional `maxOutputTokens`. No caller passed
+it — `planner.ts` still does not — so `reserve` fell back to
+`profile.maxOutputTokens`, the model's own ceiling of 65536, against a task
+budget of 64000. `reserve` holds `inputTokens + maxOutputTokens`, so **the first
+call of any agent reserved the entire budget.**
+
+Measured on a live run, with logging added for exactly this:
+
+| | measured |
+|---|---|
+| input tokens | 521–1472 |
+| requested ceiling | none |
+| granted / reserved | 58025–64000 |
+| actually billed | 1311–2306 |
+
+A call that bills ~1300 tokens was holding 64000. Roughly forty-five times what
+it used.
+
+Harmless while calls succeed — settlement releases the hold immediately. Fatal
+the moment one does not: the hold stays, the agent's remaining budget is zero,
+and every later attempt dies as `token_exhausted` **without reaching the
+provider at all**. Attempts 2 and 3 in that task made no model call whatsoever.
+The symptom names a token limit and the cause is an unset default.
+
+**Why it was hard to see:** every number involved is plausible. 64000 is the
+budget, 65536 is the model ceiling, and `token_exhausted` is a real state with a
+real meaning. Nothing looks wrong until you print what a call asked for beside
+what it used.
+
+**Instead:** an unspecified ceiling now defaults to `DEFAULT_OUTPUT_ALLOWANCE`
+(8192, about 3.5x the largest total observed). A caller needing more still asks.
+And the per-call accounting — counted, granted, reserved, billed — is logged,
+because the three numbers being indistinguishable is what made a 45x
+over-reservation look like a quota problem.
+
+---
+
 ## The diagnostic I added to find the bug was itself dead code
 
 **MVP blocker, second pass.** Having established that a failed Start reported

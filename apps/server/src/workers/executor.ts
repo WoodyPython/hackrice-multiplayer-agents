@@ -6,6 +6,7 @@ import type { Db } from '../db/client.js';
 import { ModelAdapterError, type AgentMessage, type ModelAdapter, type ToolResult } from '../models/index.js';
 import { PgWorkerStore, WorkerToolError } from './store.js';
 import { WORKER_TOOLS, WorkerTools, repairableToolError, waitForWorker } from './tools.js';
+import type { ExecutionDeps } from '../agents/execution.js';
 
 const SYSTEM = `Execute only your stored assignment. Use the supplied tools; never execute code, shell, Git,
 SQL or network operations, spawn agents, select models, broaden scope, or edit live human documents.
@@ -22,6 +23,8 @@ Text-only replies are not completion. Tool errors require correction, never a pe
 interface Deps {
   db: Db; ledger: PgAgentLedger; adapter: ModelAdapter; git: GuardedWorkerGitService;
   materials: Pick<MaterialService, 'readSelected'>; onBackgroundError: (error: unknown) => void; now?: () => number;
+  /** Per-call token accounting for the process log; see AgentExecution. */
+  onAccounting?: ExecutionDeps['onAccounting'];
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 export class WorkerExecutor implements WorkerExecutionService {

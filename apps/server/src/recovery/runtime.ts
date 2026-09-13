@@ -25,6 +25,7 @@ import { ApiError } from '@app/contracts';
 import { PgRunStore } from '../runs/run-store.js';
 import { registerFrontend } from '../http/frontend.js';
 import { registerApprovedFileRoutes } from '../git/routes.js';
+import type { ExecutionDeps } from '../agents/execution.js';
 
 export interface LiveDocumentAttachment {
   close(): Promise<void>;
@@ -103,6 +104,10 @@ export async function startRuntime(options: RuntimeOptions) {
     orchestration = buildOrchestration({
       config, db: db.db, git, drafts, collaboration, adapter,
       onBackgroundError: (error) => app?.log.error({ err: error }, 'orchestration failed outside a request'),
+      // What each model call counted, was granted, and actually billed. A
+      // `token_exhausted` agent otherwise says nothing about which of the three
+      // went wrong.
+      onAccounting: (info) => app?.log.info(info, 'model call accounting'),
     });
     app = await (options.applicationFactory ?? buildApp)({ db: db.db, config, lifecycle, orchestration });
 
@@ -184,16 +189,17 @@ function buildOrchestration(deps: {
   collaboration: LiveDocumentCoordinator;
   adapter: ModelAdapter;
   onBackgroundError: (error: unknown) => void;
+  onAccounting?: ExecutionDeps['onAccounting'];
 }): StartOrchestrator {
-  const { config, db, git, adapter, onBackgroundError } = deps;
+  const { config, db, git, adapter, onBackgroundError, onAccounting } = deps;
   const bootId = config.bootId;
   const ledger = new PgAgentLedger({ db, bootId });
   const materials = new PgMaterialService({ db, blobs: defaultBlobStore(config) });
-  const workers = new WorkerExecutor({ db, ledger, adapter, git, materials, onBackgroundError });
+  const workers = new WorkerExecutor({ db, ledger, adapter, git, materials, onBackgroundError, onAccounting });
   return new StartOrchestrator({
     db, bootId, ledger, adapter, git, materials,
     drafts: deps.drafts, collaboration: deps.collaboration, onBackgroundError,
-    planner: new OrchestratorPlanner({ db, ledger, adapter, bootId, onBackgroundError }),
+    planner: new OrchestratorPlanner({ db, ledger, adapter, bootId, onBackgroundError, onAccounting }),
     scheduler: new ParallelAssignmentScheduler({ db, bootId, ledger, adapter, workers, git }),
   });
 }

@@ -1,12 +1,47 @@
 import { ModelAdapterError, type AgentRequest, type AgentResponse, type ModelAdapter } from '../models/types.js';
 import { AgentExecutionError, PgAgentLedger } from './ledger.js';
 
-interface ExecutionDeps {
+/**
+ * Output ceiling a caller gets when it does not ask for one.
+ *
+ * `reserve` holds `inputTokens + maxOutputTokens`, and with no ceiling that is
+ * the model's own maximum — 65536 against a 64000 task budget, so the FIRST
+ * call of any agent reserves the entire budget. Measured against a live run,
+ * the calls that produced a working plan and a written file counted 521–1472
+ * input tokens and billed 1311–2306 total. Reserving 64000 for that is a
+ * factor of roughly forty-five.
+ *
+ * It cost a run whenever a call failed in a way that could have been billed:
+ * the hold is kept, the agent's remaining budget is zero, and every later
+ * attempt dies as `token_exhausted` without reaching the provider at all —
+ * which is exactly the three-attempt failure this was found from.
+ *
+ * 8192 is ~3.5x the largest total observed, leaves room for the planner's own
+ * backoff loop, and keeps a single stranded reservation survivable. A caller
+ * that genuinely needs more still passes `maxOutputTokens` explicitly.
+ */
+export const DEFAULT_OUTPUT_ALLOWANCE = 8192;
+
+export interface ExecutionDeps {
   ledger: PgAgentLedger;
   adapter: ModelAdapter;
   agentInstanceId: string;
   /** Report persistence failures from timers or usage arriving after cancellation. */
   onBackgroundError: (error: unknown) => void;
+  /**
+   * Per-call token accounting, for the process log.
+   *
+   * A `token_exhausted` agent says nothing about which of the three numbers
+   * went wrong: what the prompt counted, what the budget granted, or what the
+   * provider actually billed. Without them the same symptom covers an oversized
+   * context, a stranded reservation and a genuine limit.
+   */
+  onAccounting?: (info: {
+    agentInstanceId: string; preset: string;
+    inputTokens: number; requested: number | undefined;
+    granted: number; reserved: number;
+    outcome: 'ok' | 'failed'; usage?: string;
+  }) => void;
   now?: () => number;
 }
 
@@ -82,7 +117,8 @@ export class AgentExecution {
   generate(requestKey: string, request: AgentRequest, options: { maxOutputTokens?: number } = {}): Promise<AgentResponse> {
     // Snapshot synchronously, before the caller can mutate its original object.
     const snapshot = structuredClone(request);
-    const desiredMaximum = options.maxOutputTokens;
+    // Never let an unspecified ceiling mean "the whole budget".
+    const desiredMaximum = options.maxOutputTokens ?? DEFAULT_OUTPUT_ALLOWANCE;
     return this.run(async (signal) => {
       const { ledger, adapter, agentInstanceId } = this.deps;
       const agent = await ledger.assertActive(agentInstanceId);
@@ -96,6 +132,12 @@ export class AgentExecution {
       this.checkSignal();
       const allowance = await ledger.reserve({ agentInstanceId, requestKey, inputTokens, profile,
         maxOutputTokens: desiredMaximum });
+      const account = (outcome: 'ok' | 'failed', usage?: string) =>
+        this.deps.onAccounting?.({
+          agentInstanceId, preset: snapshot.preset, inputTokens,
+          requested: desiredMaximum, granted: allowance.maxOutputTokens,
+          reserved: allowance.reservedTokens, outcome, ...(usage ? { usage } : {}),
+        });
       let sent = false;
       let response: AgentResponse;
       try {
@@ -128,6 +170,8 @@ export class AgentExecution {
          */
         const refused = error instanceof ModelAdapterError && error.retryable &&
           error.usage.status !== 'reported' && error.usage.totalTokens === undefined;
+        account('failed', error instanceof ModelAdapterError
+          ? `${error.code} refused=${refused} usage=${error.usage.status}` : 'non-adapter error');
         await ledger.recordUsage({ agentInstanceId, requestKey, usage: !sent || refused
           ? { status: 'reported', totalTokens: 0 }
           : error instanceof ModelAdapterError ? error.usage : { status: 'unknown' } });
@@ -135,6 +179,8 @@ export class AgentExecution {
       }
       // Always settle before the live guard, even for an aborted late response.
       await ledger.recordUsage({ agentInstanceId, requestKey, usage: response.usage });
+      account('ok', `${response.usage.status} total=${response.usage.totalTokens ?? '?'} ` +
+        `thinking=${response.usage.thinkingTokens ?? '?'} finish=${response.finishReason ?? 'none'}`);
       return response;
     });
   }

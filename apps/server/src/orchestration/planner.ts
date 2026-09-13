@@ -10,6 +10,7 @@ import { AgentExecution, AgentExecutionError, PgAgentLedger } from '../agents/in
 import { ModelAdapterError, type AgentMessage, type AgentResponse, type ModelAdapter } from '../models/index.js';
 import { PgPlanStore, PlanningError } from './plan-store.js';
 import { validatePlan } from './validate-plan.js';
+import type { ExecutionDeps } from '../agents/execution.js';
 
 /** Provider shape only; validatePlan is the authority for semantic constraints. */
 export const PLAN_RESPONSE_SCHEMA = {
@@ -46,6 +47,8 @@ Validation feedback requests a corrected complete plan, not a partial patch. Nev
 interface PlannerDeps {
   db: Db; ledger: PgAgentLedger; adapter: ModelAdapter; bootId: string;
   onBackgroundError: (error: unknown) => void;
+  /** Per-call token accounting for the process log; see AgentExecution. */
+  onAccounting?: ExecutionDeps['onAccounting'];
   now?: () => number;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
