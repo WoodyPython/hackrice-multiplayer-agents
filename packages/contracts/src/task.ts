@@ -171,5 +171,10 @@ export type CancelTaskRequest = z.infer<typeof cancelTaskRequestSchema>;
 export const listTasksQuerySchema = z.object({
   status: taskStatusSchema.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
+  /** Stable ID ordering lets workspace views traverse every task while updates occur. */
+  order: z.enum(['updated', 'id']).optional(),
+  afterId: taskIdSchema.optional(),
+}).refine((query) => !query.afterId || query.order === 'id', {
+  message: 'afterId requires ID ordering',
 });
 export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;

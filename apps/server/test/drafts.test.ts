@@ -55,6 +55,16 @@ function readText(state: Uint8Array): string {
   return doc.getText('content').toString();
 }
 
+function materialUpload(name: string, content: string) {
+  const boundary = `----draft${randomUUID().replace(/-/g, '')}`;
+  const payload = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="guestLabel"\r\n\r\nGuest Cedar\r\n` +
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\n` +
+    `Content-Type: text/plain\r\n\r\n${content}\r\n--${boundary}--\r\n`,
+  );
+  return { payload, headers: { 'content-type': `multipart/form-data; boundary=${boundary}` } };
+}
+
 // ---------------------------------------------------------------------------
 
 describe('opening a document', () => {
@@ -258,6 +268,30 @@ describe('Edit together', () => {
     }
     expect(new Set(results.map((r) => r.json().taskId)).size).toBe(1);
     expect(new Set(results.map((r) => r.json().draftFile.id)).size).toBe(1);
+  });
+
+  it('seeds one collaborative document from a reference material', async () => {
+    const upload = await t.app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${workspaceId}/materials`,
+      ...materialUpload('reference.py', 'def one():\r\n    pass\r\ndef two():\n    pass\r\n'),
+    });
+    expect(upload.statusCode, upload.body).toBe(201);
+    const materialId = upload.json().material.id;
+    const open = () => t.app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${workspaceId}/drafts/open`,
+      payload: { path: 'documents/reference.py', guestLabel: 'Guest Cedar', materialId },
+    });
+
+    const first = await open();
+    const second = await open();
+    expect(first.statusCode, first.body).toBe(201);
+    expect(second.statusCode, second.body).toBe(200);
+    expect(second.json().taskId).toBe(first.json().taskId);
+    expect(second.json().draftFile.id).toBe(first.json().draftFile.id);
+    const loaded = await store.load(workspaceId, first.json().draftFile.id);
+    expect(readText(loaded!.yjsState!)).toBe('def one():\n    pass\ndef two():\n    pass\n');
   });
 
   it('rejects a path that escapes the repository', async () => {

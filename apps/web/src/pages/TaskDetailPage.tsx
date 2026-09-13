@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { CircleAlert, FileText, Paperclip, Play, RotateCcw, Square, Upload } from "lucide-react";
 import {
   ApiError,
@@ -97,6 +97,7 @@ function TaskDetailState({
   presenceId: string;
 }) {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const { api, session } = useBrowser();
   const [task, setTask] = useState<Task | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -510,12 +511,16 @@ function TaskDetailState({
             task={task}
             staleSignal={staleSignal}
             onApplied={() => {
-              // Applying now settles at `awaiting_confirmation`, not
-              // `completed` -- someone marks it complete afterwards. Guessing
-              // `completed` here showed the wrong chip until reload landed.
-              setTask((current) => current && ({ ...current, status: "awaiting_confirmation", activeRunId: null }));
+              setTask((current) => current && ({
+                ...current,
+                status: current.kind === "manual_edit" ? "completed" : "awaiting_confirmation",
+                activeRunId: null,
+              }));
               reload();
               thread.refresh();
+              if (task.kind === "manual_edit") {
+                navigate(`${base}/files`, { replace: true });
+              }
             }}
           />
         );
@@ -589,7 +594,9 @@ function TaskDetailState({
     <TaskDetail
       task={task}
       base={base}
-      backTo={params.get("from") === "history" ? `${base}/history` : undefined}
+      backTo={params.get("from") === "history" ? `${base}/history`
+        : params.get("from") === "agents" ? `${base}/agents` : undefined}
+      backLabel={params.get("from") === "agents" ? "Back to agents" : undefined}
       options={options}
       banner={
         <>
@@ -678,6 +685,11 @@ function TaskDetailState({
           ? (params.get("tab") as TaskTab)
           : undefined
       }
+      onTabChange={(tab) => {
+        const next = new URLSearchParams(params);
+        next.set("tab", tab);
+        setParams(next, { replace: true });
+      }}
       onEditRequirements={
         ["completed", "awaiting_confirmation"].includes(task.status) ? undefined : () => setEditing(task)
       }

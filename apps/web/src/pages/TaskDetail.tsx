@@ -44,12 +44,15 @@ export function TaskDetail({
   renderTab,
   onEditRequirements,
   initialTab,
+  onTabChange,
   attention,
   backTo,
+  backLabel = "Back to history",
 }: {
   task: Task;
   base: string;
   backTo?: string;
+  backLabel?: string;
   options: TaskInputOption[];
   action?: ReactNode;
   /** Run-level explanation (§4.7), shown above the panels rather than in a tab. */
@@ -72,6 +75,8 @@ export function TaskDetail({
    * landing on the task and leaving the reader to find it.
    */
   initialTab?: TaskTab;
+  /** Mirrors tab selection into the URL, keeping banner actions in sync. */
+  onTabChange?: (tab: TaskTab) => void;
 }) {
   const [tab, setTab] = useState<TaskTab>(initialTab ?? "Discussion");
   // `initialTab` is the `?tab=` query parameter. Following it after mount is
@@ -82,10 +87,14 @@ export function TaskDetail({
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
   const presentation = statusPresentation[task.status];
+  const selectTab = (next: TaskTab) => {
+    setTab(next);
+    onTabChange?.(next);
+  };
 
   return (
     <>
-      <BackLink to={backTo ?? base}>{backTo ? "Back to history" : "All tasks"}</BackLink>
+      <BackLink to={backTo ?? base}>{backTo ? backLabel : "All tasks"}</BackLink>
 
       <PageHeading
         badge={
@@ -193,7 +202,7 @@ export function TaskDetail({
                 aria-selected={tab === name}
                 aria-controls={`activity-panel-${name}`}
                 tabIndex={tab === name ? 0 : -1}
-                onClick={() => setTab(name)}
+                onClick={() => selectTab(name)}
                 onKeyDown={(event) => {
                   const next =
                     event.key === "ArrowRight"
@@ -207,7 +216,7 @@ export function TaskDetail({
                             : null;
                   if (next !== null) {
                     event.preventDefault();
-                    setTab(tabs[next]!);
+                    selectTab(tabs[next]!);
                     document.getElementById(`tab-${tabs[next]}`)?.focus();
                   }
                 }}

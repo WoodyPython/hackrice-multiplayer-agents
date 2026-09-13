@@ -227,13 +227,13 @@ describe("A02 workspace interactions", () => {
       .mockResolvedValue(response({ ...workspace, isOwner: false }));
     fixture(`/w/${id}/settings`, transport);
     expect(
-      await screen.findByRole("heading", { name: "Workspace guidance" }),
+      await screen.findByRole("heading", { name: "Workspace details" }),
     ).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: "Save workspace settings" }),
     ).toBeNull();
     expect(
-      (screen.getByLabelText("Guidance") as HTMLTextAreaElement).readOnly,
+      (screen.getByLabelText("Description") as HTMLTextAreaElement).readOnly,
     ).toBe(true);
     expect(transport.mock.calls[0]![1]!.headers).not.toHaveProperty(
       OWNER_KEY_HEADER,
@@ -259,14 +259,14 @@ describe("A02 workspace interactions", () => {
     await screen.findByRole("button", { name: "Save workspace settings" });
     await user.clear(await screen.findByLabelText("Workspace name"));
     await user.type(await screen.findByLabelText("Workspace name"), "New room");
-    await user.clear(screen.getByLabelText("Guidance"));
-    await user.type(screen.getByLabelText("Guidance"), "Be kind");
+    await user.clear(screen.getByLabelText("Description"));
+    await user.type(screen.getByLabelText("Description"), "Be kind");
     await user.click(
       screen.getByRole("button", { name: "Save workspace settings" }),
     );
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(
-      (screen.getByLabelText("Guidance") as HTMLTextAreaElement).value,
+      (screen.getByLabelText("Description") as HTMLTextAreaElement).value,
     ).toBe("Be kind");
     await user.click(
       screen.getByRole("button", { name: "Save workspace settings" }),
@@ -278,7 +278,7 @@ describe("A02 workspace interactions", () => {
     expect(transport.mock.calls[2]![1]!.body).toBe(
       JSON.stringify({
         name: "New room",
-        purpose: workspace.purpose,
+        purpose: "Be kind",
         guidance: "Be kind",
       }),
     );
@@ -299,7 +299,7 @@ describe("A02 workspace interactions", () => {
     expect(
       screen.queryByRole("button", { name: "Save workspace settings" }),
     ).toBeNull();
-    expect(screen.getByLabelText("Guidance")).toBeTruthy();
+    expect(screen.getByLabelText("Description")).toBeTruthy();
   });
   it("rechecks ownership after browser storage is cleared", async () => {
     const session = new BrowserSession();

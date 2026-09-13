@@ -465,8 +465,11 @@ export class PgTaskService {
 
   async list(
     workspaceId: string,
-    options: { status?: TaskDetail['status']; limit: number },
+    options: { status?: TaskDetail['status']; limit: number; order?: 'updated' | 'id'; afterId?: string },
   ): Promise<TaskSummary[]> {
+    const workspace = await this.deps.db.selectFrom('workspaces').select('id')
+      .where('id', '=', workspaceId).executeTakeFirst();
+    if (!workspace) throw new ApiError('WORKSPACE_NOT_FOUND');
     let query = this.deps.db
       .selectFrom('tasks')
       .selectAll('tasks')
@@ -486,9 +489,18 @@ export class PgTaskService {
           .as('open_question_count'),
       ])
       .where('workspace_id', '=', workspaceId)
-      .orderBy('updated_at', 'desc')
+      // Applied manual-edit sessions remain in History through their review,
+      // but they are not durable work items on the task board.
+      .where((eb) => eb.or([
+        eb('kind', '!=', 'manual_edit'),
+        eb('status', 'not in', ['completed', 'awaiting_confirmation']),
+      ]))
       .limit(options.limit);
 
+    query = options.order === 'id'
+      ? query.orderBy('tasks.id', 'asc')
+      : query.orderBy('updated_at', 'desc').orderBy('tasks.id', 'asc');
+    if (options.afterId && options.order === 'id') query = query.where('tasks.id', '>', options.afterId);
     if (options.status) query = query.where('status', '=', options.status);
 
     const rows = await query.execute();

@@ -59,7 +59,7 @@ const CATEGORY = {
   },
   material: {
     label: "Reference materials",
-    blurb: "Immutable uploads for tasks to read. Never edited in place.",
+    blurb: "Uploaded context that can be opened as a shared working file.",
   },
 } as const;
 
@@ -126,7 +126,7 @@ export function Files({ workspaceId }: { workspaceId: string }) {
     }
   }
 
-  async function editTogether(target: string) {
+  async function editTogether(target: string, materialId?: string) {
     if (!target.trim()) return;
     setOpenError(null);
     setBusy(true);
@@ -135,6 +135,7 @@ export function Files({ workspaceId }: { workspaceId: string }) {
         workspaceId,
         target.trim(),
         session.getGuest().name,
+        materialId,
       );
       navigate(`/w/${workspaceId}/tasks/${result.taskId}/drafts`);
     } catch (error) {
@@ -244,26 +245,26 @@ export function Files({ workspaceId }: { workspaceId: string }) {
           <div className="mb-2 flex items-center justify-between gap-3 px-1">
             <div>
               <h2 className="text-[13px] font-semibold">Choose a file</h2>
-              <p className="text-[11.5px] text-muted-foreground">Select an approved file to open it in the shared editor.</p>
+              <p className="text-[11.5px] text-muted-foreground">Select an approved file or reference material to open in the shared editor.</p>
             </div>
             <Button size="icon-sm" variant="ghost" onClick={() => setCreating(false)} aria-label="Close file picker">
               <X aria-hidden="true" />
             </Button>
           </div>
-          {approved.length > 0 ? (
+          {approved.length > 0 || live.length > 0 ? (
             <FileTree
-              entries={entries.filter((entry) => entry.kind === "approved")}
-              roots={[CATEGORY.approved.label]}
+              entries={entries.filter((entry) => entry.kind === "approved" || entry.kind === "material")}
+              roots={[CATEGORY.approved.label, CATEGORY.material.label]}
               selected={null}
               onSelect={(entry) => {
-                if (entry.kind !== "approved") return;
                 setCreating(false);
-                void editTogether(entry.file.path);
+                if (entry.kind === "approved") void editTogether(entry.file.path);
+                if (entry.kind === "material") void editTogether(`documents/${entry.material.filename}`, entry.material.id);
               }}
             />
           ) : (
             <p className="rounded-lg border border-dashed border-border px-3 py-5 text-center text-[12px] text-muted-foreground">
-              No approved files are available yet.
+              No approved files or reference materials are available yet.
             </p>
           )}
         </section>
@@ -351,7 +352,7 @@ function Detail({
   preview: ApprovedFileContent | null;
   busy: boolean;
   workspaceId: string;
-  onEditTogether: (path: string) => void;
+  onEditTogether: (path: string, materialId?: string) => void;
   onOpenTask: (taskId: string) => void;
   onClosePreview: () => void;
 }) {
@@ -445,6 +446,14 @@ function Detail({
 
       {entry.kind === "material" && (
         <div className="flex flex-wrap items-center gap-3">
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={() => onEditTogether(`documents/${entry.material.filename}`, entry.material.id)}
+          >
+            <PencilRuler aria-hidden="true" />
+            Edit together
+          </Button>
           <a
             href={`/api/workspaces/${workspaceId}/materials/${entry.material.id}`}
             download

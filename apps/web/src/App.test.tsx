@@ -189,7 +189,7 @@ describe("A01 workspace shell", () => {
     // Settings is a sidebar link, no longer inside the workspace card's menu.
     await user.click(screen.getByRole("link", { name: "Workspace settings" }));
     expect(
-      screen.getByRole("heading", { name: "Workspace guidance" }),
+      screen.getByRole("heading", { name: "Workspace details" }),
     ).toBeTruthy();
   });
 });

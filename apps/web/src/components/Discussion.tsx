@@ -8,7 +8,6 @@ import { setPresenceTyping } from "../presence";
 import { refreshLoop } from "../realtime";
 import { readDiscussionPages } from "../task-polling";
 import { apiMessage } from "../workspace-api";
-import { EmptyState } from "./EmptyState";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Label, Textarea } from "./ui/field";
@@ -84,8 +83,14 @@ export function Discussion({ workspaceId, taskId, entries, activeRunCutoffSeq, m
   return (
     <div className="flex h-[clamp(360px,72vh,640px)] flex-col overflow-hidden rounded-xl border border-border bg-card">
       {entries.length === 0 ? (
-        <div className="grid min-h-0 flex-1 place-items-center p-8">
-          <EmptyState title="Start the conversation" icon={MessageSquare}>Share context, ask a question, or attach a file for everyone working on this task.</EmptyState>
+        <div className="grid min-h-0 flex-1 place-items-center p-8 text-center">
+          <div className="max-w-md">
+            <MessageSquare aria-hidden="true" className="mx-auto mb-3 size-6 text-muted-foreground" />
+            <h2 className="text-[15px] font-semibold tracking-tight">Start the conversation</h2>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
+              Share context, ask a question, or attach a file for everyone working on this task.
+            </p>
+          </div>
         </div>
       ) : (
         <ol ref={listRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto px-4 py-5 sm:px-5">

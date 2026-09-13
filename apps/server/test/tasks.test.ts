@@ -527,6 +527,20 @@ describe('retry', () => {
 });
 
 describe('manual-edit tasks', () => {
+  it('removes completed editor sessions from the task board', async () => {
+    const ws = (await createWorkspaceViaApi(t.app, { name: 'Finished edits' })).workspaceId;
+    const manual = await postTask(t.app, ws, {
+      kind: 'manual_edit',
+      manualSourcePath: 'documents/done.md',
+      title: 'Edit done.md',
+    });
+    await t.handle.db.updateTable('tasks').set({ status: 'completed' }).where('id', '=', manual.id).execute();
+
+    const response = await t.app.inject({ method: 'GET', url: `/api/workspaces/${ws}/tasks` });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().tasks).toEqual([]);
+  });
+
   it('allows one active editing task per file', async () => {
     const ws = (await createWorkspaceViaApi(t.app, { name: 'Edits' })).workspaceId;
     await postTask(t.app, ws, {

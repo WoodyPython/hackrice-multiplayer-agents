@@ -94,9 +94,6 @@ export function GuestNameControl({ sidebar = false }: { sidebar?: boolean }) {
               <FieldError id="guest-error">{error}</FieldError>
             </p>
           )}
-          <p className="text-[11.5px] text-muted-foreground">
-            A display name only. It grants no access to this workspace.
-          </p>
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
               Cancel

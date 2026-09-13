@@ -11,7 +11,6 @@ import { workspaceError } from "../workspace-api";
 import { PageHeading } from "../components/PageHeading";
 import { Button } from "../components/ui/button";
 import { Input, Label, Textarea } from "../components/ui/field";
-import { Badge } from "../components/ui/badge";
 import { ErrorText, Notice } from "../components/ui/misc";
 
 export function WorkspaceSettings({
@@ -23,8 +22,9 @@ export function WorkspaceSettings({
 }) {
   const { api, session } = useBrowser();
   const [name, setName] = useState(workspace.name);
-  const [purpose, setPurpose] = useState(workspace.purpose);
-  const [guidance, setGuidance] = useState(workspace.guidance);
+  const [description, setDescription] = useState(
+    workspace.guidance || workspace.purpose,
+  );
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -36,8 +36,8 @@ export function WorkspaceSettings({
     if (busy.current || !canEdit) return;
     const parsed = updateWorkspaceRequestSchema.safeParse({
       name,
-      purpose,
-      guidance,
+      purpose: description,
+      guidance: description,
     });
     if (!parsed.success) {
       setError(parsed.error.issues.map((issue) => issue.message).join(" "));
@@ -66,11 +66,6 @@ export function WorkspaceSettings({
         eyebrow="Workspace settings"
         title={workspace.name}
         description={workspace.purpose}
-        actions={
-          <Badge tone={canEdit ? "brand" : "neutral"}>
-            {canEdit ? "Host" : "Read only"}
-          </Badge>
-        }
       />
 
       <form
@@ -79,7 +74,7 @@ export function WorkspaceSettings({
         noValidate
       >
         <h2 className="text-[17px] font-semibold tracking-tight">
-          Workspace guidance
+          Workspace details
         </h2>
 
         {!canEdit && (
@@ -107,23 +102,11 @@ export function WorkspaceSettings({
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="settings-purpose">Purpose</Label>
+          <Label htmlFor="settings-description">Description</Label>
           <Textarea
-            id="settings-purpose"
-            value={purpose}
-            onChange={(event) => setPurpose(event.target.value)}
-            readOnly={!canEdit}
-            rows={3}
-            maxLength={4000}
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="settings-guidance">Guidance</Label>
-          <Textarea
-            id="settings-guidance"
-            value={guidance}
-            onChange={(event) => setGuidance(event.target.value)}
+            id="settings-description"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
             readOnly={!canEdit}
             rows={6}
             maxLength={20000}

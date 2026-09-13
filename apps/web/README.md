@@ -43,6 +43,27 @@ Task posting, discussion, files, history, and review remain later-ticket
 integrations. Real workspaces do not show or submit sample tasks. No agent is
 started by creation or posting in the sample.
 
+## Workspace agents
+
+`/w/:workspaceId/agents` lists agent instances grouped into active runs and past
+attempts. Run and agent statuses come from their records, independently of the
+task's board status. The status filter is retained in the URL. Task links open
+the existing Agents or Discussion tab and provide a return link.
+
+The page traverses the existing task API with `order=id`, `limit=100`, and
+`afterId` (stable ID pagination); the default board ordering remains unchanged.
+It reads task-scoped agents, events, and saved outputs with at most four tasks
+in flight. Events are incrementally paginated through the shared event reader.
+The shared realtime loop refreshes on hints, reconnect, focus, and polling
+(5 seconds for active/error states, 15 seconds when idle), and aborts on exit.
+
+Output paths require checkpoint receipts or saved-output records; assigned paths
+are shown separately. Result summaries are plain text. This page offers read
+navigation only: existing task screens retain task actions and permission checks.
+Workspace links remain the application's read-access boundary, and foreign
+task IDs are rejected by the existing endpoints. Missing data is explicitly
+labeled; a failed workspace read clears the displayed agent records.
+
 ## A01 sample
 
 Select **Explore the sample workspace** on `/` to open `/demo/w/:workspaceId`.

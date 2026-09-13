@@ -9,6 +9,7 @@ import {
   type Briefing,
 } from "@app/contracts";
 import { App } from "./App";
+import { stubAuthApi } from "./test-auth";
 import { BRIEFING_SESSION_STORAGE_KEY, BrowserSession } from "./session";
 import { WorkspaceApi } from "./workspace-api";
 import { workspace as sample } from "./fixtures";
@@ -76,7 +77,7 @@ function fixture(routes: { list?: Route; generate?: Route }, session = new Brows
   const api = new WorkspaceApi(session, transport);
   render(
     <MemoryRouter initialEntries={[`/w/${id}/overview`]}>
-      <App session={session} api={api} />
+      <App session={session} api={api} authApi={stubAuthApi()} />
     </MemoryRouter>,
   );
   return { transport, session };
