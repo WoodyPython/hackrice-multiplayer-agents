@@ -1,7 +1,11 @@
-import { refreshHintSchema, type RefreshHint } from '@app/contracts';
+import { presenceRosterSchema, refreshHintSchema,
+  type PresenceRoster, type RefreshHint } from '@app/contracts';
 
 type Listener = (hint: RefreshHint | null) => void;
-const streams = new Map<string, { source: EventSource; listeners: Set<Listener> }>();
+type RosterListener = (roster: PresenceRoster) => void;
+const streams = new Map<string, {
+  source: EventSource; listeners: Set<Listener>; rosters: Set<RosterListener>;
+}>();
 
 /** One connection per workspace per tab, shared by board, task and discussion. */
 export function subscribeRefresh(workspaceId: string, listener: Listener): () => void {
@@ -10,11 +14,19 @@ export function subscribeRefresh(workspaceId: string, listener: Listener): () =>
   if (!stream) {
     const source = new EventSource(`/api/workspaces/${encodeURIComponent(workspaceId)}/realtime/stream`);
     const listeners = new Set<Listener>();
-    stream = { source, listeners };
+    const rosters = new Set<RosterListener>();
+    stream = { source, listeners, rosters };
     streams.set(workspaceId, stream);
     // Includes reconnect: always reconcile from the API, never trust hint state.
     source.addEventListener('ready', () => listeners.forEach((notify) => notify(null)));
     source.addEventListener('error', () => listeners.forEach((notify) => notify(null)));
+    source.addEventListener('presence', (event) => {
+      try {
+        const roster = presenceRosterSchema.safeParse(JSON.parse((event as MessageEvent).data));
+        if (roster.success && roster.data.workspaceId === workspaceId)
+          rosters.forEach((notify) => notify(roster.data));
+      } catch { /* A malformed roster leaves the previous one on screen. */ }
+    });
     source.addEventListener('refresh', (event) => {
       try {
         const hint = refreshHintSchema.safeParse(JSON.parse((event as MessageEvent).data));
@@ -24,12 +36,37 @@ export function subscribeRefresh(workspaceId: string, listener: Listener): () =>
     });
   }
   stream.listeners.add(listener);
+  return release(workspaceId, () => stream!.listeners.delete(listener));
+}
+
+/** Live roster for the workspace, over the same connection. */
+export function subscribePresence(workspaceId: string, listener: RosterListener): () => void {
+  if (typeof EventSource === 'undefined') return () => {};
+  // Reuses (or opens) the shared connection; the no-op refresh listener is what
+  // keeps that connection alive for a caller that only wants presence.
+  const detachRefresh = subscribeRefresh(workspaceId, () => {});
+  streams.get(workspaceId)?.rosters.add(listener);
   let active = true;
   return () => {
     if (!active) return;
     active = false;
-    stream.listeners.delete(listener);
-    if (!stream.listeners.size) { stream.source.close(); streams.delete(workspaceId); }
+    streams.get(workspaceId)?.rosters.delete(listener);
+    detachRefresh();
+  };
+}
+
+/** A connection closes only once nothing is listening for either kind. */
+function release(workspaceId: string, detach: () => void): () => void {
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    detach();
+    const stream = streams.get(workspaceId);
+    if (stream && !stream.listeners.size && !stream.rosters.size) {
+      stream.source.close();
+      streams.delete(workspaceId);
+    }
   };
 }
 

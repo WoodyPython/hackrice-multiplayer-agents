@@ -9,6 +9,8 @@ import { DemoApp } from "./DemoApp";
 import { AppShell, Breadcrumb, type NavItem } from "./components/AppShell";
 import { EmptyState } from "./components/EmptyState";
 import { GuestNameControl } from "./components/GuestNameControl";
+import { PresencePanel } from "./components/PresencePanel";
+import { usePresence } from "./presence";
 import { ShareWorkspace } from "./components/ShareWorkspace";
 import { Badge } from "./components/ui/badge";
 import { Button, ButtonLink } from "./components/ui/button";
@@ -25,6 +27,15 @@ import { History } from "./pages/History";
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
   const revision = useSyncExternalStore(session.subscribe, session.getRevision);
+  // Per tab, not per contributor: two tabs are two open browsers and should
+  // appear as such, and it must not survive a reload as a ghost.
+  const [presenceId] = useState(() => crypto.randomUUID());
+  const guest = session.getGuest();
+  const participants = usePresence(id, {
+    presenceId,
+    name: guest.name,
+    color: guest.color,
+  });
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [failure, setFailure] = useState<unknown>(null);
   const [retry, setRetry] = useState(0);
@@ -119,6 +130,10 @@ function LiveWorkspace({ id }: { id: string }) {
       breadcrumb={<Breadcrumb trail={["Workspace", workspace.name]} />}
       topbarEnd={
         <div className="flex items-center gap-2.5">
+          <PresencePanel
+            participants={participants}
+            selfPresenceId={presenceId}
+          />
           <Badge
             tone={visibleWorkspace.isOwner ? "brand" : "neutral"}
             className="hidden sm:inline-flex"
