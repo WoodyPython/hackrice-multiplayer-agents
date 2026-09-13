@@ -2,6 +2,38 @@
 
 Newest first. One entry per landed ticket.
 
+## Inbox — actionable items across the workspace
+**Landed:** 2026-09-13 (not yet merged) · contracts, server, frontend
+**Affects:** everyone. **Action required:** none (no migration).
+
+A new **Inbox** page in the sidebar, with a badge counting what needs someone
+now: unanswered agent questions, pending reviews, failed runs, and explicit
+blockers. Each item shows its task, type, and time, and links to the right tab
+of the task (Discussion to answer, Changes to review or resolve a conflict,
+Agents to inspect a run). The list can be filtered by type (`?type=`).
+
+**Derived, not stored.** `GET /api/workspaces/:w/inbox` computes items from task,
+run, question, and review rows in one repeatable-read query. There is no
+notification table to keep in sync. An item disappears once its source row
+changes: a question is answered, expires, or its run ends; a review is applied;
+a conflict is resolved; a failure is retried or the task is canceled or
+completed. Item IDs are stable (`question:<id>`, `review:<task>`,
+`failed_run:<run>`, `blocker:<task>`), and each task counts once per issue. A
+run blocked by a failed prerequisite shows as a blocker, not also as a failed
+run, and a review being rebuilt stays pending.
+
+**Answers stay separate from comments.** Only the existing `/answer` endpoint
+resolves a question. A discussion comment on the task does not.
+
+**Permissions unchanged.** The read has the same link access as the board and is
+strictly workspace-scoped. Acting on an item goes through the existing task and
+review APIs. Apply stays open to link holders, per the entry below.
+
+**Live updates** reuse `refreshLoop`: the workspace SSE refresh hints, focus and
+visibility wakeups, and a 5 s poll. The page and the badge share one snapshot.
+If a refresh fails, the page keeps the last list, labels it as stale, and the
+badge hides rather than showing an old count.
+
 ## Overview — "Catch me up" briefings
 **Landed:** 2026-09-13 (not yet merged) · contracts, server, frontend, one migration
 **Affects:** everyone. **Action required:** run `npm run db:migrate` (adds `0011_workspace_briefings.sql`).

@@ -25,6 +25,8 @@ import { ApprovedFile } from "./pages/ApprovedFile";
 import { History } from "./pages/History";
 import { Overview } from "./pages/Overview";
 import { Agents } from "./pages/Agents";
+import { Inbox } from "./pages/Inbox";
+import { useInbox } from "./inbox";
 
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
@@ -34,6 +36,7 @@ function LiveWorkspace({ id }: { id: string }) {
   const [presenceId] = useState(() => crypto.randomUUID());
   const guest = session.getGuest();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const inbox = useInbox(id, !!workspace);
   const [failure, setFailure] = useState<unknown>(null);
   const [retry, setRetry] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -118,8 +121,13 @@ function LiveWorkspace({ id }: { id: string }) {
     isOwner:
       workspace.isOwner && !loading && !failure && !!session.getOwnerKey(id),
   };
+  // A failed refresh hides the badge rather than advertising a stale count.
+  const inboxCount = inbox.failure ? undefined : inbox.items?.length;
+  const inboxLabel = inboxCount === undefined ? undefined
+    : `${inboxCount} actionable ${inboxCount === 1 ? "item" : "items"}`;
   const items: NavItem[] = [
     { to: `${base}/overview`, label: "Overview", icon: "overview" },
+    { to: `${base}/inbox`, label: "Inbox", icon: "inbox", count: inboxCount, countLabel: inboxLabel },
     { to: base, label: "Tasks", icon: "board", end: true },
     { to: `${base}/agents`, label: "Agents", icon: "agents" },
     { to: `${base}/files`, label: "Files", icon: "files" },
@@ -143,6 +151,9 @@ function LiveWorkspace({ id }: { id: string }) {
         </div>
       }
     >
+      <p role="status" aria-atomic="true" className="sr-only">
+        {inboxLabel ? `${inboxLabel} in Inbox` : ''}
+      </p>
       {session.hasUnsavedOwner(id) && (
         <Notice
           role="alert"
@@ -168,6 +179,7 @@ function LiveWorkspace({ id }: { id: string }) {
         </Notice>
       )}
       <Routes>
+        <Route path="inbox" element={<Inbox workspaceId={id} state={inbox} />} />
         <Route
           path="tasks/:taskId/drafts"
           element={<TaskDrafts workspaceId={id} />}

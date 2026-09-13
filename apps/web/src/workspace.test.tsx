@@ -34,7 +34,8 @@ function fixture(
   transport: typeof fetch,
   session = new BrowserSession(),
 ) {
-  const api = new WorkspaceApi(session, transport);
+  const api = new WorkspaceApi(session, (input, init) => String(input).endsWith('/inbox')
+    ? Promise.resolve(response({ items: [] })) : transport(input, init));
   render(
     <MemoryRouter initialEntries={[path]}>
       <App session={session} api={api} />

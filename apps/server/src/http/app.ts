@@ -24,6 +24,7 @@ import { PgMaterialService } from '../materials/service.js';
 import { registerMaterialRoutes } from '../materials/routes.js';
 import { PgDraftStore } from '../drafts/store.js';
 import { registerDraftRoutes } from '../drafts/routes.js';
+import { registerInboxRoutes } from '../inbox/routes.js';
 import { TaskEventService } from '../events/service.js';
 import { registerEventRoutes } from '../events/routes.js';
 import type { Broadcaster } from '../events/broadcaster.js';
@@ -199,6 +200,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   const discussion = new PgDiscussionService({ db: deps.db });
+  registerInboxRoutes(app, deps.db);
   const tasks = new PgTaskService({
     db: deps.db,
     bootId: config.bootId,

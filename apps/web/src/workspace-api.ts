@@ -1,5 +1,7 @@
 import {
   ApiError,
+  listInboxResponseSchema,
+  type InboxItem,
   BRIEFING_SESSION_HEADER,
   briefingSchema,
   generateBriefingRequestSchema,
@@ -450,6 +452,13 @@ export class WorkspaceApi {
    * hiding it would make a stuck apply invisible in the screen meant to explain
    * the workspace's past.
    */
+  async listInbox(workspaceId: string, signal?: AbortSignal): Promise<InboxItem[]> {
+    uuidSchema.parse(workspaceId);
+    return listInboxResponseSchema.parse(await this.request(
+      `/${workspaceId}/inbox`, 'GET', undefined, workspaceId, signal,
+    )).items;
+  }
+
   async listHistory(
     workspaceId: string,
     signal?: AbortSignal,
