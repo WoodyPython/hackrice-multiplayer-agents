@@ -35,12 +35,13 @@ function fixture(
   path: string,
   transport: typeof fetch,
   session = new BrowserSession(),
+  authApi = signedIn(),
 ) {
   const api = new WorkspaceApi(session, (input, init) => String(input).endsWith('/inbox')
     ? Promise.resolve(response({ items: [] })) : transport(input, init));
   render(
     <MemoryRouter initialEntries={[path]}>
-      <App session={session} api={api} authApi={signedIn()} />
+      <App session={session} api={api} authApi={authApi} />
     </MemoryRouter>,
   );
   return { api, session };
@@ -204,7 +205,9 @@ describe("A02 workspace interactions", () => {
         }),
       )
       .mockImplementation(async () => response(workspace));
-    fixture("/", transport);
+    const authApi = signedIn();
+    const current = vi.spyOn(authApi, "current");
+    fixture("/", transport, new BrowserSession(), authApi);
     await user.type(await screen.findByLabelText("Workspace name"), "Team room");
     await user.type(screen.getByLabelText(/Purpose/), "Build together");
     await user.dblClick(
@@ -216,6 +219,7 @@ describe("A02 workspace interactions", () => {
     expect(
       transport.mock.calls.filter(([, init]) => init?.method === "POST"),
     ).toHaveLength(1);
+    expect(current).toHaveBeenCalledTimes(2);
     expect(document.body.textContent).not.toContain(ownerKey);
     await user.click(
       screen.getByRole("button", { name: "Share workspace link" }),
@@ -284,14 +288,20 @@ describe("A02 workspace interactions", () => {
       }),
     );
   });
-  it("removes owner controls when the server rejects a key, keeping unsaved text visible", async () => {
+  it("lets an account owner edit settings without a legacy browser key", async () => {
+    const session = new BrowserSession();
+    fixture(`/w/${id}/settings`, vi.fn<typeof fetch>().mockResolvedValue(response(workspace)), session);
+    expect(await screen.findByRole("button", { name: "Save workspace settings" })).toBeTruthy();
+    expect(session.getOwnerKey(id)).toBeUndefined();
+  });
+  it.each(["OWNER_KEY_REQUIRED", "AUTH_REQUIRED", "FORBIDDEN"])("removes owner controls after %s, keeping unsaved text visible", async (code) => {
     const user = userEvent.setup();
     const session = new BrowserSession();
     session.saveOwner(id, ownerKey);
     const transport = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response(workspace))
-      .mockResolvedValueOnce(errorResponse("OWNER_KEY_REQUIRED", 403));
+      .mockResolvedValueOnce(errorResponse(code, 403));
     fixture(`/w/${id}/settings`, transport, session);
     await user.click(
       await screen.findByRole("button", { name: "Save workspace settings" }),

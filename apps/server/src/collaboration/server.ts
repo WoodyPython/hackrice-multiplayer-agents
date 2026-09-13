@@ -65,7 +65,9 @@ export function attachLiveDocuments(server: Server, deps: LiveDocumentDeps,
       if (stopping || socket.destroyed) { socket.destroy(); return; }
       const detach = release;
       wss.handleUpgrade(request, socket, head, (ws) => {
-        acquired.room.attach(ws, detach);
+        acquired.room.attach(ws, detach, authorize
+          ? () => authorize({ workspaceId: room.workspaceId, cookie: request.headers.cookie })
+          : undefined);
         release = undefined;
       });
     } catch (error) { reject(socket, error); }

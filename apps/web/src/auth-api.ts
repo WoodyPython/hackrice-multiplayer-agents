@@ -84,6 +84,7 @@ export class AuthApi {
       // Supabase is a third party: never send it our session cookie.
       credentials: "omit",
       cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
     });
     const data: unknown = await response.json().catch(() => null);
     if (!response.ok) {
@@ -105,6 +106,7 @@ export class AuthApi {
       body: JSON.stringify({ accessToken }),
       credentials: "same-origin",
       cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
     });
     const data: unknown = await response.json().catch(() => null);
     if (!response.ok) {
@@ -152,18 +154,21 @@ export class AuthApi {
     const response = await this.transport("/api/auth/session", {
       credentials: "same-origin",
       cache: "no-store",
-      ...(signal ? { signal } : {}),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     });
-    if (!response.ok) return { account: null, workspaces: [], preferences: null };
+    if (response.status === 401) return { account: null, workspaces: [], preferences: null };
+    if (!response.ok) throw new AuthError("Could not check your session. Try again.");
     return sessionStateSchema.parse(await response.json());
   }
 
   async signOut(): Promise<void> {
-    await this.transport("/api/auth/session", {
+    const response = await this.transport("/api/auth/session", {
       method: "DELETE",
       credentials: "same-origin",
       cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
     });
+    if (!response.ok) throw new AuthError("Could not sign out. Try again.");
   }
 
   private async json(path: string, init: RequestInit = {}): Promise<unknown> {

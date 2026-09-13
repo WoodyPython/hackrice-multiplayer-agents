@@ -194,7 +194,7 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
         processUpdate: (operation) => this.gates.run(id.taskId, async () => {
           if (this.closedTasks.has(id.taskId)) { entry.room?.closeEpoch(); return; }
           const before = entry.room?.revision;
-          operation();
+          await operation();
           if (entry.room && before !== entry.room.revision) {
             this.invalidateAfterAcceptedChange(
               id.taskId,

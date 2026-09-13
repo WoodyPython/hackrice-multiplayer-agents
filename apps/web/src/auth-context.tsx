@@ -1,5 +1,5 @@
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type ReactNode,
 } from "react";
 import type { Preferences, SessionState } from "@app/contracts";
@@ -19,7 +19,9 @@ import { AuthApi, supabaseConfig } from "./auth-api";
 interface AuthValue extends SessionState {
   api: AuthApi;
   loading: boolean;
+  error: string | null;
   refresh: () => Promise<void>;
+  setSession: (session: SessionState) => void;
   signOut: () => Promise<void>;
   setPreferences: (patch: Partial<Preferences>) => Promise<void>;
 }
@@ -28,38 +30,55 @@ const AuthContext = createContext<AuthValue | null>(null);
 
 export function AuthProvider({
   children,
-  api = new AuthApi(supabaseConfig()),
+  api: suppliedApi,
 }: {
   children: ReactNode;
   api?: AuthApi;
 }) {
+  const [defaultApi] = useState(() => new AuthApi(supabaseConfig()));
+  const api = suppliedApi ?? defaultApi;
+  const revision = useRef(0);
   const [state, setState] = useState<SessionState>({
     account: null, workspaces: [], preferences: null,
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    const request = ++revision.current;
+    setLoading(true);
+    setError(null);
     try {
-      setState(await api.current());
-    } catch {
-      // A failed read is not proof of being signed out, but it is all we know;
-      // the next action will surface a real error with a real message.
-      setState({ account: null, workspaces: [], preferences: null });
+      const session = await api.current();
+      if (request === revision.current) setState(session);
+    } catch (error) {
+      if (request === revision.current) setError("Could not check your session. Try again.");
+      throw error;
     } finally {
-      setLoading(false);
+      if (request === revision.current) setLoading(false);
     }
   }, [api]);
 
   useEffect(() => {
-    void refresh();
+    void refresh().catch(() => {});
+    return () => { ++revision.current; };
   }, [refresh]);
 
+  const setSession = useCallback((session: SessionState) => {
+    ++revision.current;
+    setState(session);
+    setError(null);
+    setLoading(false);
+  }, []);
+
   const signOut = useCallback(async () => {
+    ++revision.current;
     await api.signOut();
-    setState({ account: null, workspaces: [], preferences: null });
-  }, [api]);
+    setSession({ account: null, workspaces: [], preferences: null });
+  }, [api, setSession]);
 
   const setPreferences = useCallback(async (patch: Partial<Preferences>) => {
+    const request = revision.current;
     // Optimistic: a theme toggle that waits for a round trip feels broken.
     setState((current) => ({
       ...current,
@@ -67,15 +86,17 @@ export function AuthProvider({
     }));
     try {
       const saved = await api.savePreferences(patch);
-      setState((current) => ({ ...current, preferences: saved }));
+      if (request === revision.current) {
+        setState((current) => ({ ...current, preferences: saved }));
+      }
     } catch {
       // Settings are a convenience; a failure here must not interrupt work.
     }
   }, [api]);
 
   const value = useMemo<AuthValue>(
-    () => ({ ...state, api, loading, refresh, signOut, setPreferences }),
-    [state, api, loading, refresh, signOut, setPreferences],
+    () => ({ ...state, api, loading, error, refresh, setSession, signOut, setPreferences }),
+    [state, api, loading, error, refresh, setSession, signOut, setPreferences],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

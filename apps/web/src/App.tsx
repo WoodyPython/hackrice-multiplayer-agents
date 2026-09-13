@@ -11,6 +11,7 @@ import type { AuthApi } from "./auth-api";
 import { SignIn } from "./pages/SignIn";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
+import { AccountControl } from "./components/AccountControl";
 import { ClaimWorkspace } from "./components/ClaimWorkspace";
 import { AppShell, type NavItem } from "./components/AppShell";
 import { EmptyState } from "./components/EmptyState";
@@ -36,7 +37,7 @@ import { useInbox } from "./inbox";
 
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
-  const { account, workspaces, setPreferences } = useAuth();
+  const { account, workspaces, loading: authLoading, setPreferences } = useAuth();
   const revision = useSyncExternalStore(session.subscribe, session.getRevision);
   // Per tab, not per contributor: two tabs are two open browsers and should
   // appear as such, and it must not survive a reload as a ghost.
@@ -55,6 +56,7 @@ function LiveWorkspace({ id }: { id: string }) {
   const location = useLocation();
   const base = `/w/${id}`;
   useEffect(() => {
+    if (authLoading) return;
     const controller = new AbortController();
     setLoading(true);
     setFailure(null);
@@ -70,7 +72,7 @@ function LiveWorkspace({ id }: { id: string }) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [api, id, revision, retry]);
+  }, [api, id, revision, retry, account?.id, authLoading]);
   useEffect(() => {
     document.title = workspace
       ? `${workspace.name} — CoFlow`
@@ -133,7 +135,7 @@ function LiveWorkspace({ id }: { id: string }) {
   const visibleWorkspace = {
     ...workspace,
     isOwner:
-      workspace.isOwner && !loading && !failure && !!session.getOwnerKey(id),
+      workspace.isOwner && !loading && !failure && !authLoading && !!account,
   };
   // A failed refresh hides the badge rather than advertising a stale count.
   const inboxCount = inbox.failure ? undefined : inbox.items?.length;
@@ -171,7 +173,8 @@ function LiveWorkspace({ id }: { id: string }) {
       }
       profileControl={<GuestNameControl sidebar />}
       topbarEnd={
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center justify-end gap-2.5">
+          <AccountControl />
           <PresencePanel
             participants={participants}
             selfPresenceId={presenceId}
@@ -356,14 +359,27 @@ export function App({
  * bounce a signed-in person to the sign-in page for a frame.
  */
 function RequireAccount({ children }: { children: ReactNode }) {
-  const { account, loading } = useAuth();
+  const { account, loading, error, refresh } = useAuth();
+  const [retrying, setRetrying] = useState(false);
   const location = useLocation();
-  if (loading)
+  if (loading || retrying)
     return (
       <main aria-busy="true" className="mx-auto w-full max-w-2xl px-6 py-20">
         <p role="status" className="sr-only">
           Checking your session…
         </p>
+      </main>
+    );
+  if (!account && error)
+    return (
+      <main className="mx-auto w-full max-w-2xl px-6 py-20">
+        <Notice role="alert" tone="warn" title="Session unavailable">
+          <p>{error}</p>
+          <Button onClick={() => {
+            setRetrying(true);
+            void refresh().catch(() => {}).finally(() => setRetrying(false));
+          }}>Try again</Button>
+        </Notice>
       </main>
     );
   if (!account)

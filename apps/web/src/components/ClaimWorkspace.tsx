@@ -37,7 +37,9 @@ export function ClaimWorkspace({
     setFailure(null);
     try {
       await api.claimWorkspace(workspaceId, ownerKey.trim());
-      await refresh();
+      // Ownership already changed; a failed follow-up read must not suggest
+      // retrying the owner key, which has now been invalidated.
+      await refresh().catch(() => {});
       onClaimed();
     } catch (error) {
       setFailure(

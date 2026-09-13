@@ -28,7 +28,7 @@ describe('production frontend', () => {
     await app?.close();
     if (root) await rm(root, { recursive: true, force: true });
   });
-  it.each(['/', '/w/123', '/w/123/tasks/456?tab=discussion'])('serves browser navigation to %s', async (url) => {
+  it.each(['/', '/signin', '/signin?next=%2Finvite%2Fabc', '/invite/abc', '/w/123', '/w/123/tasks/456?tab=discussion'])('serves browser navigation to %s', async (url) => {
     const response = await app.inject({ url, headers: { accept: 'text/html' } });
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('<title>Application</title>');

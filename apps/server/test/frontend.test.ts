@@ -14,7 +14,7 @@ it('serves SPA deep links and Monaco assets without exposing neighboring files o
     await writeFile(join(root, 'assets', 'editor.worker-Ab12.js'), '/* worker */');
     await writeFile(join(root, 'secret.txt'), 'not public');
     await registerFrontend(app, root, true);
-    for (const path of ['/', '/w/abc/files', '/demo/w/abc']) {
+    for (const path of ['/', '/signin', '/signin?next=%2Finvite%2Fabc', '/invite/abc', '/w/abc/files', '/demo/w/abc']) {
       const res = await app.inject(path);
       expect(res.statusCode).toBe(200); expect(res.body).toBe('<main>App</main>');
       expect(res.headers['cache-control']).toBe('no-cache');

@@ -52,7 +52,7 @@ export function WorkspaceSettings({
       setMessage("Workspace settings saved.");
     } catch (cause) {
       setError(workspaceError(cause));
-      if (cause instanceof ApiError && cause.code === "OWNER_KEY_REQUIRED")
+      if (cause instanceof ApiError && ["OWNER_KEY_REQUIRED", "AUTH_REQUIRED", "FORBIDDEN"].includes(cause.code))
         onChange({ ...workspace, isOwner: false });
     } finally {
       busy.current = false;

@@ -8,10 +8,12 @@ import {
 } from "lucide-react";
 import { createWorkspaceRequestSchema } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { useAuth } from "../auth-context";
 import { workspaceError } from "../workspace-api";
 import { workspace as sample } from "../fixtures";
 import { Wordmark } from "../components/Logo";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { AccountControl } from "../components/AccountControl";
 import { Button } from "../components/ui/button";
 import {
   FieldError,
@@ -42,6 +44,7 @@ const PILLARS = [
 
 export function CreateWorkspace() {
   const { api } = useBrowser();
+  const { refresh } = useAuth();
   const navigate = useNavigate();
   const submitting = useRef(false);
   const [pending, setPending] = useState(false);
@@ -77,6 +80,9 @@ export function CreateWorkspace() {
     setPending(true);
     try {
       const id = await api.create(parsed.data);
+      // Creation has already succeeded: a failed session read must never make
+      // retrying this form create a second workspace.
+      await refresh().catch(() => {});
       navigate(`/w/${id}`);
     } catch (cause) {
       setError(workspaceError(cause));
@@ -96,11 +102,14 @@ export function CreateWorkspace() {
         <div className="absolute -top-40 left-1/2 size-[680px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,var(--color-navy-200)_0%,transparent_65%)] opacity-50 blur-3xl dark:bg-[radial-gradient(circle,var(--color-navy-700)_0%,transparent_65%)] dark:opacity-40" />
       </div>
 
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
+      <header className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-6">
         <Link to="/" aria-label="CoFlow home" className="rounded-lg">
           <Wordmark size="lg" />
         </Link>
-        <ThemeToggle />
+        <div className="flex flex-wrap items-center gap-3">
+          <AccountControl />
+          <ThemeToggle />
+        </div>
       </header>
 
       <div className="mx-auto grid w-full max-w-6xl items-start gap-12 px-6 pt-6 pb-20 lg:min-h-[calc(100vh-13rem)] lg:grid-cols-[1.05fr_minmax(360px,0.95fr)] lg:items-center lg:gap-16 lg:pt-6">

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, type InvitationPreview } from "@app/contracts";
 import { useAuth } from "../auth-context";
 import { Wordmark } from "../components/Logo";
+import { AccountControl } from "../components/AccountControl";
 import { Button, ButtonLink } from "../components/ui/button";
 import { ErrorText, Notice, Skeleton } from "../components/ui/misc";
 
@@ -23,11 +24,16 @@ export function AcceptInvite() {
   const navigate = useNavigate();
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [acceptFailure, setAcceptFailure] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || loading) return;
     const controller = new AbortController();
+    setPreview(null);
+    setFailure(null);
+    setAcceptFailure(null);
     void api
       .previewInvitation(token, controller.signal)
       .then((value) => {
@@ -42,17 +48,19 @@ export function AcceptInvite() {
         );
       });
     return () => controller.abort();
-  }, [api, token, account?.id]);
+  }, [api, token, account?.id, loading, retry]);
 
   async function accept() {
     setBusy(true);
-    setFailure(null);
+    setAcceptFailure(null);
     try {
       const membership = await api.acceptInvitation(token);
-      await refresh();
+      // Acceptance is committed already. A failed account refresh must not
+      // invite a second submission of a now-consumed invitation.
+      await refresh().catch(() => {});
       navigate(`/w/${membership.workspaceId}`, { replace: true });
     } catch (error) {
-      setFailure(
+      setAcceptFailure(
         error instanceof ApiError && error.code === "INVITATION_INVALID"
           ? "This invitation is no longer valid, or it was issued to a different email address."
           : "Could not accept the invitation. Try again.",
@@ -85,6 +93,9 @@ export function AcceptInvite() {
             <p className="mt-3 text-[12.5px] text-muted-foreground">
               Ask whoever invited you to send a new one.
             </p>
+            <Button onClick={() => setRetry((value) => value + 1)} className="mt-5 w-full">
+              Try again
+            </Button>
             <ButtonLink to="/" className="mt-5 w-full">
               Go to CoFlow
             </ButtonLink>
@@ -105,18 +116,22 @@ export function AcceptInvite() {
                   the one you are signed in with. Sign in with the invited
                   address, or ask for a new invitation.
                 </p>
+                <AccountControl signInNext={`/invite/${token}`} />
               </Notice>
             )}
 
             {account ? (
-              <Button
-                variant="primary"
-                className="mt-5 w-full"
-                disabled={busy || preview!.emailMismatch}
-                onClick={() => void accept()}
-              >
-                {busy ? "Joining…" : `Join as ${account.displayName}`}
-              </Button>
+              <>
+                {acceptFailure && <ErrorText role="alert" className="mt-4">{acceptFailure}</ErrorText>}
+                <Button
+                  variant="primary"
+                  className="mt-5 w-full"
+                  disabled={busy || preview!.emailMismatch}
+                  onClick={() => void accept()}
+                >
+                  {busy ? "Joining…" : `Join as ${account.displayName}`}
+                </Button>
+              </>
             ) : (
               <>
                 <p className="mt-4 text-[12.5px] text-muted-foreground">

@@ -13,15 +13,17 @@ import { WebSocket } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError, LIVE_ACK_ACCEPTED, LIVE_ACK_PERSISTED, LIVE_MESSAGE_ACK,
-  LIVE_MESSAGE_SYNC, LIVE_TEXT_NAME, liveRoomPath, type LiveRoomId,
+  LIVE_MESSAGE_SYNC, LIVE_TEXT_NAME, liveRoomPath, canWrite, type LiveRoomId,
 } from '@app/contracts';
-import { attachLiveDocuments, type LiveDocumentDeps } from '../src/collaboration/server.js';
+import { attachLiveDocuments, type LiveAuthorizer, type LiveDocumentDeps } from '../src/collaboration/server.js';
+import { SessionStore } from '../src/auth/sessions.js';
+import { readSessionCookie } from '../src/auth/authorize.js';
 import { MAX_LIVE_MESSAGE_BYTES } from '../src/collaboration/room.js';
 import { PgDraftStore } from '../src/drafts/store.js';
 import { LocalGitService } from '../src/git/service.js';
 import { startRuntime } from '../src/recovery/runtime.js';
 import { testConfig, authenticateRuntime } from './app-helpers.js';
-import { connectTestDb, insertTask, insertWorkspace, sessionCookie, testDatabaseUrl } from './helpers.js';
+import { connectTestDb, insertTask, insertWorkspace, sessionCookie, testDatabaseUrl, TEST_USER_ID } from './helpers.js';
 
 let db: ReturnType<typeof connectTestDb>;
 let store: PgDraftStore;
@@ -36,9 +38,9 @@ const peers: Array<{ provider: WebsocketProvider; doc: Y.Doc }> = [];
 const sockets: WebSocket[] = [];
 const unblock: Array<() => void> = [];
 
-async function listen(deps: Partial<LiveDocumentDeps> = {}) {
+async function listen(deps: Partial<LiveDocumentDeps> = {}, authorize?: LiveAuthorizer) {
   server = createServer();
-  live = attachLiveDocuments(server, { drafts: store, git, debounceMs: 30, onError: logs, ...deps });
+  live = attachLiveDocuments(server, { drafts: store, git, debounceMs: 30, onError: logs, ...deps }, undefined, authorize);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -148,6 +150,38 @@ async function rejectedUpgrade(path: string): Promise<string> {
 }
 
 describe('D03 live documents', () => {
+  it.each(['logout', 'membership removal', 'session expiry'])('rejects writes from an already-open socket after %s', async (change) => {
+    const sessions = new SessionStore({ db: db.db, verify: vi.fn() });
+    await listen({}, async ({ workspaceId, cookie }) => {
+      const identity = await sessions.resolve(readSessionCookie(cookie));
+      const access = await sessions.access(workspaceId, identity?.userId);
+      if (!canWrite(access)) throw new ApiError(identity ? 'FORBIDDEN' : 'AUTH_REQUIRED', 'Access revoked.');
+    });
+    const peer = client();
+    await synced(peer);
+    peer.text.insert(peer.text.length, ' accepted');
+    await vi.waitFor(async () => expect((await storedText()).text).toBe('shared base accepted'));
+    if (change === 'logout') {
+      await sessions.signOut(readSessionCookie(sessionCookie().cookie));
+    } else if (change === 'session expiry') {
+      await db.db.updateTable('sessions').set({ expires_at: new Date(Date.now() - 1000) })
+        .where('user_id', '=', TEST_USER_ID).execute();
+    } else {
+      await db.db.deleteFrom('workspace_members').where('workspace_id', '=', id.workspaceId)
+        .where('user_id', '=', TEST_USER_ID).execute();
+    }
+    try {
+      const closed = new Promise<{ code: number }>((resolve) => peer.provider.once('connection-close', resolve));
+      peer.text.insert(peer.text.length, ' forbidden');
+      expect((await closed).code).toBe(1008);
+      expect((await storedText()).text).toBe('shared base accepted');
+    } finally {
+      if (change === 'session expiry') {
+        await db.db.updateTable('sessions').set({ expires_at: new Date(Date.now() + 60 * 60 * 1000) })
+          .where('user_id', '=', TEST_USER_ID).execute();
+      }
+    }
+  });
   it('initializes simultaneous clients once from the real human Git branch', async () => {
     root = await mkdtemp(join(tmpdir(), 'd03-git-'));
     const real = new LocalGitService(root);

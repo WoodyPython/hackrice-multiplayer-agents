@@ -99,8 +99,13 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
 
   /** Who am I, what do I have, and what are my settings -- in one call. */
   app.get('/api/auth/session', async (request, reply) => {
-    const identity = await sessions.resolve(readSessionCookie(request.headers.cookie));
+    const token = readSessionCookie(request.headers.cookie);
+    const identity = await sessions.resolve(token);
     const rest = await state(identity?.userId);
+    // Keep the browser expiry aligned with the store's sliding session expiry.
+    // This runs at application startup and whenever the account is refreshed.
+    if (identity && token) setSessionCookie(reply, token, identity.expiresAt, deps.secureCookies);
+    void reply.header('cache-control', 'no-store');
     return reply.code(200).send(sessionStateSchema.parse({
       account: identity?.account ?? null, ...rest,
     }));
@@ -188,6 +193,10 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
   async function assertNotLastOwner(
     trx: Transaction<Database>, workspaceId: string, userId: string, nextRole: string,
   ): Promise<void> {
+    // Serialize roster changes before locking individual members. Locking a
+    // different target first lets two owners deadlock while locking each other.
+    await trx.selectFrom('workspaces').select('id')
+      .where('id', '=', workspaceId).forUpdate().executeTakeFirst();
     // Only a change that removes an owner can strand the workspace.
     const target = await trx.selectFrom('workspace_members').select('role')
       .where('workspace_id', '=', workspaceId).where('user_id', '=', userId)

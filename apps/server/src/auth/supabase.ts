@@ -83,6 +83,7 @@ export function createSupabaseVerifier(
     try {
       response = await fetchImpl(`${url}/auth/v1/user`, {
         headers: { ...supabaseHeaders(key), authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(10_000),
       });
     } catch {
       // The provider being unreachable is not permission to proceed.
@@ -93,9 +94,13 @@ export function createSupabaseVerifier(
       throw new ApiError('AUTH_REQUIRED', 'That sign-in is not valid. Sign in again.');
     }
 
-    let user: SupabaseUser;
-    try { user = (await response.json()) as SupabaseUser; }
+    let payload: unknown;
+    try { payload = await response.json(); }
     catch { throw new ApiError('AUTH_REQUIRED', 'Could not verify the sign-in. Try again.'); }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new ApiError('AUTH_REQUIRED', 'Could not verify the sign-in. Try again.');
+    }
+    const user = payload as SupabaseUser;
 
     const id = typeof user.id === 'string' ? user.id : '';
     const email = typeof user.email === 'string' ? user.email.trim() : '';

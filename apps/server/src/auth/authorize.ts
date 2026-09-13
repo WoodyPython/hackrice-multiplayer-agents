@@ -95,13 +95,19 @@ export function readSessionCookie(header: string | undefined): string | undefine
     if (part.slice(0, index).trim() !== SESSION_COOKIE) continue;
     const value = part.slice(index + 1).trim();
     // A quoted cookie value is legal; strip the quotes before hashing.
-    return decodeURIComponent(value.replace(/^"|"$/g, '')) || undefined;
+    try {
+      return decodeURIComponent(value.replace(/^"|"$/g, '')) || undefined;
+    } catch {
+      // A malformed browser cookie is an invalid credential, not a server error.
+      return undefined;
+    }
   }
   return undefined;
 }
 
 function requirementFor(method: string, route: string): Requirement {
-  const key = `${method} ${route}`;
+  // Fastify exposes HEAD for GET routes; it must inherit the same permission.
+  const key = `${method === 'HEAD' ? 'GET' : method} ${route}`;
   if (ACCOUNT_ONLY.has(key)) return 'account';
   if (OWNER_ONLY.has(key)) return 'owner';
   if (MEMBER_READS.has(key)) return 'member';
