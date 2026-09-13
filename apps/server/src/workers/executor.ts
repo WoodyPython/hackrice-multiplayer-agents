@@ -111,6 +111,7 @@ export class WorkerExecutor implements WorkerExecutionService {
           }
           results.push({ name: call.name, ...(call.id ? { id: call.id } : {}), result });
         }
+        await scope.recordToolResults(results);
         messages.push({ role: 'tool', results });
       }
     } catch (error) {

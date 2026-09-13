@@ -5,7 +5,21 @@ Newest first. One entry per landed ticket.
 ## Workspaces you can come back to: home, switching, archive, delete, cleanup
 **Landed:** 2026-09-13 · contracts, server, frontend, one migration
 **Affects:** everyone. **Action required:** run `npm run db:migrate` (adds
-`0013_workspace_lifecycle.sql`). Nothing else; no route or contract was removed.
+`0014_workspace_lifecycle.sql`). Nothing else; no route or contract was removed.
+
+**Merged with agent histories**, which claimed `0013` first. Per the
+convention, this migration renumbered rather than theirs — and that was the
+right way round for a concrete reason, not just the rule: theirs was already
+applied to the shared database.
+
+Two collisions git could not flag, both resolved here. The migration number,
+above. And `schema.test.ts`'s RLS table count: each branch added one table with
+row-level security and each raised 24 to 25, so a merge taking either side
+compiles, reads correctly, and asserts the wrong number. It is 26.
+
+`errors.ts` merged cleanly and both codes are present; the delete cascade was
+re-tested against the new `agent_trace_steps`, which hangs off tasks and agent
+instances and goes with them.
 
 Accounts gave a workspace an owner. This gives a person their workspaces back.
 
@@ -54,7 +68,12 @@ everything cascading from it, plus its repository and its material objects;
 /api/workspaces/:w/members/me` lets anyone leave except the last owner. Both
 are new; before this nothing could be removed at all.
 
-**`last_activity_at`, and where it is written.** Touched by the event pump,
+**`last_activity_at`, and where it is written.** Written with `FOR UPDATE SKIP
+LOCKED`, so the sweep steps over a workspace row Apply is holding rather than
+queueing behind it — the wait would otherwise happen inside the sweep whose
+promise `stop()` awaits, turning a slow transaction elsewhere into a shutdown
+that hangs. A skipped row is corrected by the next event in that workspace.
+Touched by the event pump,
 after the producing transaction commits — **not** in `appendEvent`. That is a
 lock-ordering decision: this codebase takes workspace → task → run → budget
 (`reviews/service.ts` takes the workspace row first and says so), and
@@ -97,12 +116,65 @@ RESTRICT check runs, confirmed directly for both `delete from workspaces` and
 `delete from tasks`. The constraint is left exactly as `0002` wrote it, and
 there is a test so a change to that chain fails a test rather than a deletion.
 
-Verified: `npm run build`; server `unit` (121), `schema` (49),
-`workspace-lifecycle` (13), `workspaces`, `permissions`, `events`, plus
-`integration`, `tasks`, `inbox`, `briefings`, `runs`, `reviews` (115); web 141
-across 12 files. Driven end to end in a browser against the live database: home
-list, switcher, archive, archived-write refusal, delete with name confirmation,
-and the visited list — then every row it created was removed again.
+Verified after the merge: `npm run build`; web **150** across 13 files; server
+`unit` (121), then `workspace-lifecycle`, `permissions`, `schema`, `events`,
+`workspaces` and `agent-history` together (**174**), and `runtime-flow` +
+`tasks` (39). Mutation-checked: neutralising the archived guard, the last-owner
+copy, or `SKIP LOCKED` each fails exactly the test written for it, and nothing
+else.
+
+Driven end to end in a browser against the live database before the merge: the
+home list, the switcher, archive, the archived-write refusal, delete with name
+confirmation, and the visited list — then every row it created was removed
+again.
+
+**One thing left open, stated rather than buried.** A full sequential server run
+showed `apply.test.ts` hanging for 491 seconds against a 30-second timeout. That
+file passes in 140 seconds on its own and the hang was never reproduced, so it
+is not attributed to this change. What the investigation did find was a real
+mechanism, now closed: the pump's activity write could queue behind a workspace
+row held by Apply, inside the sweep whose promise `stop()` awaits. `SKIP LOCKED`
+removes it. If a full run hangs there again, that is the first place to look,
+and it is Role D's collaboration path rather than this one.
+
+## History — agent work: thought process and changes
+**Landed:** 2026-09-13 (not yet merged) · contracts, server, frontend, one migration
+**Affects:** everyone. **Action required:** run `npm run db:migrate` (adds `0013_agent_trace_steps.sql`).
+
+History now has two tabs: **Applied changes** (unchanged) and **Agent work**,
+which lists every agent that is done working (completed, failed, timed out,
+out of tokens, canceled or interrupted), newest first. Opening one shows its
+result summary and limitations, why it stopped if it did not complete, its
+recorded thought process, and the files it changed, using the same `DiffView`
+as the Changes tab. Finished agents on the Agents page link straight to their
+entry (`/history?view=agents&agent=<id>`).
+
+**What is recorded.** `AgentExecution.generate` appends one `model_turn` row per
+successful model call (Gemini's thought summary, visible text, tool calls), and
+the worker loop appends one `tool_results` row per batch of tool outcomes. This
+covers the orchestrator and workers. Strings are clipped: 20,000 characters for
+reasoning and text, 600 for tool arguments and results, so a trace never becomes
+a second copy of the files. Rows come from normalized response fields only.
+`providerState` and thought signatures never reach a trace. A failed trace write
+is reported to the background error log and never fails the agent. Agents that
+ran before this change have no recorded steps, and the UI says so.
+
+**Thought summaries are now requested** (`includeThoughts: true`). They arrive as
+separate `thought` parts, so they still never mix into `text`, and the replayed
+provider state is unchanged. The UI labels reasoning as generated and unchecked.
+
+**The diff is the agent's own work:** `base_sha` against its last accepted
+checkpoint (`result_sha`), limited to its write paths, via a new
+`ReviewGit.compare` that the review detail now shares. If the commits cannot be
+read, the response says `available: false` and the UI says the changes could
+not be read. It never shows that as "no changes".
+
+**Endpoints:** `GET /api/workspaces/:w/agent-history` (listing, capped at 200) and
+`GET /api/workspaces/:w/agent-history/:agentInstanceId` (detail, reads Git, only
+requested when an entry is opened). Both are read-only and scoped to the
+workspace, and responses are parsed on the way out, so model IDs and full
+instructions stay server-side. A new `AGENT_NOT_FOUND` (404) error code covers
+unknown, unfinished, or foreign agents.
 
 ## Inbox — actionable items across the workspace
 **Landed:** 2026-09-13 (not yet merged) · contracts, server, frontend

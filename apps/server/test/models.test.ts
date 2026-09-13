@@ -116,7 +116,7 @@ describe('Gemini adapter through the real SDK', () => {
     });
   });
 
-  it('preserves all content parts and parallel tool calls without exposing thought text', async () => {
+  it('preserves all content parts and parallel tool calls, keeping thought text out of the answer', async () => {
     const content = { role: 'model', parts: [
       { text: 'private thought', thought: true, thoughtSignature: 'dGhvdWdodA==' },
       { text: 'Checking ', thoughtSignature: 'dGV4dA==' },
@@ -128,6 +128,8 @@ describe('Gemini adapter through the real SDK', () => {
     const adapter = createGeminiAdapter(config);
     const result = await adapter.generate(request, allowance, signal());
     expect(result.text).toBe('Checking sources.');
+    // The summary is recorded for agent history, separately from the answer.
+    expect(result.thoughts).toBe('private thought');
     expect(result.toolCalls).toEqual([
       { id: 'a', name: 'read_file', arguments: { path: 'a.md' } },
       { id: 'b', name: 'read_file', arguments: { path: 'b.md' } },
@@ -151,7 +153,7 @@ describe('Gemini adapter through the real SDK', () => {
     await createGeminiAdapter(config).generate(request, { maxOutputTokens: 1000 }, signal());
     expect(http.body(0).generationConfig).toMatchObject({
       candidateCount: 1, maxOutputTokens: 1000,
-      thinkingConfig: { thinkingBudget: 250, includeThoughts: false },
+      thinkingConfig: { thinkingBudget: 250, includeThoughts: true },
     });
   });
 

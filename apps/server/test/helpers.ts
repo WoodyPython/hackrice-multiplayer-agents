@@ -4,6 +4,7 @@ import pg from 'pg';
 import { config } from 'dotenv';
 import { createDb, type Db, type DbHandle } from '../src/db/client.js';
 import { runMigrations } from '../src/db/migrate.js';
+import { TASK_AGENT_TOKEN_BUDGET } from '@app/contracts';
 
 config({ path: resolve(process.cwd(), '../../.env'), quiet: true });
 config({ quiet: true });
@@ -248,7 +249,7 @@ export async function insertBudget(
   workspaceId: string,
   taskId: string,
   agentKey: string,
-  tokenBudget = 64_000,
+  tokenBudget = TASK_AGENT_TOKEN_BUDGET,
 ): Promise<void> {
   await db
     .insertInto('task_agent_budgets')

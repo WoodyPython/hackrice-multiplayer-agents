@@ -4,6 +4,7 @@ import {
   ACTIVE_RUN_STATUSES,
   AGENT_STATUSES,
   RUN_STATUSES,
+  TASK_AGENT_TOKEN_BUDGET,
   TASK_STATUSES,
   TERMINAL_TASK_STATUSES,
 } from '@app/contracts';
@@ -67,7 +68,8 @@ describe('migrations', () => {
       '0010_confirmation_file_ownership.sql',
       '0011_workspace_briefings.sql',
       '0012_accounts_and_memberships.sql',
-      '0013_workspace_lifecycle.sql',
+      '0013_agent_trace_steps.sql',
+      '0014_workspace_lifecycle.sql',
     ]);
   });
 
@@ -80,8 +82,13 @@ describe('migrations', () => {
     expect(unprotected).toEqual([]);
     // The count is asserted, not just the emptiness: RLS does not inherit, so a
     // table added without it would otherwise pass this test by being absent
-    // from a list nobody updated. 0013 adds `workspace_visits`.
-    expect(rows.length).toBe(25);
+    // from a list nobody updated.
+    //
+    // It is also where two branches collide silently. 0013 adds
+    // `agent_trace_steps` and 0014 adds `workspace_visits`; each branch raised
+    // 24 to 25 on its own, and a merge that takes either side compiles, reads
+    // correctly, and asserts the wrong number.
+    expect(rows.length).toBe(26);
   });
 
   it('pins the agent write guard search path', async () => {
@@ -612,7 +619,7 @@ describe('agent graph', () => {
     await insertBudget(db, ws, task, 'faq');
     await db
       .updateTable('task_agent_budgets')
-      .set({ consumed_tokens: 64_000 })
+      .set({ consumed_tokens: TASK_AGENT_TOKEN_BUDGET })
       .where('task_id', '=', task)
       .where('agent_key', '=', 'faq')
       .execute();
@@ -628,7 +635,7 @@ describe('agent graph', () => {
       .where('task_id', '=', task)
       .where('agent_key', '=', 'faq')
       .executeTakeFirstOrThrow();
-    expect(budget.consumed_tokens).toBe(64_000);
+    expect(budget.consumed_tokens).toBe(TASK_AGENT_TOKEN_BUDGET);
   });
 
   it('gives the same agent an independent budget on another task', async () => {
@@ -639,7 +646,7 @@ describe('agent graph', () => {
     await insertBudget(db, ws, taskB, 'faq');
     await db
       .updateTable('task_agent_budgets')
-      .set({ consumed_tokens: 64_000 })
+      .set({ consumed_tokens: TASK_AGENT_TOKEN_BUDGET })
       .where('task_id', '=', taskA)
       .execute();
 

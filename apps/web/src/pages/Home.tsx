@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Archive,
@@ -292,7 +292,7 @@ function Section({
   count: number;
   note?: string;
   hidden: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   if (hidden) return null;
   return (
@@ -348,7 +348,7 @@ function Row({
 }: {
   to: string;
   name: string;
-  meta: React.ReactNode;
+  meta: ReactNode;
   muted?: boolean;
 }) {
   return (

@@ -47,6 +47,29 @@ before believing the diagnosis cost ten minutes and saved a schema change made
 on a wrong theory. And a plausible reading of the documentation is not a
 behaviour: that particular claim was checkable in one query.
 
+## A background sweep that takes a row lock can turn someone else's slow transaction into a hang
+
+The event pump writes `workspaces.last_activity_at` after each batch of
+broadcasts. Written as a plain `UPDATE ... WHERE id IN (...)`, that queues
+behind anyone holding the workspace row — and Apply and guidance edits hold it
+for the length of their transaction. The wait happens inside `sweep()`, whose
+promise `stop()` awaits, so a slow transaction elsewhere becomes a shutdown
+that never finishes.
+
+Found while investigating one test in a full-suite run that ran for **491
+seconds against a 30-second timeout**: not a failed assertion, a hang. The same
+file passed in 140 seconds when run alone, so the cause was never proven — but
+the mechanism was real and reachable, which is enough.
+
+The fix is `FOR UPDATE SKIP LOCKED` in a subquery, so the sweep steps over a
+locked row instead of waiting. What that gives up is worth stating precisely,
+because the obvious guess is wrong: the watermark has already advanced past the
+event, so a skipped row is corrected by the next *event* in that workspace, not
+the next sweep. For a timestamp that orders a list in days, that is a non-cost.
+
+Generalises: anything on a timer that writes a row other transactions hold
+should skip rather than wait, especially if a shutdown path awaits it.
+
 ## Where a "last activity" timestamp is written is a lock-ordering decision
 
 `workspaces.last_activity_at` is touched by the event pump, after the producing

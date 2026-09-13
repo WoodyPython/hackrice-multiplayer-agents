@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AGENT_TIMEOUT_MS, type AgentPreset, type GuardedWorkerGitService, type Material,
+import { AGENT_TIMEOUT_MS, TASK_AGENT_TOKEN_BUDGET, type AgentPreset, type GuardedWorkerGitService, type Material,
   type PlanningContext, type WorkerFinish } from '@app/contracts';
 import { PgAgentLedger } from '../src/agents/index.js';
 import { PgWorkerStore, WorkerTools, WorkerExecutor, WORKER_TOOLS } from '../src/workers/index.js';
@@ -317,7 +317,7 @@ describe('budgeted worker tool loop and human waits', () => {
   });
 
   it('stops before generation on an exhausted budget', async () => {
-    const f = await fixture(); await db.db.updateTable('task_agent_budgets').set({ consumed_tokens: 64000 }).where('task_id', '=', f.taskId).execute();
+    const f = await fixture(); await db.db.updateTable('task_agent_budgets').set({ consumed_tokens: TASK_AGENT_TOKEN_BUDGET }).where('task_id', '=', f.taskId).execute();
     const adapter = new FakeModelAdapter([{ inputTokens: 20, result: done() }]);
     await expect(executor(adapter).execute(f)).rejects.toMatchObject({ code: 'token_exhausted' });
     expect(adapter.calls).toHaveLength(0); expect((await state(f.agentInstanceId)).status).toBe('token_exhausted');

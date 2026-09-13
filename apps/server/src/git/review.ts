@@ -218,18 +218,30 @@ export class ReviewGit {
   }
 
   async detail(artifact: ReviewArtifact): Promise<ReviewCandidateData> {
-    const before = await this.validatedTree(artifact.source.mainSha), after = await this.validatedTree(artifact.candidateSha);
+    return { candidateSha: artifact.candidateSha, candidateComplete: artifact.conflicts.length === 0,
+      conflicts: artifact.conflicts, changedFiles: await this.compare(artifact.source.mainSha, artifact.candidateSha),
+      generatedCodeWasNotExecuted: true };
+  }
+
+  /**
+   * Per-file diffs between two commits. `onlyPaths` limits the comparison, so
+   * an agent's history shows its own write scope rather than everything that
+   * reached its branch.
+   */
+  async compare(beforeSha: string, afterSha: string, onlyPaths?: readonly string[]): Promise<ReviewCandidateData['changedFiles']> {
+    const before = await this.validatedTree(beforeSha), after = await this.validatedTree(afterSha);
+    const scope = onlyPaths ? new Set(onlyPaths) : null;
     const changedFiles: ReviewCandidateData['changedFiles'] = [];
     for (const path of [...new Set([...before.keys(), ...after.keys()])].sort()) {
+      if (scope && !scope.has(path)) continue;
       const a = before.get(path), b = after.get(path);
       if (equal(a, b)) continue;
       const diff = await this.command(['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames',
-        '--no-color', '--src-prefix=a/', '--dst-prefix=b/', artifact.source.mainSha, artifact.candidateSha, '--', path]);
+        '--no-color', '--src-prefix=a/', '--dst-prefix=b/', beforeSha, afterSha, '--', path]);
       changedFiles.push({ path, changeKind: !a ? 'added' : !b ? 'deleted' : 'modified', diff: diff.stdout,
         beforeHash: a?.hash ?? null, afterHash: b?.hash ?? null });
     }
-    return { candidateSha: artifact.candidateSha, candidateComplete: artifact.conflicts.length === 0,
-      conflicts: artifact.conflicts, changedFiles, generatedCodeWasNotExecuted: true };
+    return changedFiles;
   }
 
   async preview(artifact: ReviewArtifact, path: string) {

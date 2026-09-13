@@ -183,8 +183,9 @@ actually gone wrong, more than once:
 
 ## Current state
 
-All suites green. Roughly 40 server test files and 12 web ones; web is 141
-tests. Workspaces have a full lifecycle as of 2026-09-13 — a home page listing
+All suites green. 41 server test files and 13 web ones; web is 150 tests.
+
+Workspaces have a full lifecycle as of 2026-09-13 — a home page listing
 everything an account can reach, archive/restore, leave, delete, and
 `npm run workspace:gc --workspace @app/server` for what is taking up room.
 

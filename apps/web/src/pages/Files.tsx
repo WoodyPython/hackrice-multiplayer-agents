@@ -13,6 +13,7 @@ import {
 import {
   MAX_TEXT_FILE_BYTES,
   SUPPORTED_TEXT_EXTENSIONS,
+  isSupportedTextExtension,
   type DraftFile,
   type Material,
   type ApprovedFile,
@@ -81,6 +82,12 @@ export function Files({ workspaceId }: { workspaceId: string }) {
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{
+    completed: number;
+    total: number;
+  } | null>(null);
+  const [draggingFiles, setDraggingFiles] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -112,17 +119,89 @@ export function Files({ workspaceId }: { workspaceId: string }) {
     return () => controller.abort();
   }, [api, workspaceId, nonce]);
 
-  async function upload(file: File) {
+  async function upload(files: File[]) {
+    if (files.length === 0 || busy) return;
     setUploadError(null);
+    setUploadMessage(null);
     setBusy(true);
+
+    const supported = files.filter(
+      (file) =>
+        isSupportedTextExtension(file.name) &&
+        file.size > 0 &&
+        file.size <= MAX_TEXT_FILE_BYTES,
+    );
+    const skipped = files.filter((file) => !supported.includes(file));
+    let uploaded = 0;
+    let reused = 0;
+    const failed: string[] = [];
+
+    setUploadProgress({ completed: 0, total: supported.length });
     try {
-      await api.uploadMaterial(workspaceId, file, session.getGuest().name);
-      reload();
-    } catch (error) {
-      setUploadError(apiMessage(error));
+      // Keep the requests sequential. Folder drops can contain hundreds of
+      // files, and turning all of them into simultaneous multipart requests
+      // would overwhelm the API and make useful progress feedback impossible.
+      for (const [index, file] of supported.entries()) {
+        try {
+          const result = await api.uploadMaterial(
+            workspaceId,
+            file,
+            session.getGuest().name,
+          );
+          if (result.reused) reused += 1;
+          else uploaded += 1;
+        } catch (error) {
+          failed.push(`${file.name} (${apiMessage(error)})`);
+        }
+        setUploadProgress({ completed: index + 1, total: supported.length });
+      }
+
+      if (uploaded + reused > 0) reload();
+
+      const completed = uploaded + reused;
+      if (completed > 0) {
+        const parts = [
+          `${uploaded} ${uploaded === 1 ? "material" : "materials"} uploaded`,
+        ];
+        if (reused > 0) parts.push(`${reused} already present`);
+        setUploadMessage(`${parts.join(", ")}.`);
+      }
+
+      if (skipped.length > 0 || failed.length > 0) {
+        const issues = [
+          ...skipped.map((file) => `${file.name} (unsupported, empty, or over the size limit)`),
+          ...failed,
+        ];
+        const shown = issues.slice(0, 3).join(", ");
+        const remaining = issues.length - 3;
+        setUploadError(
+          `${issues.length} ${issues.length === 1 ? "file was" : "files were"} not uploaded: ${shown}${remaining > 0 ? `, and ${remaining} more` : ""}.`,
+        );
+      } else if (supported.length === 0) {
+        setUploadError("No supported text files were found.");
+      }
     } finally {
       setBusy(false);
+      setUploadProgress(null);
       if (fileInput.current) fileInput.current.value = "";
+    }
+  }
+
+  async function dropFiles(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDraggingFiles(false);
+    if (busy) return;
+    try {
+      const files = await filesFromDrop(event.dataTransfer);
+      if (files.length === 0) {
+        setUploadMessage(null);
+        setUploadError("No files were found in that drop.");
+        return;
+      }
+      await upload(files);
+    } catch {
+      setUploadMessage(null);
+      setUploadError("That folder could not be read. Try dropping it again.");
     }
   }
 
@@ -220,23 +299,53 @@ export function Files({ workspaceId }: { workspaceId: string }) {
           <FilePlus2 aria-hidden="true" />
           Edit a file together
         </Button>
-        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-[12.5px] font-medium transition-colors hover:bg-muted">
+        <label
+          className={`inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-[12.5px] font-medium transition-[color,background-color,border-color,box-shadow] ${
+            busy
+              ? "cursor-not-allowed opacity-60"
+              : draggingFiles
+                ? "cursor-copy border-navy-500 bg-navy-50 ring-2 ring-navy-500/20 dark:bg-navy-950/60"
+                : "cursor-pointer border-border hover:bg-muted"
+          }`}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            if (!busy) setDraggingFiles(true);
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = busy ? "none" : "copy";
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setDraggingFiles(false);
+            }
+          }}
+          onDrop={(event) => void dropFiles(event)}
+        >
           <Upload aria-hidden="true" className="size-3.5" />
-          <span>Upload a material</span>
+          <span>
+            {uploadProgress
+              ? `Uploading ${uploadProgress.completed} of ${uploadProgress.total}…`
+              : draggingFiles
+                ? "Drop files or folders"
+                : "Upload materials"}
+          </span>
           <input
             ref={fileInput}
             type="file"
             className="sr-only"
             accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
+            multiple
             disabled={busy}
             onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload(file);
+              const files = Array.from(event.target.files ?? []);
+              if (files.length > 0) void upload(files);
             }}
           />
         </label>
         <small className="text-[11px] text-muted-foreground">
-          Text only, up to {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB.
+          Choose multiple files, or drop files and folders here. Text only, up to{" "}
+          {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB each.
         </small>
       </div>
 
@@ -274,6 +383,11 @@ export function Files({ workspaceId }: { workspaceId: string }) {
         <ErrorText role="alert" className="mb-4">
           {uploadError}
         </ErrorText>
+      )}
+      {uploadMessage && (
+        <p role="status" className="mb-4 text-[12px] text-muted-foreground">
+          {uploadMessage}
+        </p>
       )}
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)]">
@@ -337,6 +451,45 @@ export function Files({ workspaceId }: { workspaceId: string }) {
       </div>
     </>
   );
+}
+
+/**
+ * Expands dropped directories using the browser's drag-and-drop entry API.
+ * The regular picker remains a standard `multiple` input, so one control can
+ * accept loose files by click and whole folders by drop without a mode toggle.
+ */
+async function filesFromDrop(dataTransfer: DataTransfer): Promise<File[]> {
+  const entries = Array.from(dataTransfer.items ?? [])
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter((entry): entry is FileSystemEntry => Boolean(entry));
+
+  if (entries.length === 0) return Array.from(dataTransfer.files ?? []);
+
+  const nested = await Promise.all(entries.map(readDroppedEntry));
+  return nested.flat();
+}
+
+async function readDroppedEntry(entry: FileSystemEntry): Promise<File[]> {
+  if (entry.isFile) {
+    const file = await new Promise<File>((resolve, reject) =>
+      (entry as FileSystemFileEntry).file(resolve, reject),
+    );
+    return [file];
+  }
+  if (!entry.isDirectory) return [];
+
+  const reader = (entry as FileSystemDirectoryEntry).createReader();
+  const children: FileSystemEntry[] = [];
+  // Chromium returns large directories in batches, so read until the first
+  // empty batch rather than assuming one call contains the whole folder.
+  while (true) {
+    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
+      reader.readEntries(resolve, reject),
+    );
+    if (batch.length === 0) break;
+    children.push(...batch);
+  }
+  return (await Promise.all(children.map(readDroppedEntry))).flat();
 }
 
 function Detail({

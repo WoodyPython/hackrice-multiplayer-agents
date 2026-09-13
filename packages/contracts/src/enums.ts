@@ -210,4 +210,4 @@ export type ModelCallStatus = z.infer<typeof modelCallStatusSchema>;
 export const AGENT_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** Applied independently to each (task, agent_key) pair. */
-export const TASK_AGENT_TOKEN_BUDGET = 64_000;
+export const TASK_AGENT_TOKEN_BUDGET = 256_000;

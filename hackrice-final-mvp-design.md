@@ -894,7 +894,7 @@ For every orchestrator or worker instance:
 
 ```typescript
 const AGENT_TIMEOUT_MS = 10 * 60 * 1000;
-const TASK_AGENT_TOKEN_BUDGET = 64_000;
+const TASK_AGENT_TOKEN_BUDGET = 256_000;
 ```
 
 The token amount is an initial implementation constant applied independently to each task-and-agent pair. Neither limit is a frontend setting. The ten-minute value is fixed, with no environment override.

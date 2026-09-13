@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { AgentPlan } from '@app/contracts';
+import { TASK_AGENT_TOKEN_BUDGET, type AgentPlan } from '@app/contracts';
 import { PgAgentLedger } from '../src/agents/ledger.js';
 import { PgRunStore, assertAcyclic } from '../src/runs/run-store.js';
 import { PgReviewStore } from '../src/runs/review-store.js';
@@ -455,7 +455,7 @@ describe('startup reconciliation', () => {
       .execute();
     await t.handle.db
       .insertInto('task_agent_budgets')
-      .values({ workspace_id: workspaceId, task_id: taskId, agent_key: 'stranded', token_budget: 64_000 })
+      .values({ workspace_id: workspaceId, task_id: taskId, agent_key: 'stranded', token_budget: TASK_AGENT_TOKEN_BUDGET })
       .execute();
     await t.handle.db
       .insertInto('agent_instances')

@@ -44,6 +44,7 @@ const OWNER_ONLY = new Set([
   // member who cannot leave has no way out of a workspace but to ask the
   // person they are trying to stop working with. Fastify matches the static
   // segment first, so the two are separate patterns and separate rules.
+  //
   // Task moves are NOT listed here: marking work complete is member-level and
   // only the other transitions are owner-level, which depends on the request
   // body. PgTaskService.move draws that line with the resolved role.

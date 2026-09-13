@@ -150,7 +150,7 @@ describe('deleting', () => {
    * obvious, and a future change to the cascade chain should fail here rather
    * than fail a person's deletion.
    */
-  it('deletes a workspace whose agent question was answered', async () => {
+  it('deletes a workspace with a full run behind it: questions, answers, traces', async () => {
     const workspaceId = await newWorkspace('Answered');
     const taskId = await insertTask(t.handle.db, workspaceId, { title: 'Asked and answered' });
     const runId = randomUUID();
@@ -177,10 +177,26 @@ describe('deleting', () => {
       asked_at: new Date(), expires_at: new Date(Date.now() + 60_000),
       resolved_at: new Date(),
     }).execute();
+    // Agent histories (0013) hang off tasks and agent_instances, both of which
+    // this delete reaches by cascade. Included because a table added by another
+    // branch is exactly the thing that quietly turns a working delete into a
+    // foreign key violation, and nothing but a test would say so.
+    await t.handle.db.insertInto('agent_trace_steps').values({
+      workspace_id: workspaceId, task_id: taskId, run_id: runId,
+      agent_instance_id: agentId, kind: 'model_turn',
+      content: { text: 'thinking about it' }, created_at: new Date(),
+    }).execute();
 
     const res = await t.app.inject({ method: 'DELETE', url: `/api/workspaces/${workspaceId}`,
       payload: { confirmName: 'Answered' } });
     expect(res.statusCode, res.body).toBe(200);
+
+    // Nothing is left behind for the next person to wonder about.
+    const traces = await t.handle.db.selectFrom('agent_trace_steps')
+      .select('id').where('workspace_id', '=', workspaceId).execute();
+    const questions = await t.handle.db.selectFrom('agent_questions')
+      .select('id').where('workspace_id', '=', workspaceId).execute();
+    expect([traces.length, questions.length]).toEqual([0, 0]);
   });
 });
 
@@ -318,5 +334,84 @@ describe('last activity', () => {
     const again = await t.handle.db.selectFrom('workspaces').select('last_activity_at')
       .where('id', '=', workspaceId).executeTakeFirstOrThrow();
     expect(new Date(again.last_activity_at).getTime()).toBe(settled);
+  });
+
+  /**
+   * The sweep must never wait on somebody else's transaction.
+   *
+   * Apply and guidance edits hold the workspace row for the length of their
+   * transaction. A plain UPDATE here would queue behind them — inside `sweep`,
+   * whose promise `stop()` awaits, so one slow transaction elsewhere becomes a
+   * shutdown that hangs. `SKIP LOCKED` makes the sweep step over a locked row
+   * instead.
+   *
+   * What is given up, stated precisely because the obvious guess is wrong: the
+   * skipped row is NOT retried by the next sweep. The watermark has already
+   * advanced past that event, so the timestamp moves on the next *event* in
+   * that workspace, not the next sweep. For a value that orders a list in days,
+   * and which is only written at all once per throttle window, that is a
+   * non-cost — and a workspace whose row is locked by Apply is a workspace
+   * where something is very much happening anyway.
+   *
+   * Mutation-checked: removing `.skipLocked()` makes this test hang rather than
+   * fail, which is itself the point — the failure mode being guarded against is
+   * a hang, and a hang is what the old query produced.
+   */
+  it('steps over a workspace row somebody else has locked, rather than waiting', async () => {
+    const workspaceId = await newWorkspace('Contended');
+    const taskId = await insertTask(t.handle.db, workspaceId, { title: 'Work' });
+    await t.handle.db.updateTable('workspaces')
+      .set({ last_activity_at: new Date(Date.now() - 60 * 60 * 1000) })
+      .where('id', '=', workspaceId).execute();
+    await t.handle.db.insertInto('task_events').values({
+      workspace_id: workspaceId, task_id: taskId, event_key: `k-${randomUUID()}`,
+      type: 'task.posted', created_at: new Date(),
+    }).execute();
+
+    const pump = new TaskEventPump({
+      db: t.handle.db, broadcaster: new RecordingBroadcaster(), activityThrottleMs: 60_000,
+    });
+
+    // Hold the row exactly as Apply does -- `reviews/service.ts` takes it
+    // `forNoKeyUpdate` -- and sweep while it is held.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const holder = t.handle.db.transaction().execute(async (trx) => {
+      await trx.selectFrom('workspaces').select('id')
+        .where('id', '=', workspaceId).forNoKeyUpdate().executeTakeFirstOrThrow();
+      await held;
+    });
+
+    try {
+      // The assertion is that this resolves at all. It is awaited with a
+      // deadline so a regression reports as a failure here rather than as a
+      // suite that never finishes.
+      const swept = await Promise.race([
+        pump.flush().then(() => 'swept' as const),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 5_000)),
+      ]);
+      expect(swept).toBe('swept');
+    } finally {
+      release();
+      await holder;
+    }
+
+    // Skipped rather than written. The watermark moved past that event with
+    // the broadcast, so what recovers the timestamp is the next event in this
+    // workspace -- not the next sweep.
+    const skipped = await t.handle.db.selectFrom('workspaces').select('last_activity_at')
+      .where('id', '=', workspaceId).executeTakeFirstOrThrow();
+    expect(Date.now() - new Date(skipped.last_activity_at).getTime())
+      .toBeGreaterThan(30 * 60 * 1000);
+
+    await t.handle.db.insertInto('task_events').values({
+      workspace_id: workspaceId, task_id: taskId, event_key: `k-${randomUUID()}`,
+      type: 'task.posted', created_at: new Date(),
+    }).execute();
+    await pump.flush();
+    const recovered = await t.handle.db.selectFrom('workspaces').select('last_activity_at')
+      .where('id', '=', workspaceId).executeTakeFirstOrThrow();
+    expect(Date.now() - new Date(recovered.last_activity_at).getTime())
+      .toBeLessThan(60 * 1000);
   });
 });

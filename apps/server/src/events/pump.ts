@@ -151,8 +151,18 @@ export class TaskEventPump {
    * Throttled in the WHERE clause rather than in memory. A run appends dozens
    * of events; without it every one would rewrite the row, and the process
    * that thinks it knows the last value is the process that is wrong after a
-   * restart. Not matching a row is also not taking a lock, so the throttle is
-   * what keeps a busy workspace from serializing its own sweeps.
+   * restart.
+   *
+   * **SKIP LOCKED, so this can never wait on anybody.** Apply and guidance
+   * edits hold the workspace row for the length of their transaction, and a
+   * plain UPDATE here would queue behind them — inside `sweep`, whose promise
+   * `stop()` awaits, which turns somebody else's long transaction into a
+   * shutdown that hangs. What skipping gives up is small and worth naming
+   * exactly: the watermark advances with the broadcast, so a skipped row is
+   * corrected by the next *event* in that workspace rather than the next
+   * sweep. For a timestamp that orders a list in days, written at most once
+   * per throttle window, that is a non-cost — and a workspace whose row is
+   * locked by Apply is one where something is very much happening anyway.
    *
    * Failure is swallowed by the caller's try/catch and costs an ordering
    * timestamp, never a refresh hint.
@@ -160,11 +170,17 @@ export class TaskEventPump {
   private async touchActivity(workspaceIds: string[]): Promise<void> {
     if (workspaceIds.length === 0) return;
     const now = new Date();
+    const cutoff = new Date(now.getTime() - this.activityThrottleMs);
     await this.deps.db
       .updateTable('workspaces')
       .set({ last_activity_at: now })
-      .where('id', 'in', workspaceIds)
-      .where('last_activity_at', '<', new Date(now.getTime() - this.activityThrottleMs))
+      .where('id', 'in', (eb) => eb
+        .selectFrom('workspaces as candidate')
+        .select('candidate.id')
+        .where('candidate.id', 'in', workspaceIds)
+        .where('candidate.last_activity_at', '<', cutoff)
+        .forUpdate()
+        .skipLocked())
       .execute();
   }
 

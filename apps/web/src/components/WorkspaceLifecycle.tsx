@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Archive, ArchiveRestore, LogOut, Trash2 } from "lucide-react";
-import type { Workspace } from "@app/contracts";
+import { ApiError, type Workspace } from "@app/contracts";
 import { useAuth } from "../auth-context";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
@@ -41,16 +41,31 @@ export function WorkspaceLifecycle({
   const archived = workspace.status === "archived";
   const nameMatches = confirmName.trim() === workspace.name.trim();
 
-  async function act(run: () => Promise<void>) {
+  async function act(run: () => Promise<void>, explain?: (error: unknown) => string | undefined) {
     setBusy(true);
     setFailure(null);
     try {
       await run();
     } catch (error) {
-      setFailure(apiMessage(error));
+      setFailure(explain?.(error) ?? apiMessage(error));
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * The one refusal here that the generic copy gets wrong.
+   *
+   * Leaving is refused for the last owner, and `apiMessage` would render that
+   * as "you do not have permission", which is both untrue and unactionable:
+   * they have the permission, and what they need to do is make somebody else an
+   * owner first. Server messages are never displayed (§13.3), so the specific
+   * copy has to live here.
+   */
+  function whyLeaveFailed(error: unknown): string | undefined {
+    return error instanceof ApiError && error.code === "FORBIDDEN"
+      ? "You are the only owner, so leaving would leave this workspace with nobody who can manage it. Make someone else an owner first."
+      : undefined;
   }
 
   return (
@@ -58,10 +73,14 @@ export function WorkspaceLifecycle({
       {failure && <ErrorText role="alert">{failure}</ErrorText>}
 
       {/*
-        Anyone in the workspace can leave except the last owner, who cannot:
-        a workspace with nobody who can administer it can never be recovered,
-        invited into, archived, or deleted by anybody. The server refuses that
-        case and says why; this does not try to predict it.
+        Anyone in the workspace can leave except the last owner, who cannot: a
+        workspace with nobody who can administer it can never be recovered,
+        invited into, archived, or deleted by anybody.
+
+        The button is offered anyway rather than predicted away. This screen
+        does not know how many owners there are, and a control that is
+        sometimes missing for a reason nobody explained is worse than one that
+        refuses with `whyLeaveFailed` saying what to do about it.
       */}
       {account && workspace.access !== "viewer" && (
         <div className="rounded-xl border border-border bg-card p-5 shadow-xs">
@@ -78,7 +97,7 @@ export function WorkspaceLifecycle({
                 await authApi.leaveWorkspace(workspace.id);
                 await refresh();
                 navigate("/", { replace: true });
-              })
+              }, whyLeaveFailed)
             }
           >
             <LogOut aria-hidden="true" />

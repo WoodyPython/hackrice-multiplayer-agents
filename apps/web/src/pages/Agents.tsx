@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Bot, RefreshCw } from 'lucide-react';
-import { AGENT_STATUSES, isActiveRunStatus, type AssignmentProgress, type TaskAttempt } from '@app/contracts';
+import { AGENT_STATUSES, isActiveRunStatus, isFinishedAgentStatus, type AssignmentProgress, type TaskAttempt } from '@app/contracts';
 import { useBrowser } from '../browser-context';
 import { activityLabel, agentOutputPaths, eventsForAgent, readWorkspaceAgents, type AgentTask } from '../agents';
 import { humanizeStatus, toneFor } from '../board';
@@ -165,6 +165,8 @@ function Agent({ agent, row, active, taskUrl }: { agent: AssignmentProgress; row
         <ul className="mt-2 space-y-2">{agent.writePaths.map((path) => <li key={path}><Path>{path}</Path></li>)}</ul>
       </details>}
       {active && agent.status === 'needs_input' && <ButtonLink size="sm" className="mt-3" to={`${taskUrl}?tab=Discussion&from=agents`}>View discussion</ButtonLink>}
+      {isFinishedAgentStatus(agent.status) && <ButtonLink size="sm" className="mt-3"
+        to={`/w/${row.task.workspaceId}/history?view=agents&agent=${agent.id}`}>View thought process and changes</ButtonLink>}
     </div>
     <div className="min-w-0 space-y-4">
       <div>

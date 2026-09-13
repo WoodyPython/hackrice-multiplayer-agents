@@ -240,6 +240,46 @@ describe('roles', () => {
     expect(invite.statusCode).toBe(403);
   });
 
+  /**
+   * Archiving is decided in the gate, alongside membership, so it is tested
+   * here with the rest of what that file decides.
+   *
+   * The property that matters: it is a state, not a permission. An owner is
+   * refused exactly like a member, the refusal carries its own code so nobody
+   * is told they lack a permission they have, and reads are untouched -- the
+   * whole point of archiving rather than deleting is that the work stays
+   * legible.
+   */
+  it('makes an archived workspace read-only for everyone, including its owner', async () => {
+    const shelf = (await create(ownerA.cookie, 'Shelved')).workspaceId;
+    const member = await signInAs(t.handle.db, { workspaceId: shelf, role: 'member', label: 'shelf-member' });
+    const archive = await call('PATCH', `/api/workspaces/${shelf}/status`, ownerA.cookie,
+      { status: 'archived' });
+    expect(archive.statusCode, archive.body).toBe(200);
+
+    for (const [who, cookie] of [['owner', ownerA.cookie], ['member', member.cookie]] as const) {
+      const write = await call('POST', `/api/workspaces/${shelf}/tasks`, cookie,
+        { title: 'x', kind: 'agent_task', creatorGuestLabel: 'Guest Cedar' });
+      expect(write.statusCode, `${who}: ${write.body}`).toBe(409);
+      expect(write.json().error.code).toBe('WORKSPACE_ARCHIVED');
+
+      const read = await call('GET', `/api/workspaces/${shelf}`, cookie);
+      expect(read.statusCode, `${who}: ${read.body}`).toBe(200);
+    }
+
+    // A link holder is still refused for being a link holder, not for the
+    // archive: the two rules are independent and the weaker one answers first.
+    const strangerWrite = await call('POST', `/api/workspaces/${shelf}/tasks`, stranger.cookie,
+      { title: 'x', kind: 'agent_task', creatorGuestLabel: 'Guest Cedar' });
+    expect(strangerWrite.statusCode).toBe(403);
+    expect(strangerWrite.json().error.code).toBe('FORBIDDEN');
+
+    // And it is reversible by the route the archive rule itself allows.
+    const restore = await call('PATCH', `/api/workspaces/${shelf}/status`, ownerA.cookie,
+      { status: 'active' });
+    expect(restore.statusCode, restore.body).toBe(200);
+  });
+
   it('refuses to leave a workspace with nobody who can manage it', async () => {
     const solo = (await create(ownerA.cookie, 'Solo')).workspaceId;
     const demote = await call('PATCH', `/api/workspaces/${solo}/members/${ownerA.userId}`,

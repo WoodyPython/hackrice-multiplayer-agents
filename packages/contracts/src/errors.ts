@@ -44,6 +44,8 @@ export const API_ERROR_CODES = [
   'RUN_NOT_FOUND',
   'REVIEW_NOT_FOUND',
   'QUESTION_NOT_FOUND',
+  // Agent history: no finished agent with this ID in this workspace.
+  'AGENT_NOT_FOUND',
 
   // Request shape failed Zod validation. Carries field details.
   'VALIDATION_FAILED',
@@ -89,6 +91,7 @@ const HTTP_STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   RUN_NOT_FOUND: 404,
   REVIEW_NOT_FOUND: 404,
   QUESTION_NOT_FOUND: 404,
+  AGENT_NOT_FOUND: 404,
 
   VALIDATION_FAILED: 400,
   INVALID_STATE: 409,

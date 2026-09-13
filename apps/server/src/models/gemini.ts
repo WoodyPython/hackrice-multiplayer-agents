@@ -218,7 +218,9 @@ export class GeminiAdapter implements ModelAdapter {
       ...prepared.outputFormat,
       candidateCount: 1,
       maxOutputTokens: limits.maxOutputTokens,
-      thinkingConfig: { thinkingBudget, includeThoughts: false },
+      // Thought summaries feed agent history. They arrive as separate `thought`
+      // parts, so they never mix into the answer text below.
+      thinkingConfig: { thinkingBudget, includeThoughts: true },
       automaticFunctionCalling: { disable: true },
       httpOptions: { retryOptions: { attempts: 1 } },
       abortSignal: signal,
@@ -307,8 +309,10 @@ function normalizeResponse(response: GenerateContentResponse, model: string): Ag
   const content = candidate?.content;
   const toolCalls: ToolCall[] = [];
   const text: string[] = [];
+  const thoughts: string[] = [];
   for (const part of content?.parts ?? []) {
     if (part.text !== undefined && !part.thought) text.push(part.text);
+    if (part.text && part.thought) thoughts.push(part.text);
     if (part.functionCall) {
       const call = part.functionCall;
       if (!call.name || (call.args !== undefined &&
@@ -340,6 +344,7 @@ function normalizeResponse(response: GenerateContentResponse, model: string): Ag
   }
   return {
     ...(text.length ? { text: text.join('') } : {}),
+    ...(thoughts.length ? { thoughts: thoughts.join('\n\n') } : {}),
     toolCalls,
     usage,
     ...(content ? { providerState: { provider: 'gemini', model, content: structuredClone(content) } satisfies GeminiState } : {}),

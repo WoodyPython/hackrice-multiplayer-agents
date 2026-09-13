@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import type { Membership, SessionState, WorkspaceDirectory } from "@app/contracts";
+import { ApiError, type Membership, type SessionState, type WorkspaceDirectory } from "@app/contracts";
 import { App } from "./App";
 import { BrowserSession } from "./session";
 import { WorkspaceApi } from "./workspace-api";
@@ -165,6 +165,36 @@ describe("switching", () => {
     // the places you are actually working.
     expect(within(menu).queryByRole("menuitem", { name: /Old campaign/ })).toBeNull();
     expect(within(menu).getByRole("menuitem", { name: /All workspaces/ })).toBeTruthy();
+  });
+});
+
+describe("workspace lifecycle", () => {
+  it("explains the last-owner refusal instead of claiming you lack permission", async () => {
+    const user = userEvent.setup();
+    const api = {
+      ...authApi(),
+      // What the server sends when leaving would strand the workspace. The
+      // message it carries is never displayed (§13.3), so the code is all the
+      // browser has to work with.
+      leaveWorkspace: vi.fn().mockRejectedValue(new ApiError("FORBIDDEN")),
+    } as unknown as AuthApi;
+    open(`/w/${idA}/settings`, api);
+    await user.click(await screen.findByRole("button", { name: "Leave workspace" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/only owner/i);
+    // The generic copy would be both untrue and unactionable here: they have
+    // the permission, and what they need is a second owner.
+    expect(alert.textContent).not.toMatch(/do not have permission/i);
+  });
+
+  it("asks for the workspace's name before it will delete anything", async () => {
+    const user = userEvent.setup();
+    open(`/w/${idA}/settings`, authApi());
+    await user.click(await screen.findByRole("button", { name: "Delete workspace" }));
+    const confirm = await screen.findByRole("button", { name: "Delete permanently" });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    await user.type(screen.getByLabelText(/to confirm/), "Launch room");
+    expect((confirm as HTMLButtonElement).disabled).toBe(false);
   });
 });
 
