@@ -33,5 +33,11 @@ services:
         sync: false
       - key: SUPABASE_PUBLISHABLE_KEY
         sync: false
+      # Vite reads browser environment variables during the build. These use
+      # the same public values as the server-side variables above.
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_PUBLISHABLE_KEY
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
