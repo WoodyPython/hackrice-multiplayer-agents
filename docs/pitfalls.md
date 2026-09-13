@@ -1,5 +1,67 @@
 # Pitfalls
 
+## A React context whose default dependency is built per render loops forever
+
+`AuthProvider` took `api = new AuthApi(supabaseConfig())` as a **default
+parameter**. A default parameter is evaluated on every render, so `api` was a
+new object each time; `refresh` is a `useCallback` keyed on it, the mount effect
+is keyed on `refresh`, and `refresh` sets state. Every page load therefore
+issued `GET /api/auth/session` in a tight loop — over 300 requests in a few
+seconds, measured in the browser.
+
+It survived unnoticed because **both places that would have caught it were
+blind to it**: every test passes a stable `api` prop, so the loop never happened
+under test, and in the browser each request returned 200, so nothing appeared
+broken. It was found only by looking at the network panel while checking an
+unrelated feature.
+
+Worth generalising: a `useCallback`/`useMemo` dependency that is constructed in
+the same render is not a dependency, it is a change on every render. If a
+provider builds anything, build it in `useMemo` or `useState(() => ...)`.
+
+## An effect keyed on something that used to matter keeps costing after it stops
+
+The workspace read was keyed on the browser session's revision, from when the
+request carried an owner key out of localStorage and a change there could
+change the answer. Accounts removed the key; the dependency stayed, so renaming
+your display name — or signing in, which adopts the account's name — silently
+refetched the whole workspace. Nothing failed, it was just work nobody asked
+for. When a reason for a dependency is removed, remove the dependency with it.
+
+## ON DELETE RESTRICT did not block the cascade, and the check was still worth doing
+
+`agent_questions.answer_entry_id` references `discussion_entries` ON DELETE
+RESTRICT, and RESTRICT is documented as not deferrable. Deleting a workspace
+therefore looked certain to fail on any workspace where an agent question had
+been answered: the cited answer is removed while a question still points at it.
+A migration was written to relax the constraint to NO ACTION.
+
+**The test written to prove the bug passed without the migration.** Postgres's
+cascade removes the `agent_questions` row — through runs, then agent_instances —
+before the RESTRICT check on the entry runs. Confirmed directly against this
+schema for `delete from workspaces` and `delete from tasks`, under both modes.
+The migration was dropped and the constraint left as `0002` wrote it.
+
+Two lessons, and the second is the one that matters. Writing the mutation check
+before believing the diagnosis cost ten minutes and saved a schema change made
+on a wrong theory. And a plausible reading of the documentation is not a
+behaviour: that particular claim was checkable in one query.
+
+## Where a "last activity" timestamp is written is a lock-ordering decision
+
+`workspaces.last_activity_at` is touched by the event pump, after the producing
+transaction commits, rather than inside `appendEvent` where every event already
+passes. That is not tidiness. This codebase takes locks workspace → task → run →
+budget — `reviews/service.ts` takes the workspace row first and says why — and
+`appendEvent` runs with the task row already locked, by itself and by every
+caller that appends inside a wider transaction. An UPDATE on `workspaces` from
+there takes the two rows in the opposite order from guidance edits and Apply.
+Both paths read correctly alone. Together they deadlock, under load, in
+production, having passed every test.
+
+The pump was already the post-commit funnel for exactly this reason, so it is
+where anything derived from "an event happened" belongs.
+
 ## Real Git integration tests can exceed short waits on Windows
 
 During D08 verification, existing review, capture, worker, and Start cases exceeded their 20/30/60-second waits. The first-join capture test also used the one-second default synchronization wait while its resumed Git read was still running. Their test-only waits now allow slower Git operations; the first-join wait matches the existing ten-second connection helper. Production deadlines and test assertions are unchanged.

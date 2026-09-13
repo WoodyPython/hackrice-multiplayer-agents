@@ -1,7 +1,7 @@
 # For Role A — calling the API
 
-**Reflects:** B07, C06, C08, D06, the Supabase verification of 2026-09-12, and the
-A04 draft listing · **Owner:** Role B
+**Reflects:** B07, C06, C08, D06, the Supabase verification of 2026-09-12, the
+A04 draft listing, and the workspace lifecycle of 2026-09-13 · **Owner:** Role B
 
 What the frontend needs from the data layer. Shapes and enums live in
 `@app/contracts` — import them rather than transcribing anything here.
@@ -28,25 +28,63 @@ Codes you will actually hit:
 | `TASK_VERSION_CHANGED` | 409 | Refetch, re-apply the edit, resubmit. `details.currentVersion` |
 | `TASK_ALREADY_RUNNING` | 409 | A run is already active; offer Stop |
 | `INVALID_STATE` | 409 | The action is legal but not from here. `details.currentStatus` |
-| `OWNER_KEY_REQUIRED` | 403 | Hide or disable the owner control |
+| `AUTH_REQUIRED` | 401 | Send them to `/signin?next=` and bring them back |
+| `FORBIDDEN` | 403 | Signed in, but not theirs. Do not offer a retry |
+| `WORKSPACE_ARCHIVED` | 409 | Read-only until an owner restores it. Not a permission problem |
+| `OWNER_KEY_REQUIRED` | 403 | Legacy claim flow only; no live route returns it |
 | `DOCUMENT_EPOCH_CLOSED` | 409 | The document was closed. Keep unsent text visible, open the current draft |
 | `*_NOT_FOUND` | 404 | — |
 | `RATE_LIMITED` | 429 | Workspace creation only |
 
 ---
 
-## The owner key
+## Who the caller is
 
-Goes in the **`x-owner-key` header**. Never in a URL, never in a body. An
-`isOwner: true` field in a request body is ignored: the server checks the key on
-every owner operation, so hiding a button is presentation, not access control.
+**Read `access`, not `isOwner`.** `GET /api/workspaces/:w` returns
+`access: 'owner' | 'member' | 'viewer'`, resolved from membership on that same
+read, and `isOwner` is a convenience that means `access === 'owner'`. Use
+`access` to render; the server re-checks every owner route in one `preHandler`,
+so hiding a control is presentation, never access control.
 
-`GET /api/workspaces/:w` returns `isOwner` computed from the header you sent.
-Use it to render.
+Do not AND it with anything in browser storage. That was the shape before
+accounts and it is now a bug: an account-owned workspace has no owner key at
+all, so `isOwner && getOwnerKey(id)` is false for its actual owner, and the
+person who created the workspace sees none of their own controls.
 
-**Store it once, at creation.** `POST /api/workspaces` returns it exactly once.
-No endpoint reads it back and there is no recovery flow — if the browser loses
-it, that workspace has no owner forever. Design §1.2 is deliberate about this.
+The `x-owner-key` header survives for exactly one route,
+`POST /api/workspaces/:w/claim`, which converts a pre-accounts workspace. No
+new workspace mints a key (`ownerKey` in the create response is null), and no
+other route reads one.
+
+## Your workspaces
+
+`GET /api/auth/workspaces` → `{ workspaces, visited }`.
+
+`workspaces` is membership: `role`, `lastActivityAt`, `archived`, `memberCount`,
+`openTaskCount`. Order it by `lastActivityAt` — the server already does, and
+alphabetical is useless past about five. `archived` entries are included and
+flagged rather than filtered, so the home page can give them a section; the
+switcher hides them.
+
+`visited` is workspaces this account has **opened without belonging to**. It
+grants nothing and never will: the caller is still a viewer in each of them.
+Render it as read-only and separately, or it reads as an implied promotion.
+
+`GET /api/auth/session` returns the same membership list without the counts,
+for the switcher. Both are cheap; neither is a subscription.
+
+## Lifecycle
+
+| Route | Who | Notes |
+|---|---|---|
+| `PATCH /api/workspaces/:w/status` | owner | `{ status: 'archived' \| 'active' }`. Reversible, keeps everything |
+| `DELETE /api/workspaces/:w` | owner | `{ confirmName }` must equal the name. Permanent |
+| `DELETE /api/workspaces/:w/members/me` | member | Leave. The last owner is refused |
+
+An archived workspace answers every GET normally and `WORKSPACE_ARCHIVED` to
+every write. Say so once, at the top of the workspace, rather than letting each
+control discover it: the refusal is workspace-wide and permanent until restored,
+which is not what a per-action error looks like.
 
 In development the API is cross-origin, and `x-owner-key` is not a simple
 header, so it triggers preflight. It is already in the allowed-headers list; if

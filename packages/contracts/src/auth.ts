@@ -55,14 +55,55 @@ export const accountSchema = z.object({
 });
 export type Account = z.infer<typeof accountSchema>;
 
-/** A workspace as it appears in the account's own sidebar. */
+/**
+ * A workspace as it appears in the account's own sidebar and home page.
+ *
+ * `lastActivityAt` is what the list is ordered by. Ordering teams by name is
+ * fine for three and useless for twenty: the one you want is almost always the
+ * one something happened in most recently.
+ *
+ * The two optional fields carry the state a returning person needs before
+ * clicking — whether this one is put away, and whether it is empty — and are
+ * optional so a response from an older server still parses.
+ */
 export const membershipSchema = z.object({
   workspaceId: uuidSchema,
   name: z.string(),
   role: workspaceRoleSchema,
   joinedAt: z.string(),
+  /** Last durable activity, not last edit to the workspace record. */
+  lastActivityAt: z.string().optional(),
+  archived: z.boolean().optional(),
+  /** How many people are in it, so "just me" is visible without opening it. */
+  memberCount: z.number().int().nonnegative().optional(),
+  /** Open tasks, for the same reason. */
+  openTaskCount: z.number().int().nonnegative().optional(),
 });
 export type Membership = z.infer<typeof membershipSchema>;
+
+/**
+ * A workspace this account has opened but does not belong to.
+ *
+ * "Workspaces I have the link to" is a different set from "workspaces I am in",
+ * and before this it could not be recovered at all: a link holder who lost the
+ * URL lost the workspace, signed in or not. A visit grants nothing — this list
+ * is read from the visitor's own history and every request it leads to is
+ * authorized against membership exactly as before.
+ */
+export const visitedWorkspaceSchema = z.object({
+  workspaceId: uuidSchema,
+  name: z.string(),
+  lastSeenAt: z.string(),
+  archived: z.boolean().optional(),
+});
+export type VisitedWorkspace = z.infer<typeof visitedWorkspaceSchema>;
+
+/** Everything the home page lists, in one read. */
+export const workspaceDirectorySchema = z.object({
+  workspaces: z.array(membershipSchema),
+  visited: z.array(visitedWorkspaceSchema),
+});
+export type WorkspaceDirectory = z.infer<typeof workspaceDirectorySchema>;
 
 export const workspaceMemberSchema = z.object({
   userId: uuidSchema,

@@ -25,9 +25,53 @@ export class BrowserSession {
   private unsavedOwners = new Map<string, string>();
   private guestSaved = true;
   private briefingSession: string | undefined;
+  /**
+   * The signed-in account's name, when there is one.
+   *
+   * Kept in memory rather than written over the stored guest: signing out has
+   * to give the browser its own label back, and the account's name is the
+   * provider's to change, not ours to cache.
+   */
+  private accountName: string | undefined;
+  /** Memoized so `getGuest()` returns a stable reference between changes. */
+  private effective: GuestIdentity;
 
   constructor(private storage: () => Storage = () => window.localStorage) {
     this.guest = this.readGuest() ?? this.newGuest();
+    this.effective = this.guest;
+  }
+
+  /**
+   * Adopt the signed-in account's name everywhere a display name is shown.
+   *
+   * One call, rather than teaching eleven call sites about accounts. Presence,
+   * document cursors, discussion authorship and uploads all read the same
+   * identity, so signing in stops a person appearing to their own teammates as
+   * "Guest Maple" on every one of those surfaces at once.
+   *
+   * This changes nothing about authority. Design section 1.3 is that a display
+   * name is never a permission, and it still is not -- it is just no longer a
+   * label that contradicts the account the server already verified.
+   */
+  setAccountName(name: string | null | undefined): void {
+    const next = name?.trim() || undefined;
+    if (next === this.accountName) return;
+    this.accountName = next;
+    this.recompute();
+    this.emit();
+  }
+
+  /**
+   * Stable identity, with the account's name when signed in.
+   *
+   * Recomputed only on change: `useSyncExternalStore` and the awareness binding
+   * both compare by reference, and a fresh object per call would re-render
+   * forever.
+   */
+  private recompute(): void {
+    this.effective = this.accountName && this.accountName !== this.guest.name
+      ? { ...this.guest, name: this.accountName }
+      : this.guest;
   }
   private newGuest(): GuestIdentity {
     const contributorId = crypto.randomUUID();
@@ -79,12 +123,15 @@ export class BrowserSession {
     };
   };
   getRevision = () => this.revision;
-  getGuest = () => this.guest;
+  getGuest = () => this.effective;
+  /** The browser's own label, ignoring any signed-in account. */
+  getBrowserGuest = () => this.guest;
   isGuestSaved = () => this.guestSaved;
   rename(name: string): void {
     const next = { ...this.guest, name: guestLabelSchema.parse(name) };
     this.guestSaved = this.write(GUEST_STORAGE_KEY, JSON.stringify(next));
     this.guest = next;
+    this.recompute();
     this.emit();
   }
   /** Check before creating: the owner key cannot be retrieved a second time. */
@@ -153,6 +200,7 @@ export class BrowserSession {
       JSON.stringify(saved) !== JSON.stringify(this.guest)
     )
       this.guest = saved;
+    this.recompute();
     this.emit();
   };
   connect(target: Window = window): () => void {

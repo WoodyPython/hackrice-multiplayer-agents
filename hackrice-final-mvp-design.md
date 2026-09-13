@@ -71,11 +71,21 @@ Ownership belongs to possession of that browser key, not a verified person. Clea
 
 The contribution URL is link access, not private identity-based access. Anyone who receives it can contribute. Do not list workspaces publicly or expose an endpoint returning everyone's workspaces.
 
+**Amended 2026-09-13, alongside the accounts change of 1.2/1.3.** Superseded in the parts that describe the owner key as the ownership mechanism; see `docs/accounts.md`. Three clarifications for what replaced it:
+
+- **"No endpoint returning everyone's workspaces" still holds, exactly.** `GET /api/auth/workspaces` returns the *caller's own* workspaces, from their own membership and their own visit history, and there is still no route anywhere that enumerates the table. The prohibition was against a directory of other people's rooms, and that remains prohibited.
+- **A workspace now has a life after creation.** It can be archived and restored (owner), left (any member but the last owner), and deleted permanently (owner, with the name typed back). Deletion removes the row and everything cascading from it, the Git repository, and the stored material objects. Nothing in this document previously described removing a workspace, which meant every workspace ever created was permanent — on a fixed-size database, that is a storage leak rather than a policy.
+- **An archived workspace is read-only.** Refused in the same authorization hook that enforces membership, with `WORKSPACE_ARCHIVED` (409) rather than a permission code, because the refusal is about the state of the workspace and not about who is asking.
+
+Unchanged and still load-bearing: ownership is never granted by possession of the workspace URL, and a record that somebody *opened* a workspace grants nothing either — it restores the address, never the access.
+
 ### 1.3 Contributor labels
 
 Assign a browser-local random contributor ID and a generated label such as “Guest Cedar” for task discussion and cursor attribution. Guests can edit their own display name through a small name control in the workspace header. Persist the edited name in browser-local storage without changing the contributor ID. Use the updated name for subsequent contributions and live cursor attribution; previously stored contribution labels remain unchanged. Trim names, reject blank values, and render them as plain text.
 
 These are unverified display labels. Never use them to enforce ownership, approve changes, or protect supposedly private tasks.
+
+**Amended 2026-09-13.** A signed-in account's display name replaces the generated guest label everywhere a name is shown — presence, document cursors, discussion attribution, upload attribution — and the rename control is drawn only for a link holder, who has no account name to use. The rule above is unchanged in substance and is why this is safe: the name is still never authority, it has simply stopped contradicting the account the server already verified. The browser-local contributor ID is unaffected.
 
 Presence is limited to cursors/selections in the currently open document. There is no persistent participant list.
 

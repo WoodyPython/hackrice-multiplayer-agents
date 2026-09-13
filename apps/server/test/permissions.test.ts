@@ -119,6 +119,11 @@ describe('writes are denied by default', () => {
     ['PATCH', '/tasks/:taskId/status', { expectedStatus: 'posted', status: 'completed' }],
     ['POST', '/drafts/open', { path: 'documents/a.md' }],
     ['PATCH', '', { guidance: 'x' }],
+    ['PATCH', '/status', { status: 'archived' }],
+    ['DELETE', '', { confirmName: 'Workspace A' }],
+    // Leaving is a member action, not an owner one -- but a link holder is not
+    // a member either, so it is refused here with all the rest.
+    ['DELETE', '/members/me'],
     ['POST', '/invitations', {}],
     ['DELETE', '/invitations/:invitationId'],
     ['PATCH', '/members/:userId', { role: 'owner' }],

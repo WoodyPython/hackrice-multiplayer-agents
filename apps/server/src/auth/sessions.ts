@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
-  SESSION_TTL_MS, type AccessLevel, type Account, type Membership, type Preferences,
+  SESSION_TTL_MS, TERMINAL_TASK_STATUSES,
+  type AccessLevel, type Account, type Membership, type Preferences,
+  type VisitedWorkspace,
 } from '@app/contracts';
 import type { Db } from '../db/client.js';
 import type { IdentityVerifier } from './supabase.js';
@@ -24,6 +26,14 @@ import type { IdentityVerifier } from './supabase.js';
  * was only ever stored hashed: reading the database must not yield live
  * credentials.
  */
+
+/**
+ * How stale a visit has to be before opening a workspace rewrites the row.
+ *
+ * Five minutes: long enough that moving between tabs inside one workspace costs
+ * a single write, short enough that "recently opened" means it.
+ */
+const VISIT_THROTTLE_MS = 5 * 60 * 1000;
 
 /** 32 bytes from the CSPRNG, base64url. Not guessable, not a password. */
 function mintToken(): string {
@@ -141,20 +151,57 @@ export class SessionStore {
     await this.deps.db.deleteFrom('sessions').where('token_hash', '=', hashToken(token)).execute();
   }
 
-  /** Every workspace this account belongs to, for the sidebar switcher. */
-  async memberships(userId: string): Promise<Membership[]> {
-    const rows = await this.deps.db.selectFrom('workspace_members as m')
+  /**
+   * Every workspace this account belongs to.
+   *
+   * Ordered by last activity, not by name. Alphabetical is fine for three
+   * workspaces and useless for twenty: the one somebody wants is nearly always
+   * the one something happened in most recently, and a switcher that makes them
+   * read a list to find it is a switcher they stop using.
+   *
+   * Archived workspaces are included and flagged rather than filtered out here.
+   * The switcher hides them and the home page gives them their own section --
+   * one query, and the caller decides, instead of two nearly identical reads
+   * that can disagree about what "yours" means.
+   *
+   * `summarize: false` skips the two correlated counts, for the sign-in path
+   * where nothing renders them.
+   */
+  async memberships(userId: string, options: { summarize?: boolean } = {}): Promise<Membership[]> {
+    const summarize = options.summarize ?? true;
+    let query = this.deps.db.selectFrom('workspace_members as m')
       .innerJoin('workspaces as w', 'w.id', 'm.workspace_id')
-      .select(['m.workspace_id', 'w.name', 'm.role', 'm.created_at'])
+      .select(['m.workspace_id', 'w.name', 'm.role', 'm.created_at',
+        'w.last_activity_at', 'w.status'])
       .where('m.user_id', '=', userId)
-      .where('w.status', '=', 'active')
-      .orderBy('w.name', 'asc')
-      .execute();
+      .orderBy('w.last_activity_at', 'desc')
+      // A bound, because this is on the session payload every page load reads.
+      // Nobody navigates a list of fifty by scrolling it anyway.
+      .limit(50);
+    if (summarize) {
+      query = query.select((eb) => [
+        eb.selectFrom('workspace_members as c').select(({ fn }) => fn.countAll<string>().as('n'))
+          .whereRef('c.workspace_id', '=', 'm.workspace_id').as('member_count'),
+        eb.selectFrom('tasks as t').select(({ fn }) => fn.countAll<string>().as('n'))
+          .whereRef('t.workspace_id', '=', 'm.workspace_id')
+          // "Open" is the contract's definition of not-settled, so this count
+          // cannot drift from what the board calls finished.
+          .where('t.status', 'not in', [...TERMINAL_TASK_STATUSES])
+          .as('open_task_count'),
+      ]);
+    }
+    const rows = await query.execute();
     return rows.map((row) => ({
       workspaceId: row.workspace_id,
       name: row.name,
       role: row.role,
       joinedAt: new Date(row.created_at).toISOString(),
+      lastActivityAt: new Date(row.last_activity_at).toISOString(),
+      archived: row.status === 'archived',
+      ...(summarize ? {
+        memberCount: Number((row as { member_count?: string }).member_count ?? 0),
+        openTaskCount: Number((row as { open_task_count?: string }).open_task_count ?? 0),
+      } : {}),
     }));
   }
 
@@ -194,5 +241,83 @@ export class SessionStore {
       .where('user_id', '=', userId)
       .executeTakeFirst();
     return row?.role ?? 'viewer';
+  }
+
+  /**
+   * Access and workspace state together, in one query.
+   *
+   * The authorization gate needs both -- what this person may do, and whether
+   * the workspace is accepting changes at all -- and asking twice would mean
+   * two round trips on every request, plus the possibility of deciding against
+   * two different moments in time.
+   *
+   * `exists` is reported rather than thrown on: a missing workspace is a 404
+   * from the handler that knows what was being asked for, not a permission
+   * error from the gate.
+   */
+  async workspaceAccess(workspaceId: string, userId: string | undefined): Promise<{
+    access: AccessLevel; exists: boolean; archived: boolean;
+  }> {
+    const row = await this.deps.db
+      .selectFrom('workspaces as w')
+      .leftJoin('workspace_members as m', (join) => join
+        .onRef('m.workspace_id', '=', 'w.id')
+        // A literal rather than a parameter when signed out, so the join simply
+        // matches nothing instead of the query being built two different ways.
+        .on('m.user_id', '=', userId ?? '00000000-0000-0000-0000-000000000000'))
+      .select(['w.status', 'm.role'])
+      .where('w.id', '=', workspaceId)
+      .executeTakeFirst();
+    if (!row) return { access: 'viewer', exists: false, archived: false };
+    return {
+      access: userId ? (row.role ?? 'viewer') : 'viewer',
+      exists: true,
+      archived: row.status === 'archived',
+    };
+  }
+
+  /**
+   * Record that this account opened this workspace.
+   *
+   * Grants nothing. It is one person's own history, and it exists because
+   * "workspaces I have the link to" was previously unrecoverable: lose the URL
+   * and the workspace was gone, account or no account.
+   *
+   * Throttled to one write per window. A workspace page issues a read on every
+   * navigation within it, and turning each of those into an UPDATE would make
+   * browsing a workspace more write traffic than working in one.
+   */
+  async recordVisit(workspaceId: string, userId: string): Promise<void> {
+    const now = this.now();
+    await this.deps.db.insertInto('workspace_visits')
+      .values({ user_id: userId, workspace_id: workspaceId, first_seen_at: now, last_seen_at: now })
+      .onConflict((oc) => oc.columns(['user_id', 'workspace_id']).doUpdateSet({ last_seen_at: now })
+        .where('workspace_visits.last_seen_at', '<', new Date(now.getTime() - VISIT_THROTTLE_MS)))
+      .execute();
+  }
+
+  /**
+   * Workspaces this account has opened but does not belong to.
+   *
+   * Members are excluded because they are already in `memberships()`, and a
+   * workspace appearing in both lists would read as two different things.
+   */
+  async visited(userId: string, limit = 12): Promise<VisitedWorkspace[]> {
+    const rows = await this.deps.db.selectFrom('workspace_visits as v')
+      .innerJoin('workspaces as w', 'w.id', 'v.workspace_id')
+      .leftJoin('workspace_members as m', (join) => join
+        .onRef('m.workspace_id', '=', 'v.workspace_id').on('m.user_id', '=', userId))
+      .select(['v.workspace_id', 'w.name', 'w.status', 'v.last_seen_at'])
+      .where('v.user_id', '=', userId)
+      .where('m.user_id', 'is', null)
+      .orderBy('v.last_seen_at', 'desc')
+      .limit(limit)
+      .execute();
+    return rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      name: row.name,
+      lastSeenAt: new Date(row.last_seen_at).toISOString(),
+      archived: row.status === 'archived',
+    }));
   }
 }

@@ -10,15 +10,21 @@ import type { Workspace as WorkspaceRow } from '../db/types.js';
 import { contributionUrl } from '../config.js';
 import { generateOwnerKey, hashOwnerKey, ownerKeyMatches } from './owner-key.js';
 import { toIso } from '../http/serialize.js';
+import type { BlobStore } from '../materials/blob-store.js';
 import { assertWorkspaceMutable, invalidateTaskReviews } from '../tasks/mutation-guard.js';
 
 /**
- * B02: anonymous workspaces (design sections 1.2, 12.1, 12.2).
+ * Workspaces (design sections 1.2, 12.1, 12.2, as amended).
  *
- * No accounts, no membership, no invitation redemption, and deliberately no
- * endpoint that lists workspaces (section 1.2). The random workspace ID in the
- * contribution URL is the capability; the owner key is the one privilege check
- * layered on top of it.
+ * B02 built this for anonymous participation: the random workspace ID in the
+ * contribution URL was the capability, and an owner key in one browser was the
+ * one privilege check on top of it. Accounts replaced that -- ownership is a
+ * membership row -- and the lifecycle below is the rest of what a workspace
+ * needs once it belongs to somebody: archiving, and a way to be deleted.
+ *
+ * Still true, and the reason there is no `list` method here: nothing enumerates
+ * workspaces. `GET /api/auth/workspaces` returns the caller's own, from their
+ * own memberships and visits.
  */
 
 export interface WorkspaceServiceDeps {
@@ -27,6 +33,16 @@ export interface WorkspaceServiceDeps {
   lifecycle: WorkspaceLifecycleHook;
   /** Injected so a hook failure is recorded rather than silently swallowed. */
   onLifecycleError?: (error: unknown, workspaceId: string) => void;
+  /**
+   * Material bytes, for deletion only.
+   *
+   * Rows cascade; the objects they point at do not. Without this, deleting a
+   * workspace leaves its uploads in the bucket forever -- the row that said
+   * where they were is the only thing that knew, so they become unreachable
+   * rather than reclaimed. That is the worst kind of storage growth: invisible
+   * and permanent.
+   */
+  blobs?: Pick<BlobStore, 'delete'>;
 }
 
 export class PgWorkspaceService implements WorkspaceService {
@@ -145,6 +161,104 @@ export class PgWorkspaceService implements WorkspaceService {
       }
       return toPublicWorkspace(row, true);
     });
+  }
+
+  /**
+   * Archive or restore. Owner only, and reversible by design.
+   *
+   * Nothing is deleted and nothing is moved: `status` is the flag every other
+   * surface already reads. Archiving is the answer to "we are finished with
+   * this" that does not require anyone to decide, in that moment, whether they
+   * will ever want the work back.
+   *
+   * Restoring does not resurrect a review that was invalidated while archived;
+   * it does not have to, because archiving refuses writes rather than changing
+   * them.
+   */
+  async setStatus(workspaceId: string, status: Workspace['status']): Promise<Workspace> {
+    const now = new Date();
+    const row = await this.deps.db
+      .updateTable('workspaces')
+      .set({
+        status,
+        archived_at: status === 'archived' ? now : null,
+        updated_at: now,
+      })
+      .where('id', '=', workspaceId)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) throw new ApiError('WORKSPACE_NOT_FOUND', 'No such workspace.');
+    return toPublicWorkspace(row, true);
+  }
+
+  /**
+   * Delete a workspace and everything in it.
+   *
+   * Two things here are not obvious and both were found the hard way.
+   *
+   * **The name has to match.** Not authorization -- the gate already proved the
+   * caller is an owner -- but the distance between meaning to do this and
+   * having clicked the wrong row. Compared after trimming, because a name
+   * copied from the heading brings whitespace with it and refusing over that
+   * teaches nothing.
+   *
+   * **One statement, and the cascades do the rest.** `tasks` and `materials`
+   * are the only tables referencing `workspaces`; everything else hangs off
+   * those. The one foreign key in the schema that is not a cascade --
+   * `agent_questions.answer_entry_id`, ON DELETE RESTRICT -- looked like it
+   * would refuse this, since the answer it cites is being deleted with
+   * everything else. It does not: the cascade removes the question first.
+   * Checked directly rather than assumed, and covered by
+   * `workspace-lifecycle.test.ts` so a change to that chain fails a test rather
+   * than somebody's deletion. The counts are read first, inside the same
+   * transaction, so the response describes what was actually removed rather
+   * than what was there a moment earlier.
+   */
+  async destroy(input: { workspaceId: string; confirmName: string }): Promise<{
+    workspaceId: string; name: string; deletedTasks: number; deletedMaterials: number;
+  }> {
+    const summary = await this.deps.db.transaction().execute(async (trx) => {
+      const workspace = await trx.selectFrom('workspaces').select(['id', 'name'])
+        .where('id', '=', input.workspaceId).forUpdate().executeTakeFirst();
+      if (!workspace) throw new ApiError('WORKSPACE_NOT_FOUND', 'No such workspace.');
+      if (workspace.name.trim() !== input.confirmName.trim()) {
+        throw new ApiError('VALIDATION_FAILED',
+          'The name you typed does not match this workspace, so nothing was deleted.');
+      }
+      const [tasks, objects] = await Promise.all([
+        trx.selectFrom('tasks').select(({ fn }) => fn.countAll<string>().as('n'))
+          .where('workspace_id', '=', workspace.id).executeTakeFirstOrThrow(),
+        // Read the object keys before the rows go: afterwards nothing knows
+        // where the bytes are, and an orphaned object is unreachable rather
+        // than merely unused.
+        trx.selectFrom('materials').select('object_key')
+          .where('workspace_id', '=', workspace.id).execute(),
+      ]);
+      await trx.deleteFrom('workspaces').where('id', '=', workspace.id).execute();
+      return {
+        workspaceId: workspace.id, name: workspace.name,
+        deletedTasks: Number(tasks.n), deletedMaterials: objects.length,
+        objectKeys: objects.map((row) => row.object_key),
+      };
+    });
+
+    // After the commit, never inside it, and never allowed to fail the request.
+    // The database is the record of what exists; a repository or an object left
+    // behind is disk to reclaim, which is what the garbage collector is for.
+    try {
+      this.deps.lifecycle.onWorkspaceDeleted({ workspaceId: summary.workspaceId });
+    } catch (error) {
+      this.deps.onLifecycleError?.(error, summary.workspaceId);
+    }
+    for (const key of summary.objectKeys) {
+      try {
+        await this.deps.blobs?.delete(key);
+      } catch (error) {
+        this.deps.onLifecycleError?.(error, summary.workspaceId);
+      }
+    }
+    const { objectKeys: _discard, ...result } = summary;
+    return result;
   }
 
   private async findRow(workspaceId: string): Promise<WorkspaceRow | undefined> {

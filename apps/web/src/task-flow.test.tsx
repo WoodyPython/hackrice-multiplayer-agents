@@ -1641,15 +1641,20 @@ describe("A08 cross-flow integration", () => {
     expect(screen.queryByText("This document was closed")).toBeNull();
   });
 
-  it("says host access cannot be recovered, where the host controls are", async () => {
+  it("tells a non-owner who to ask, where the owner controls are", async () => {
     const { transport } = server({
-      "GET ": () => json({ ...workspace, isOwner: false }),
+      "GET ": () => json({ ...workspace, isOwner: false, access: "member" }),
     });
     open(`/w/${workspaceId}/settings`, transport);
-    // §1.2: the key is returned once and there is no recovery flow. Someone who
-    // lost it should learn that here rather than by repeatedly failing.
+    /*
+     * This used to say host access "cannot be recovered", which was true of the
+     * owner key: §1.2 returned it once and offered no recovery flow. Ownership
+     * is a membership row now, so there is nothing to lose and nothing to
+     * recover -- and the useful thing to tell somebody who cannot edit these
+     * fields is who can, which is the member list directly below.
+     */
     expect(
-      await screen.findByText(/host access cannot be recovered/i),
+      await screen.findByText(/only an owner can change these/i),
     ).toBeTruthy();
   });
 });

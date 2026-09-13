@@ -11,6 +11,7 @@ import type { AuthApi } from "./auth-api";
 import { SignIn } from "./pages/SignIn";
 import { AcceptInvite } from "./pages/AcceptInvite";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
+import { AccountMenu } from "./components/AccountMenu";
 import { ClaimWorkspace } from "./components/ClaimWorkspace";
 import { AppShell, type NavItem } from "./components/AppShell";
 import { EmptyState } from "./components/EmptyState";
@@ -21,6 +22,7 @@ import { ShareWorkspace } from "./components/ShareWorkspace";
 import { Button, ButtonLink } from "./components/ui/button";
 import { Notice, Skeleton } from "./components/ui/misc";
 import { CreateWorkspace } from "./pages/CreateWorkspace";
+import { Home } from "./pages/Home";
 import { WorkspaceSettings } from "./pages/WorkspaceSettings";
 import { TaskDrafts } from "./pages/TaskDrafts";
 import { TaskBoardPage } from "./pages/TaskBoardPage";
@@ -37,7 +39,9 @@ import { useInbox } from "./inbox";
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
   const { account, workspaces, setPreferences } = useAuth();
-  const revision = useSyncExternalStore(session.subscribe, session.getRevision);
+  // Subscribed so a rename -- or signing in, which adopts the account's name --
+  // re-renders the name shown in the sidebar and broadcast to presence.
+  useSyncExternalStore(session.subscribe, session.getRevision);
   // Per tab, not per contributor: two tabs are two open browsers and should
   // appear as such, and it must not survive a reload as a ghost.
   const [presenceId] = useState(() => crypto.randomUUID());
@@ -70,7 +74,12 @@ function LiveWorkspace({ id }: { id: string }) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [api, id, revision, retry]);
+    // Deliberately not keyed on the browser session's revision. It used to be:
+    // the read once carried an owner key from storage, so a change there could
+    // change the answer. It carries no per-browser secret now, and leaving the
+    // dependency in meant renaming yourself -- or signing in, which adopts the
+    // account's name -- silently refetched the whole workspace.
+  }, [api, id, retry]);
   useEffect(() => {
     document.title = workspace
       ? `${workspace.name} — CoFlow`
@@ -129,12 +138,18 @@ function LiveWorkspace({ id }: { id: string }) {
         </EmptyState>
       </main>
     );
-  // Server ownership is authoritative; stale reads never leave an owner form enabled.
-  const visibleWorkspace = {
-    ...workspace,
-    isOwner:
-      workspace.isOwner && !loading && !failure && !!session.getOwnerKey(id),
-  };
+  /**
+   * Ownership is the membership row the server resolved on this very read.
+   *
+   * It used to also require a legacy owner key in this browser's storage. That
+   * key is no longer minted -- an account-owned workspace has none at all -- so
+   * the condition was never true, and the person who created the workspace
+   * could not open its settings, see the member list, or invite anybody. The
+   * flag stays advisory either way: every owner-only route is re-checked by the
+   * authorization hook, so this only decides what is drawn.
+   */
+  const isOwner = workspace.access === "owner";
+  const archived = workspace.status === "archived";
   // A failed refresh hides the badge rather than advertising a stale count.
   const inboxCount = inbox.failure ? undefined : inbox.items?.length;
   const inboxLabel = inboxCount === undefined ? undefined
@@ -150,7 +165,9 @@ function LiveWorkspace({ id }: { id: string }) {
   return (
     <AppShell
       workspaceName={workspace.name}
-      settingsTo={`${base}/settings`}
+      // A link holder has nothing to do on the settings page: the member list
+      // is not theirs to read and every control there would refuse them.
+      settingsTo={workspace.access === "viewer" ? undefined : `${base}/settings`}
       items={items}
       guestName={session.getGuest().name}
       switcher={
@@ -163,13 +180,12 @@ function LiveWorkspace({ id }: { id: string }) {
         ) : undefined
       }
       guestRole={
-        visibleWorkspace.isOwner
-          ? "Host"
-          : visibleWorkspace.access === "member"
-            ? "Member"
-            : "Viewing by link"
+        isOwner ? "Owner" : workspace.access === "member" ? "Member" : "Viewing by link"
       }
-      profileControl={<GuestNameControl sidebar />}
+      // Signed in, the name is the account's and is not editable here; signed
+      // out it is the browser label other people see in a live document, which
+      // is exactly the thing this control renames.
+      profileControl={account ? <AccountMenu sidebar /> : <GuestNameControl sidebar />}
       topbarEnd={
         <div className="flex items-center gap-2.5">
           <PresencePanel
@@ -192,12 +208,32 @@ function LiveWorkspace({ id }: { id: string }) {
         What replaces it is the other direction -- a workspace made before
         accounts, which somebody holding its key can bring across.
       */}
-      {account && visibleWorkspace.unclaimed && !visibleWorkspace.isOwner && (
+      {account && workspace.unclaimed && !isOwner && (
         <ClaimWorkspace
           workspaceId={id}
           workspaceName={workspace.name}
           onClaimed={() => setRetry((value) => value + 1)}
         />
+      )}
+      {/*
+        Said once, at the top, rather than by every control that will refuse.
+        An archived workspace reads normally and writes nowhere, and the server
+        enforces that in the authorization hook — this is the explanation, not
+        the enforcement.
+      */}
+      {archived && (
+        <Notice role="status" tone="warn" className="mb-6" title="This workspace is archived">
+          <p>
+            Everything here is still readable, and nothing can be changed until
+            it is restored.
+            {isOwner ? " You can restore it in workspace settings." : " Ask an owner to restore it."}
+          </p>
+          {isOwner && (
+            <ButtonLink size="sm" to={`${base}/settings`}>
+              Open workspace settings
+            </ButtonLink>
+          )}
+        </Notice>
       )}
       {!!failure && (
         <Notice role="alert" tone="warn" className="mb-6">
@@ -228,7 +264,7 @@ function LiveWorkspace({ id }: { id: string }) {
           element={
             <TaskDetailPage
               workspaceId={id}
-              isOwner={visibleWorkspace.isOwner}
+              isOwner={isOwner}
               participants={participants}
               presenceId={presenceId}
             />
@@ -238,7 +274,7 @@ function LiveWorkspace({ id }: { id: string }) {
           path="settings"
           element={
             <WorkspaceSettings
-              workspace={visibleWorkspace}
+              workspace={{ ...workspace, isOwner }}
               onChange={setWorkspace}
             />
           }
@@ -312,11 +348,19 @@ export function App({
   return (
     <BrowserContext.Provider value={{ session, api }}>
       <AuthProvider {...(authApi ? { api: authApi } : {})}>
+      <AdoptAccountName />
       <Routes>
         <Route path="/signin" element={<SignIn />} />
         <Route path="/invite/:token" element={<AcceptInvite />} />
+        {/*
+          Home is the account's list of workspaces; the landing page is what a
+          signed-out visitor sees at the same address. One route rather than a
+          redirect: bouncing somebody who is already signed in through a
+          marketing page to reach their own work is a step nobody wants.
+        */}
+        <Route path="/" element={<HomeOrLanding />} />
         <Route
-          path="/"
+          path="/new"
           element={
             <RequireAccount>
               <CreateWorkspace />
@@ -346,6 +390,44 @@ export function App({
       </AuthProvider>
     </BrowserContext.Provider>
   );
+}
+
+/**
+ * Bridges the account into the browser-local display identity.
+ *
+ * Sits inside both providers because that is the only place that can see both.
+ * Once signed in, presence, document cursors, discussion authorship and
+ * uploaded-file attribution all show the account's name rather than "Guest
+ * Maple" -- one call instead of eleven call sites each learning about accounts,
+ * and one fewer way for the app to contradict itself about who you are.
+ */
+function AdoptAccountName() {
+  const { session } = useBrowser();
+  const { account } = useAuth();
+  useEffect(() => {
+    session.setAccountName(account?.displayName ?? null);
+  }, [session, account?.displayName]);
+  return null;
+}
+
+/**
+ * `/` for everybody: the account's workspaces, or the landing page.
+ *
+ * `loading` is held distinct from "signed out" here for the same reason it is
+ * in `RequireAccount` — showing a returning person the marketing page for a
+ * frame before their list appears reads as having been signed out.
+ */
+function HomeOrLanding() {
+  const { account, loading } = useAuth();
+  if (loading)
+    return (
+      <main aria-busy="true" className="mx-auto w-full max-w-2xl px-6 py-20">
+        <p role="status" className="sr-only">
+          Checking your session…
+        </p>
+      </main>
+    );
+  return account ? <Home /> : <CreateWorkspace />;
 }
 
 /**

@@ -15,6 +15,8 @@ import {
   apiErrorBodySchema,
   createWorkspaceRequestSchema,
   createWorkspaceResponseSchema,
+  deleteWorkspaceResponseSchema,
+  type DeleteWorkspaceResponse,
   discussionEntrySchema,
   draftCaptureSchema,
   draftFileSchema,
@@ -174,6 +176,33 @@ export class WorkspaceApi {
         updateWorkspaceRequestSchema.parse(input),
         id,
       ),
+    );
+  }
+
+  /**
+   * Archive or restore. Owner only, reversible, and nothing is removed.
+   *
+   * The archived workspace still reads; only writes are refused, by the same
+   * gate that refuses a viewer's.
+   */
+  async setStatus(id: string, status: Workspace["status"]): Promise<Workspace> {
+    uuidSchema.parse(id);
+    return workspaceSchema.parse(
+      await this.request(`/${id}/status`, "PATCH", { status }, id),
+    );
+  }
+
+  /**
+   * Delete, permanently.
+   *
+   * `confirmName` is checked server-side against the workspace's current name.
+   * Sending it from here as well as showing the field is the point: the server
+   * is where the guard has to be, or it is only a dialog.
+   */
+  async destroy(id: string, confirmName: string): Promise<DeleteWorkspaceResponse> {
+    uuidSchema.parse(id);
+    return deleteWorkspaceResponseSchema.parse(
+      await this.request(`/${id}`, "DELETE", { confirmName }, id),
     );
   }
 
@@ -923,6 +952,12 @@ export function apiMessage(error: unknown): string {
         return "Host access is unavailable in this browser. You can still contribute through the workspace link.";
       case "WORKSPACE_NOT_FOUND":
         return "This workspace could not be found. Check the contribution link.";
+      case "WORKSPACE_ARCHIVED":
+        return "This workspace is archived, so it is read-only. An owner can restore it from workspace settings.";
+      case "AUTH_REQUIRED":
+        return "Sign in to continue.";
+      case "FORBIDDEN":
+        return "You do not have permission to do that in this workspace.";
       case "TASK_NOT_FOUND":
         return "This task could not be found. It may have been removed.";
       case "MATERIAL_NOT_FOUND":

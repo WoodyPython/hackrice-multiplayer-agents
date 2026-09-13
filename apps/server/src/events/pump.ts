@@ -39,6 +39,13 @@ export interface EventPumpDeps {
   intervalMs?: number;
   /** Events per sweep, so a burst cannot hold the loop indefinitely. */
   batchSize?: number;
+  /**
+   * How stale `workspaces.last_activity_at` may get before a sweep rewrites it.
+   *
+   * Five minutes by default: the value is read by a list ordered in days, and
+   * rewriting it per event would turn a refresh hint into a write amplifier.
+   */
+  activityThrottleMs?: number;
   onError?: (error: unknown) => void;
 }
 
@@ -49,10 +56,12 @@ export class TaskEventPump {
   private inFlight: Promise<number> | undefined;
   private readonly intervalMs: number;
   private readonly batchSize: number;
+  private readonly activityThrottleMs: number;
 
   constructor(private readonly deps: EventPumpDeps) {
     this.intervalMs = deps.intervalMs ?? 400;
     this.batchSize = deps.batchSize ?? 200;
+    this.activityThrottleMs = deps.activityThrottleMs ?? 5 * 60 * 1000;
   }
 
   /**
@@ -112,6 +121,8 @@ export class TaskEventPump {
         });
       }
 
+      await this.touchActivity([...new Set(rows.map((row) => row.workspace_id))]);
+
       // Advanced only after the batch is sent. A broadcaster that threw would
       // otherwise skip the batch permanently; `hint` is contractually
       // non-throwing, so this is belt and braces rather than the main path.
@@ -121,6 +132,40 @@ export class TaskEventPump {
       this.deps.onError?.(error);
       return 0;
     }
+  }
+
+  /**
+   * "Something happened in this workspace", which is what the workspace list
+   * sorts by and what retention measures abandonment against.
+   *
+   * **Here rather than in `appendEvent`, and that is a lock-ordering decision,
+   * not a stylistic one.** This codebase locks workspace → task → run → budget;
+   * `reviews/service.ts` takes the workspace row first and says so. `appendEvent`
+   * runs with the *task* row already locked, by itself and by every caller that
+   * appends inside a wider transaction, so an UPDATE on `workspaces` from there
+   * would take the two rows in the opposite order from guidance edits and
+   * Apply — two paths that each read correctly alone and deadlock together.
+   * The pump already runs after commit, outside every caller's transaction,
+   * which makes it the one place this can be written with no lock held at all.
+   *
+   * Throttled in the WHERE clause rather than in memory. A run appends dozens
+   * of events; without it every one would rewrite the row, and the process
+   * that thinks it knows the last value is the process that is wrong after a
+   * restart. Not matching a row is also not taking a lock, so the throttle is
+   * what keeps a busy workspace from serializing its own sweeps.
+   *
+   * Failure is swallowed by the caller's try/catch and costs an ordering
+   * timestamp, never a refresh hint.
+   */
+  private async touchActivity(workspaceIds: string[]): Promise<void> {
+    if (workspaceIds.length === 0) return;
+    const now = new Date();
+    await this.deps.db
+      .updateTable('workspaces')
+      .set({ last_activity_at: now })
+      .where('id', 'in', workspaceIds)
+      .where('last_activity_at', '<', new Date(now.getTime() - this.activityThrottleMs))
+      .execute();
   }
 
   /** Test seam: where the pump believes it has reached. */

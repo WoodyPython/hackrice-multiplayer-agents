@@ -1,8 +1,8 @@
 import {
   apiErrorBodySchema, membershipSchema, preferencesSchema, sessionStateSchema,
   workspaceMemberSchema, createdInvitationSchema, invitationSchema,
-  invitationPreviewSchema, ApiError,
-  type Preferences, type SessionState, type WorkspaceRole,
+  invitationPreviewSchema, workspaceDirectorySchema, ApiError,
+  type Preferences, type SessionState, type WorkspaceDirectory, type WorkspaceRole,
 } from "@app/contracts";
 import { z } from "zod";
 
@@ -195,6 +195,31 @@ export class AuthApi {
         body: JSON.stringify(patch),
       }),
     );
+  }
+
+  /**
+   * The home page's list: workspaces I belong to, and ones I have opened.
+   *
+   * Separate from `current()` because it is read on a different rhythm and
+   * carries the counts and activity times only the home page draws. The session
+   * read stays small, because it runs on every page load.
+   */
+  async directory(signal?: AbortSignal): Promise<WorkspaceDirectory> {
+    return workspaceDirectorySchema.parse(
+      await this.json("/api/auth/workspaces", signal ? { signal } : {}),
+    );
+  }
+
+  /**
+   * Leave a workspace.
+   *
+   * A distinct route from removing somebody else, so the server can tell them
+   * apart: leaving is a member action, removing another person is an owner one.
+   */
+  async leaveWorkspace(workspaceId: string) {
+    await this.json(`/api/workspaces/${workspaceId}/members/me`, {
+      method: "DELETE",
+    });
   }
 
   async members(workspaceId: string, signal?: AbortSignal) {

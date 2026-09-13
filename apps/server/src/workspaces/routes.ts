@@ -4,6 +4,9 @@ import {
   ApiError,
   OWNER_KEY_HEADER,
   createWorkspaceRequestSchema,
+  deleteWorkspaceRequestSchema,
+  deleteWorkspaceResponseSchema,
+  setWorkspaceStatusRequestSchema,
   updateWorkspaceRequestSchema,
   uuidSchema,
 } from '@app/contracts';
@@ -15,9 +18,12 @@ import type { PgWorkspaceService } from './service.js';
 /**
  * Public workspace routes (design section 12.1).
  *
- * There is deliberately no route that lists workspaces (section 1.2: "Do not
- * list workspaces publicly or expose an endpoint returning everyone's
- * workspaces"). If you are ever tempted to add one for an admin view, do not.
+ * There is deliberately no route that lists workspaces here, and section 1.2's
+ * prohibition -- "do not expose an endpoint returning everyone's workspaces" --
+ * is still exactly in force. `GET /api/auth/workspaces` is not an exception to
+ * it: it returns the caller's own memberships and their own visit history, both
+ * scoped to the account making the request. Nothing enumerates the table, and
+ * if you are ever tempted to add that for an admin view, do not.
  */
 
 /**
@@ -76,6 +82,29 @@ export async function registerWorkspaceRoutes(
     const workspace = await deps.workspaces.resolve(workspaceId, auth.access === 'owner');
     if (!workspace) throw new ApiError('WORKSPACE_NOT_FOUND', 'No such workspace.');
 
+    /**
+     * Remember that this account opened this workspace.
+     *
+     * Not membership and not authority: it is this person's own history, and
+     * it is what makes "the workspace somebody sent me a link to last week"
+     * findable again from any device instead of living in whichever browser
+     * tab they happened to keep open. Throttled in the store, so navigating
+     * around inside a workspace costs one write, not one per page.
+     *
+     * Awaited rather than fired and forgotten: an unhandled rejection from a
+     * floating promise takes the process down, and this is the read every page
+     * in the app performs.
+     */
+    if (auth.account) {
+      try {
+        await deps.sessions.recordVisit(workspaceId, auth.account.id);
+      } catch (error) {
+        // History is a convenience. Losing an entry must never fail the read
+        // that was actually asked for.
+        request.log.warn({ err: error, workspaceId }, 'could not record workspace visit');
+      }
+    }
+
     return reply.send({
       ...workspace,
       access: auth.access,
@@ -104,5 +133,47 @@ export async function registerWorkspaceRoutes(
 
     const updated = await deps.workspaces.updateGuidance(workspaceId, body);
     return reply.send(updated);
+  });
+
+  /**
+   * Archive or restore. Owner only.
+   *
+   * Reversible, and nothing is removed: the workspace drops out of the everyday
+   * list and refuses writes, and every task, file, and review stays exactly
+   * where it was. It exists so "we are finished with this" does not have to
+   * mean "destroy it" -- which is the only option when delete is the only verb,
+   * and is why people instead leave everything lying around forever.
+   *
+   * The authorization hook allows this route on an already-archived workspace;
+   * an archive nobody can come back from is a delete with a gentler name.
+   */
+  app.patch('/api/workspaces/:workspaceId/status', async (request, reply) => {
+    const { workspaceId } = parseOrThrow(workspaceParams, request.params);
+    const { status } = parseOrThrow(setWorkspaceStatusRequestSchema, request.body ?? {});
+    const updated = await deps.workspaces.setStatus(workspaceId, status);
+    return reply.send(updated);
+  });
+
+  /**
+   * Delete the workspace and everything in it. Owner only, irreversible.
+   *
+   * Two deliberate choices:
+   *
+   * **It is a real delete, not a flag.** A soft delete reclaims nothing, and
+   * the reason this endpoint exists is that an abandoned workspace keeps its
+   * events, drafts, model call records, and uploaded bytes forever on a
+   * fixed-size free-tier database. Archiving is the reversible option and it is
+   * one click away; this one is for when the answer is genuinely "get rid of
+   * it".
+   *
+   * **The name has to be typed back**, checked in the service. Not security --
+   * the gate already proved ownership -- but the gap between meaning to do this
+   * and having clicked the wrong row in a list.
+   */
+  app.delete('/api/workspaces/:workspaceId', async (request, reply) => {
+    const { workspaceId } = parseOrThrow(workspaceParams, request.params);
+    const body = parseOrThrow(deleteWorkspaceRequestSchema, request.body ?? {});
+    const summary = await deps.workspaces.destroy({ workspaceId, confirmName: body.confirmName });
+    return reply.send(deleteWorkspaceResponseSchema.parse(summary));
   });
 }

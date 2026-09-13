@@ -70,7 +70,15 @@ Suites that build their own runtime call `authenticateRuntime(app, db)`, and
 WebSocket clients use an `AuthenticatedWebSocket` subclass (`ws` can set
 headers on a handshake even though a browser cannot).
 
-**5. New web test files need `stubAuthApi`.**
+**5. A React provider that builds its own dependency inline loops forever.**
+`AuthProvider` had `api = new AuthApi(...)` as a default *parameter*, so a new
+instance per render, so a new `useCallback`, so the mount effect re-ran: 300+
+`GET /api/auth/session` per page load. Every test passes a stable `api`, and
+every request returned 200, so neither the suite nor the browser complained.
+Fixed, but the shape is worth recognising — check the network panel once when
+touching a provider.
+
+**6. New web test files need `stubAuthApi`.**
 `<App/>` without an `authApi` prop makes `AuthProvider` issue a real `fetch`
 that never settles under jsdom; the test times out at 5s with no useful error.
 This has now bitten four separate test files. `import { stubAuthApi } from
@@ -152,6 +160,12 @@ nothing an agent writes reaches approved files without a person applying it.
 Several people push to `main` directly and merges are frequent. What has
 actually gone wrong, more than once:
 
+- **A semantic conflict that cost the owner their own controls.** The accounts
+  merge left `isOwner` ANDed with a legacy owner key in browser storage. New
+  workspaces have no such key, so the flag was never true and the creator of a
+  workspace could not open its settings or invite anybody. Both sides compiled,
+  both sides' tests passed. Ownership is `workspace.access` now.
+
 - **A teammate changes a fixture and misses assertions that depend on it.**
   Before assuming a failure is yours, check whether it predates your work —
   `git log -S'<the failing string>'` finds who introduced it fast.
@@ -169,9 +183,13 @@ actually gone wrong, more than once:
 
 ## Current state
 
-All suites green as of `842e1e8`. Roughly 39 server test files and 11 web ones;
-web is 125 tests. Nothing is deployed — the project has never been pushed to a
-host, and `render.yaml` is untested.
+All suites green. Roughly 40 server test files and 12 web ones; web is 141
+tests. Workspaces have a full lifecycle as of 2026-09-13 — a home page listing
+everything an account can reach, archive/restore, leave, delete, and
+`npm run workspace:gc --workspace @app/server` for what is taking up room.
+
+Nothing is deployed — the project has never been pushed to a host, and
+`render.yaml` is untested.
 
 Known rough edges, none blocking:
 
@@ -182,5 +200,9 @@ Known rough edges, none blocking:
   about to create, which returns null. That is ~20% of a writer's request
   budget spent learning nothing. Prompt-only fix, untested because quota was
   exhausted when it was found.
+- The hosted database holds 18 workspaces from testing, all created before
+  accounts: unclaimed, memberless, and reachable only by whoever still has the
+  link. 13 MB of the free plan's 500 MB, so not urgent — but `workspace:gc`
+  lists them under `orphaned` and they are the obvious first sweep.
 - `docs/pitfalls.md` is worth skimming before a deep change; it records
   mistakes with their causes.

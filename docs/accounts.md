@@ -86,6 +86,74 @@ after boot and asserting it is refused.
 The WebSocket upgrade is the one surface a `preHandler` cannot reach, so it
 authorizes explicitly in `recovery/runtime.ts` against the same session store.
 
+## Finding your workspaces again
+
+This is what accounts are actually for, and it is worth being precise about
+what changed. Workspace *data* was always durable — a workspace is a Postgres
+row and has been since the first migration. What was not durable was the route
+back to one: the URL in somebody's chat log, plus an owner key in one browser's
+localStorage. A cleared browser or a lost link lost the room.
+
+Two lists answer "where do I work", and they are deliberately different things:
+
+| | Where it comes from | What it grants |
+|---|---|---|
+| **Your workspaces** | `workspace_members` | Everything the role allows |
+| **Opened by link** | `workspace_visits` | Nothing. It restores the address |
+
+`GET /api/auth/workspaces` returns both. A visit is recorded when a signed-in
+account reads a workspace, throttled to one write per five minutes, and is
+private to the person it belongs to. **It is not a weaker membership.** Every
+request it leads to is authorized against `workspace_members` exactly as
+before, so a link holder who can now find a workspace again is still a viewer
+in it. The alternative — treating "has opened this" as any kind of standing —
+is the same mistake as treating the URL as ownership, which the claim flow
+below exists to avoid.
+
+Ordering is by last activity, not by name: `workspaces.last_activity_at`, which
+the event pump touches when a durable task event lands. `updated_at` was never
+a substitute — it moves when an owner renames the workspace and stays still
+through a week of real work.
+
+## Archiving, leaving, deleting
+
+Three different intentions, which until now all had the same answer: nothing.
+
+**Archive** (owner) is reversible and keeps everything. The workspace leaves the
+switcher, appears under Archived on the home page, reads normally, and refuses
+every write. The refusal is in the same `preHandler` that enforces membership,
+so a route added later is covered before anyone thinks about it; the exceptions
+are restore, delete, and leave, listed explicitly in `auth/authorize.ts`. The
+error code is `WORKSPACE_ARCHIVED` (409) rather than `FORBIDDEN` (403), because
+the request is refused by the state of the thing and not by who is asking — a
+member told they lack a permission they actually have would go looking in the
+wrong place.
+
+**Leave** (any member) removes only you, and clears your last-workspace pointer
+if it named this one. The last owner cannot leave, for the same reason they
+cannot demote themselves: a workspace nobody can administer can never be
+invited into, archived, or deleted by anybody.
+
+**Delete** (owner) is real and permanent: the row, everything cascading from it,
+the Git repository, and the uploaded objects. A soft delete was considered and
+rejected — it reclaims nothing, and reclaiming is the reason this exists. The
+caller types the workspace's name back, checked server-side; that is not the
+authorization, which the gate has already settled, but the gap between meaning
+to do this and having clicked the wrong row.
+
+## Housekeeping
+
+`npm run workspace:gc --workspace @app/server` reports what is taking up room:
+database size against the free plan's 500 MB, then workspaces sorted into
+`orphaned` (pre-accounts, unclaimed, no members — nothing can administer them
+but a key in some browser's storage), `empty`, and long-archived, plus
+repository directories with no workspace row.
+
+**It changes nothing without `--delete`.** Which workspaces are junk is a
+judgement about what the team is doing this week, not something a heuristic
+should decide, and a workspace with members and content is never listed at any
+age. `--ids` is there for when a person has decided.
+
 ## Invitations
 
 Single-use, expiring after seven days, hashed at rest, and optionally locked to

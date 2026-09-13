@@ -17,13 +17,23 @@ import { workspace as sample } from "./fixtures";
 const id = "abcdef01-0000-4000-8000-000000000001";
 const otherId = "abcdef01-0000-4000-8000-000000000002";
 const ownerKey = "test-only-owner-secret-123456789";
+/**
+ * `access` is what decides owner controls now, not `isOwner`.
+ *
+ * The flag used to be ANDed with a legacy owner key in browser storage; an
+ * account-owned workspace has no such key, so that condition was never true and
+ * an owner saw none of their own controls. It is the server-resolved membership
+ * on this read that answers the question, and these fixtures say so.
+ */
 const workspace = {
   ...sample,
   id,
   name: "Team room",
   purpose: "Build together",
   isOwner: true,
+  access: "owner" as const,
 };
+const asViewer = { ...workspace, isOwner: false, access: "viewer" as const };
 const response = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
@@ -35,15 +45,21 @@ function fixture(
   path: string,
   transport: typeof fetch,
   session = new BrowserSession(),
+  authApi: AuthApi = signedIn(),
 ) {
   const api = new WorkspaceApi(session, (input, init) => String(input).endsWith('/inbox')
     ? Promise.resolve(response({ items: [] })) : transport(input, init));
   render(
     <MemoryRouter initialEntries={[path]}>
-      <App session={session} api={api} authApi={signedIn()} />
+      <App session={session} api={api} authApi={authApi} />
     </MemoryRouter>,
   );
   return { api, session };
+}
+
+/** A link holder: no account, so the browser's own display label is theirs. */
+function signedOut(): AuthApi {
+  return signedIn({ account: null, workspaces: [], preferences: null });
 }
 beforeEach(() => {
   localStorage.clear();
@@ -70,6 +86,9 @@ function signedIn(overrides: Partial<SessionState> = {}): AuthApi {
     savePreferences: async () => state.preferences!,
     members: async () => [],
     invitations: async () => [],
+    directory: async () => ({ workspaces: state.workspaces, visited: [] }),
+    leaveWorkspace: async () => {},
+    refresh: async () => {},
   } as unknown as AuthApi;
 }
 
@@ -204,7 +223,7 @@ describe("A02 workspace interactions", () => {
         }),
       )
       .mockImplementation(async () => response(workspace));
-    fixture("/", transport);
+    fixture("/new", transport);
     await user.type(await screen.findByLabelText("Workspace name"), "Team room");
     await user.type(screen.getByLabelText(/Purpose/), "Build together");
     await user.dblClick(
@@ -225,7 +244,7 @@ describe("A02 workspace interactions", () => {
   it("opens a contribution URL directly without asking for a name and denies owner controls", async () => {
     const transport = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(response({ ...workspace, isOwner: false }));
+      .mockResolvedValue(response(asViewer));
     fixture(`/w/${id}/settings`, transport);
     expect(
       await screen.findByRole("heading", { name: "Workspace details" }),
@@ -284,15 +303,17 @@ describe("A02 workspace interactions", () => {
       }),
     );
   });
-  it("removes owner controls when the server rejects a key, keeping unsaved text visible", async () => {
+  it("removes owner controls when the server refuses, keeping unsaved text visible", async () => {
+    // The server is the authority on who may administer a workspace. When it
+    // disagrees with what was drawn -- a role changed in another tab, most
+    // likely -- the controls go and the typing stays, because losing somebody's
+    // words is a worse outcome than showing a button that has stopped working.
     const user = userEvent.setup();
-    const session = new BrowserSession();
-    session.saveOwner(id, ownerKey);
     const transport = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response(workspace))
-      .mockResolvedValueOnce(errorResponse("OWNER_KEY_REQUIRED", 403));
-    fixture(`/w/${id}/settings`, transport, session);
+      .mockResolvedValueOnce(errorResponse("FORBIDDEN", 403));
+    fixture(`/w/${id}/settings`, transport);
     await user.click(
       await screen.findByRole("button", { name: "Save workspace settings" }),
     );
@@ -302,27 +323,38 @@ describe("A02 workspace interactions", () => {
     ).toBeNull();
     expect(screen.getByLabelText("Description")).toBeTruthy();
   });
-  it("rechecks ownership after browser storage is cleared", async () => {
+  it("keeps owner controls when browser storage is cleared", async () => {
+    /*
+     * The regression this replaces a test for.
+     *
+     * Clearing storage used to take host controls away, because the owner key
+     * lived there and was ANDed into `isOwner`. Ownership is a membership row
+     * now: the same person on a new device, or after clearing site data, is
+     * still the owner, and the request carries no per-browser secret at all.
+     *
+     * The other direction -- the server saying this caller may not administer
+     * the workspace -- is covered by the FORBIDDEN test above and by the
+     * viewer fixture, both of which drive it from the server's answer.
+     */
     const session = new BrowserSession();
-    session.saveOwner(id, ownerKey);
-    const transport = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(response(workspace))
-      .mockResolvedValue(response({ ...workspace, isOwner: false }));
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(response(workspace));
     fixture(`/w/${id}/settings`, transport, session);
     await screen.findByRole("button", { name: "Save workspace settings" });
     localStorage.clear();
     fireEvent(window, new StorageEvent("storage", { key: null }));
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Save workspace settings" }),
-      ).toBeNull(),
+        screen.getByRole("button", { name: "Save workspace settings" }),
+      ).toBeTruthy(),
     );
     expect(transport.mock.calls.at(-1)![1]!.headers).not.toHaveProperty(
       OWNER_KEY_HEADER,
     );
   });
-  it("updates the header name as plain text without changing browser identity", async () => {
+  it("updates a link holder's display name as plain text, without changing browser identity", async () => {
+    // Signed out, the browser's own label is what other people see, so it is
+    // editable here. Signed in it is the account's name and this control is
+    // not drawn -- renaming yourself is the identity provider's business.
     const user = userEvent.setup();
     const session = new BrowserSession();
     const originalId = session.getGuest().contributorId;
@@ -330,10 +362,9 @@ describe("A02 workspace interactions", () => {
       `/w/${id}`,
       vi
         .fn<typeof fetch>()
-        .mockImplementation(async () =>
-          response({ ...workspace, isOwner: false }),
-        ),
+        .mockImplementation(async () => response(asViewer)),
       session,
+      signedOut(),
     );
     await user.click(
       await screen.findByRole("button", { name: /Edit display name/ }),
@@ -356,7 +387,7 @@ describe("A02 workspace interactions", () => {
   it("shows actionable rate-limit and missing-workspace errors", async () => {
     const user = userEvent.setup();
     fixture(
-      "/",
+      "/new",
       vi
         .fn<typeof fetch>()
         .mockResolvedValue(errorResponse("RATE_LIMITED", 429)),

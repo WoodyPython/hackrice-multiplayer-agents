@@ -23,6 +23,7 @@
     "gemini:smoke": "tsx scripts/gemini-smoke.ts",
     "test:watch": "node ../../scripts/test.mjs",
     "supabase:smoke": "tsx scripts/supabase-smoke.ts",
+    "workspace:gc": "tsx scripts/workspace-gc.ts",
     "test:unit": "node ../../scripts/test.mjs run --config vitest.unit.config.ts"
   },
   "dependencies": {

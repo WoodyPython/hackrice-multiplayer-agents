@@ -10,6 +10,7 @@ belongs, it probably belongs in the design document instead.
 | [`interfaces/`](interfaces) | How do I call the thing another role built | The role that owns the surface |
 | [`pitfalls.md`](pitfalls.md) | What has already gone wrong here | Whoever hit it |
 | [`supabase-setup.md`](supabase-setup.md) | How do I connect the hosted services | Role B |
+| [`accounts.md`](accounts.md) | Signing in, membership, roles, and a workspace's life | Role B |
 | [`handoff-b08.md`](handoff-b08.md) | Picking up Role B from B08 onward | Role B |
 | [`../SETUP.md`](../SETUP.md) | How do I get running | Role B |
 

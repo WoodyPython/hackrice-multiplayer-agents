@@ -28,11 +28,26 @@ const AuthContext = createContext<AuthValue | null>(null);
 
 export function AuthProvider({
   children,
-  api = new AuthApi(supabaseConfig()),
+  api: injected,
 }: {
   children: ReactNode;
   api?: AuthApi;
 }) {
+  /**
+   * Built once, not per render.
+   *
+   * This was a default parameter -- `api = new AuthApi(supabaseConfig())` --
+   * which constructs a new instance on every render. `refresh` is a
+   * `useCallback` keyed on it, so a new instance meant a new `refresh`, which
+   * re-ran the effect that calls it, which set state, which rendered again:
+   * `GET /api/auth/session` in a loop for as long as the page was open. It was
+   * invisible in tests because every test passes a stable `api` prop, and
+   * invisible in the browser because each request succeeded.
+   */
+  const api = useMemo(
+    () => injected ?? new AuthApi(supabaseConfig()),
+    [injected],
+  );
   const [state, setState] = useState<SessionState>({
     account: null, workspaces: [], preferences: null,
   });

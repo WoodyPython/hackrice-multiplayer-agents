@@ -7,6 +7,7 @@ import {
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { Members } from "../components/Members";
+import { WorkspaceLifecycle } from "../components/WorkspaceLifecycle";
 import { workspaceError } from "../workspace-api";
 import { PageHeading } from "../components/PageHeading";
 import { Button } from "../components/ui/button";
@@ -52,8 +53,13 @@ export function WorkspaceSettings({
       setMessage("Workspace settings saved.");
     } catch (cause) {
       setError(workspaceError(cause));
-      if (cause instanceof ApiError && cause.code === "OWNER_KEY_REQUIRED")
-        onChange({ ...workspace, isOwner: false });
+      // The server is the authority. If it says this caller may not administer
+      // the workspace -- a role changed in another tab, most likely -- stop
+      // drawing the controls, and keep every character they typed: losing
+      // somebody's words is worse than a button that briefly looked available.
+      if (cause instanceof ApiError &&
+          (cause.code === "FORBIDDEN" || cause.code === "OWNER_KEY_REQUIRED"))
+        onChange({ ...workspace, isOwner: false, access: "viewer" });
     } finally {
       busy.current = false;
       setPending(false);
@@ -82,9 +88,8 @@ export function WorkspaceSettings({
             <p className="flex gap-2">
               <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
               <span>
-                Host controls are unavailable in this browser. You can still
-                participate through the workspace link. If browser storage was
-                cleared, host access cannot be recovered.
+                Only an owner can change these. Ask one of the people listed
+                below if something here needs to be different.
               </span>
             </p>
           </Notice>
@@ -132,6 +137,10 @@ export function WorkspaceSettings({
 
       <div className="mt-8">
         <Members workspaceId={workspace.id} isOwner={workspace.isOwner} />
+      </div>
+
+      <div className="mt-8">
+        <WorkspaceLifecycle workspace={workspace} onChange={onChange} />
       </div>
     </>
   );

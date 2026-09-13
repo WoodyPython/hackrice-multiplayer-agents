@@ -16,6 +16,11 @@ export const API_ERROR_CODES = [
   'AUTH_REQUIRED',
   'FORBIDDEN',
   'INVITATION_INVALID',
+  // Read-only because the workspace has been put away, which is a different
+  // thing from "you may not" and has a different next step: ask an owner to
+  // restore it. Collapsing it into FORBIDDEN would tell a member they lack a
+  // permission they actually have.
+  'WORKSPACE_ARCHIVED',
   'TASK_VERSION_CHANGED',
   'TASK_ALREADY_RUNNING',
   'INPUT_CONFLICT',
@@ -62,6 +67,9 @@ const HTTP_STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   AUTH_REQUIRED: 401,
   FORBIDDEN: 403,
   INVITATION_INVALID: 400,
+  // 409, not 403: the request is refused by the state of the thing, not by who
+  // is asking, and it succeeds unchanged once the workspace is restored.
+  WORKSPACE_ARCHIVED: 409,
   TASK_VERSION_CHANGED: 409,
   TASK_ALREADY_RUNNING: 409,
   INPUT_CONFLICT: 409,

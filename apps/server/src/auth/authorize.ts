@@ -33,11 +33,17 @@ type Requirement = AccessLevel | 'account';
  */
 const OWNER_ONLY = new Set([
   'PATCH /api/workspaces/:workspaceId',
+  'PATCH /api/workspaces/:workspaceId/status',
+  'DELETE /api/workspaces/:workspaceId',
   'POST /api/workspaces/:workspaceId/invitations',
   'GET /api/workspaces/:workspaceId/invitations',
   'DELETE /api/workspaces/:workspaceId/invitations/:invitationId',
   'PATCH /api/workspaces/:workspaceId/members/:userId',
   'DELETE /api/workspaces/:workspaceId/members/:userId',
+  // `DELETE .../members/me` is NOT here. Leaving is not administration, and a
+  // member who cannot leave has no way out of a workspace but to ask the
+  // person they are trying to stop working with. Fastify matches the static
+  // segment first, so the two are separate patterns and separate rules.
   // Task moves are NOT listed here: marking work complete is member-level and
   // only the other transitions are owner-level, which depends on the request
   // body. PgTaskService.move draws that line with the resolved role.
@@ -70,10 +76,27 @@ const MEMBER_READS = new Set([
   'GET /api/workspaces/:workspaceId/members',
 ]);
 
+/**
+ * Writes that still work on an archived workspace.
+ *
+ * Archiving stops the work, not the administration of it. Restoring is the
+ * obvious one -- an archive you cannot come back from is a delete with a softer
+ * name -- and deleting has to work too, or tidying up would require un-tidying
+ * first. Leaving is here because being archived is not a reason to be stuck in
+ * a workspace.
+ */
+const ARCHIVED_WRITES = new Set([
+  'PATCH /api/workspaces/:workspaceId/status',
+  'DELETE /api/workspaces/:workspaceId',
+  'DELETE /api/workspaces/:workspaceId/members/me',
+]);
+
 export interface RequestAuth {
   workspaceId: string;
   account: Account | null;
   access: AccessLevel;
+  /** Read-only because it has been put away, not because of who is asking. */
+  archived: boolean;
 }
 
 declare module 'fastify' {
@@ -131,8 +154,10 @@ export function registerAuthorization(app: FastifyInstance, sessions: SessionSto
     const workspaceId = parsed.data.toLowerCase();
 
     const identity = await sessions.resolve(readSessionCookie(request.headers.cookie));
-    const access = await sessions.access(workspaceId, identity?.userId);
-    const auth: RequestAuth = { workspaceId, account: identity?.account ?? null, access };
+    // One query for both questions. Asking separately would mean two round
+    // trips on every request and two different moments to decide against.
+    const { access, archived } = await sessions.workspaceAccess(workspaceId, identity?.userId);
+    const auth: RequestAuth = { workspaceId, account: identity?.account ?? null, access, archived };
     request.auth = auth;
 
     const requirement = requirementFor(request.method, route);
@@ -145,6 +170,18 @@ export function registerAuthorization(app: FastifyInstance, sessions: SessionSto
     }
     if (requirement === 'member' && !canWrite(access)) {
       throw unauthorized(identity !== null, 'Join this workspace to make changes.');
+    }
+    /**
+     * An archived workspace is read-only, and that is decided here for the same
+     * reason membership is: a rule applied once in front of every route cannot
+     * be forgotten on the one route that was added last. Reads are untouched --
+     * the whole point of archiving rather than deleting is that the work stays
+     * legible -- and the exceptions are the three writes that administer the
+     * archive itself.
+     */
+    if (archived && requirement !== 'viewer' && !ARCHIVED_WRITES.has(`${request.method} ${route}`)) {
+      throw new ApiError('WORKSPACE_ARCHIVED',
+        'This workspace is archived. An owner can restore it from workspace settings.');
     }
   });
 }

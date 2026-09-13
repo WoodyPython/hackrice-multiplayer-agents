@@ -190,10 +190,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     bootId: config.bootId,
   }));
 
+  const blobs = deps.blobs ?? defaultBlobStore(config);
+
   const workspaces = new PgWorkspaceService({
     db: deps.db,
     publicAppUrl: config.PUBLIC_APP_URL,
     lifecycle: deps.lifecycle ?? new NullWorkspaceLifecycleHook(),
+    // Deleting a workspace removes its rows by cascade; the uploaded bytes
+    // those rows pointed at are only reachable through them, so they have to
+    // go at the same time or they are orphaned in the bucket forever.
+    blobs,
     onLifecycleError: (error, workspaceId) => {
       // Not fatal: Role D's Git service ensures the repository on first access,
       // so this workspace repairs itself. Logged because a persistent failure
@@ -262,7 +268,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const materials = new PgMaterialService({
     db: deps.db,
-    blobs: deps.blobs ?? defaultBlobStore(config),
+    blobs,
   });
   await registerMaterialRoutes(app, { materials });
 

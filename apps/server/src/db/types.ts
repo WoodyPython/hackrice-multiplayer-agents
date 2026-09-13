@@ -59,6 +59,9 @@ export interface WorkspacesTable {
   status: Generated<WorkspaceStatus>;
   created_at: Timestamp;
   updated_at: Timestamp;
+  /** Last durable task event, touched at most once per throttle window. */
+  last_activity_at: Timestamp;
+  archived_at: Timestamp | null;
 }
 
 export interface TasksTable {
@@ -333,6 +336,17 @@ export interface WorkspaceInvitationsTable {
   revoked_at: Timestamp | null;
 }
 
+/**
+ * One person's own history of what they have opened. Never authorization: the
+ * access check reads `workspace_members` and only that.
+ */
+export interface WorkspaceVisitsTable {
+  user_id: string;
+  workspace_id: string;
+  first_seen_at: Timestamp;
+  last_seen_at: Timestamp;
+}
+
 export interface UserPreferencesTable {
   user_id: string;
   theme: Generated<string>;
@@ -346,6 +360,7 @@ export interface Database {
   sessions: SessionsTable;
   workspace_members: WorkspaceMembersTable;
   workspace_invitations: WorkspaceInvitationsTable;
+  workspace_visits: WorkspaceVisitsTable;
   user_preferences: UserPreferencesTable;
   tasks: TasksTable;
   discussion_entries: DiscussionEntriesTable;

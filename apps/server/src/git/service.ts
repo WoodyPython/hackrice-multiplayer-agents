@@ -1,5 +1,5 @@
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -405,6 +405,49 @@ export class LocalGitService implements Pick<GitService,
         throw error instanceof GitRuntimeError ? error : new GitRuntimeError('REPOSITORY_UNAVAILABLE');
       }
       return operation(repository);
+    });
+  }
+
+  /**
+   * Remove a deleted workspace's repository and worktrees.
+   *
+   * Called from the workspace lifecycle hook after the database rows are gone.
+   * Everything on disk is derived from those rows, so this reclaims space; it
+   * never decides anything.
+   *
+   * Three properties it has to keep, all of them the same ones `ensureLocked`
+   * keeps for creation:
+   *
+   * - **Under the workspace lock**, so it cannot run while an operation in the
+   *   same workspace holds a worktree open.
+   * - **Canonical path only.** The id is canonicalized to a UUID and the target
+   *   is resolved before removal: a symlink or a non-directory is refused
+   *   rather than followed, because the one thing a recursive delete must never
+   *   do is follow a link out of the data root.
+   * - **Idempotent.** A workspace with no repository is success, not an error;
+   *   the caller is a fire-and-forget hook that may be retried.
+   */
+  async removeRepository(workspaceId: string): Promise<void> {
+    const id = canonicalWorkspaceId(workspaceId);
+    await this.locks.run(id, async () => {
+      await this.prepare();
+      const repos = join(this.root, 'repos');
+      for (const target of [join(repos, `${id}.git`), join(this.root, 'worktrees', id)]) {
+        const existing = await lstat(target).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return undefined;
+          throw error;
+        });
+        if (!existing) continue;
+        // Never remove something that is not a real directory where we put one.
+        if (existing.isSymbolicLink() || !existing.isDirectory()) {
+          throw new GitRuntimeError('INVALID_REPOSITORY');
+        }
+        const parent = await realpath(dirname(target));
+        if (await realpath(target) !== join(parent, basename(target))) {
+          throw new GitRuntimeError('INVALID_REPOSITORY');
+        }
+        await rm(target, { recursive: true, force: true });
+      }
     });
   }
 

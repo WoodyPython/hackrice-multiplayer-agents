@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, LayoutGrid, Plus } from "lucide-react";
 import type { Membership } from "@app/contracts";
 import { cn } from "../lib/utils";
 
@@ -46,6 +46,16 @@ export function WorkspaceSwitcher({
   }, [open]);
 
   const current = workspaces.find((item) => item.workspaceId === currentId);
+  /*
+    Archived workspaces are deliberately not offered here. The switcher is for
+    moving between the places you are working; an archived one is read-only and
+    reachable from the home page, which is where putting-things-away lives.
+    The one exception is the archived workspace you are looking at right now --
+    hiding the current entry would make the button describe nothing.
+  */
+  const options = workspaces.filter(
+    (item) => !item.archived || item.workspaceId === currentId,
+  );
 
   return (
     <div ref={container} className="relative">
@@ -62,9 +72,11 @@ export function WorkspaceSwitcher({
           </span>
           <span className="block truncate text-[11px] text-white/60">
             {current
-              ? current.role === "owner"
-                ? "Owner"
-                : "Member"
+              ? current.archived
+                ? "Archived"
+                : current.role === "owner"
+                  ? "Owner"
+                  : "Member"
               : "Viewing by link"}
           </span>
         </span>
@@ -77,12 +89,12 @@ export function WorkspaceSwitcher({
           role="menu"
           className="absolute top-full right-0 left-0 z-40 mt-1 overflow-hidden rounded-lg border border-border bg-card py-1 shadow-lg"
         >
-          {workspaces.length === 0 && (
+          {options.length === 0 && (
             <p className="px-3 py-2.5 text-[12px] text-muted-foreground">
               You are not a member of any workspace yet.
             </p>
           )}
-          {workspaces.map((workspace) => (
+          {options.map((workspace) => (
             <Link
               key={workspace.workspaceId}
               role="menuitem"
@@ -111,6 +123,18 @@ export function WorkspaceSwitcher({
             <Link
               role="menuitem"
               to="/"
+              onClick={() => {
+                setOpen(false);
+                onNavigate?.();
+              }}
+              className="flex items-center gap-2 px-3 py-2 text-[12.5px] transition-colors hover:bg-muted"
+            >
+              <LayoutGrid aria-hidden="true" className="size-3.5" />
+              All workspaces
+            </Link>
+            <Link
+              role="menuitem"
+              to="/new"
               onClick={() => {
                 setOpen(false);
                 onNavigate?.();

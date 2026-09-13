@@ -28,6 +28,8 @@ export function stubAuthApi(overrides: Partial<SessionState> = {}): AuthApi {
     savePreferences: async () => state.preferences!,
     members: async () => [],
     invitations: async () => [],
+    directory: async () => ({ workspaces: state.workspaces, visited: [] }),
+    leaveWorkspace: async () => {},
     createInvitation: async () => {
       throw new Error("not stubbed");
     },

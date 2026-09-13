@@ -6,7 +6,8 @@ import {
   claimWorkspaceRequestSchema, createInvitationRequestSchema, createSessionRequestSchema,
   createdInvitationSchema, invitationPreviewSchema, invitationSchema, membershipSchema,
   preferencesSchema, sessionStateSchema, updateMemberRequestSchema,
-  updatePreferencesRequestSchema, uuidSchema, workspaceMemberSchema,
+  updatePreferencesRequestSchema, uuidSchema, workspaceDirectorySchema,
+  workspaceMemberSchema,
 } from '@app/contracts';
 import type { Transaction } from 'kysely';
 import type { Db } from '../db/client.js';
@@ -77,7 +78,9 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
   async function state(userId: string | undefined) {
     if (!userId) return sessionStateSchema.parse({ account: null, workspaces: [], preferences: null });
     const [workspaces, preferences] = await Promise.all([
-      sessions.memberships(userId), sessions.preferences(userId),
+      // No counts here: this runs on every page load and nothing in the
+      // switcher renders them. The home page asks for the full picture.
+      sessions.memberships(userId, { summarize: false }), sessions.preferences(userId),
     ]);
     return { workspaces, preferences };
   }
@@ -110,6 +113,30 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
     await sessions.signOut(readSessionCookie(request.headers.cookie));
     clearSessionCookie(reply, deps.secureCookies);
     return reply.code(204).send();
+  });
+
+  /**
+   * The home page's list: workspaces I belong to, and workspaces I have opened.
+   *
+   * Separate from `GET /api/auth/session` because it is read on a different
+   * rhythm -- the session once at startup, this whenever the home page is
+   * shown or something changes -- and because the visited list is only ever
+   * needed here.
+   *
+   * The second list is not a back door. A visit records that somebody opened a
+   * workspace they hold the link to; every request it leads to is authorized
+   * against membership exactly as before, and a link holder stays a viewer.
+   * What it changes is only that they can find it again: before this, losing
+   * the URL lost the workspace, signed in or not.
+   */
+  app.get('/api/auth/workspaces', async (request, reply) => {
+    const identity = await sessions.resolve(readSessionCookie(request.headers.cookie));
+    if (!identity) throw new ApiError('AUTH_REQUIRED', 'Sign in to continue.');
+    const [workspaces, visited] = await Promise.all([
+      sessions.memberships(identity.userId),
+      sessions.visited(identity.userId),
+    ]);
+    return reply.code(200).send(workspaceDirectorySchema.parse({ workspaces, visited }));
   });
 
   app.patch('/api/auth/preferences', async (request, reply) => {
@@ -150,6 +177,39 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         joinedAt: new Date(row.created_at).toISOString(),
       })),
     });
+  });
+
+  /**
+   * Leave a workspace.
+   *
+   * Registered before the `:userId` form and as a static segment, so Fastify
+   * matches it first and the authorization gate sees a different route pattern
+   * -- which is what lets removing *yourself* be a member action while removing
+   * somebody else stays owner-only.
+   *
+   * A member who cannot leave has only one way out of a workspace they no
+   * longer want to be in: asking the person they are trying to stop working
+   * with. The last owner still cannot leave, for the same reason they cannot
+   * demote themselves: a workspace with no owner can never be administered
+   * again by anybody.
+   */
+  app.delete('/api/workspaces/:workspaceId/members/me', async (request, reply) => {
+    const { workspaceId } = parseOrThrow(workspaceParams, request.params);
+    const auth = requireAccount(request);
+    await db.transaction().execute(async (trx) => {
+      await assertNotLastOwner(trx, workspaceId, auth.account.id, 'member');
+      const removed = await trx.deleteFrom('workspace_members')
+        .where('workspace_id', '=', workspaceId).where('user_id', '=', auth.account.id)
+        .returning('user_id').executeTakeFirst();
+      if (!removed) throw new ApiError('FORBIDDEN', 'You are not a member of this workspace.');
+      // The pointer is to "where I was working", and this is no longer one of
+      // mine. Left behind, it would send the next sign-in to a workspace the
+      // person just chose to leave.
+      await trx.updateTable('user_preferences').set({ last_workspace: null })
+        .where('user_id', '=', auth.account.id)
+        .where('last_workspace', '=', workspaceId).execute();
+    });
+    return reply.code(204).send();
   });
 
   app.patch('/api/workspaces/:workspaceId/members/:userId', async (request, reply) => {

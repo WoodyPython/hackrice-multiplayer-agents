@@ -93,3 +93,45 @@ export const updateWorkspaceRequestSchema = z
     message: 'at least one field must be supplied',
   });
 export type UpdateWorkspaceRequest = z.infer<typeof updateWorkspaceRequestSchema>;
+
+// --- lifecycle -------------------------------------------------------------
+
+/**
+ * Archive and restore.
+ *
+ * Archiving is the reversible half of tidying up: the workspace leaves the
+ * everyday list, stops appearing in the switcher, and refuses writes — but
+ * every task, file and review is still there, and an owner can bring it back.
+ * It exists so that "I am done with this" does not have to mean "destroy it",
+ * which is the only thing on offer when delete is the only verb.
+ *
+ * `status` has been in the schema since 0001 with nothing that ever set it.
+ * This is what it was for.
+ */
+export const setWorkspaceStatusRequestSchema = z.object({
+  status: workspaceStatusSchema,
+}).strict();
+export type SetWorkspaceStatusRequest = z.infer<typeof setWorkspaceStatusRequestSchema>;
+
+/**
+ * Deleting, which is irreversible and says so.
+ *
+ * The caller has to type the workspace's name back. Not security — an owner is
+ * already authorized — but the difference between a button someone meant to
+ * press and one they pressed while looking at something else. Everything in the
+ * workspace goes with it: tasks, discussion, files, reviews, history, and the
+ * repository behind them.
+ */
+export const deleteWorkspaceRequestSchema = z.object({
+  confirmName: z.string().min(1).max(200),
+}).strict();
+export type DeleteWorkspaceRequest = z.infer<typeof deleteWorkspaceRequestSchema>;
+
+/** What was actually removed, so the confirmation can be specific. */
+export const deleteWorkspaceResponseSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  name: z.string(),
+  deletedTasks: z.number().int().nonnegative(),
+  deletedMaterials: z.number().int().nonnegative(),
+});
+export type DeleteWorkspaceResponse = z.infer<typeof deleteWorkspaceResponseSchema>;

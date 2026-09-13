@@ -2,6 +2,108 @@
 
 Newest first. One entry per landed ticket.
 
+## Workspaces you can come back to: home, switching, archive, delete, cleanup
+**Landed:** 2026-09-13 · contracts, server, frontend, one migration
+**Affects:** everyone. **Action required:** run `npm run db:migrate` (adds
+`0013_workspace_lifecycle.sql`). Nothing else; no route or contract was removed.
+
+Accounts gave a workspace an owner. This gives a person their workspaces back.
+
+**First, the question this started from: were workspaces persistent already?**
+Yes, and always have been — a workspace is a Postgres row and has been since
+`0002`. What was never persistent was the *way back to one*: before accounts
+the only route in was the URL in someone's chat log plus an owner key in one
+browser's localStorage, so a cleared browser or a lost link lost the room. What
+is added here is the rest of a workspace's life — finding it, putting it away,
+and getting rid of it.
+
+**The blocker found on the way in, and fixed first.** `LiveWorkspace` computed
+`isOwner` as `workspace.isOwner && !!session.getOwnerKey(id)`. An
+account-created workspace has no owner key at all (`0012` made it null on
+purpose), so that condition was never true: **the person who created a
+workspace could not open its settings, see the member list, or invite anybody.**
+Ownership now comes from `workspace.access`, which the server resolves from
+membership on the same read. The flag stays advisory — the authorization hook
+re-checks every owner route.
+
+**A home page.** `/` is now the account's workspaces rather than a create form:
+the ones you belong to (ordered by activity, with role, people and open tasks),
+the ones you have only opened by link, and the archived ones, each in their own
+section, with "pick up where you left off" from `preferences.lastWorkspace`.
+Creating moved to `/new`. Signed out, `/` is still the landing page, and its
+right-hand column offers an account instead of a form that could only fail.
+
+**"Workspaces I have the link to" are now recoverable.** `workspace_visits`
+records that an account opened a workspace, throttled to one write per five
+minutes. **It grants nothing** — authorization still reads `workspace_members`
+and only that, a link holder stays a viewer, and the row is private to the
+person it belongs to (RLS, per `0004`'s rule that new tables do not inherit it).
+It restores the address, never the access.
+
+**Archive and restore**, which is what `workspaces.status` has been waiting for
+since `0001` with no route that ever set it. An archived workspace reads
+normally and refuses every write, decided in `auth/authorize.ts` alongside
+membership so a route added later is covered before anyone remembers — with
+three exceptions listed there: restore, delete, and leave. New error code
+`WORKSPACE_ARCHIVED` (409, not 403: the request is refused by the state of the
+thing, not by who is asking).
+
+**Delete, and leave.** `DELETE /api/workspaces/:w` removes the workspace and
+everything cascading from it, plus its repository and its material objects;
+`confirmName` must match the workspace's name, checked server-side. `DELETE
+/api/workspaces/:w/members/me` lets anyone leave except the last owner. Both
+are new; before this nothing could be removed at all.
+
+**`last_activity_at`, and where it is written.** Touched by the event pump,
+after the producing transaction commits — **not** in `appendEvent`. That is a
+lock-ordering decision: this codebase takes workspace → task → run → budget
+(`reviews/service.ts` takes the workspace row first and says so), and
+`appendEvent` runs with the task row already locked, so writing the workspace
+row from there would invert the order against guidance edits and Apply. Both
+paths read correctly alone and deadlock together. Throttled in the WHERE
+clause, so a busy workspace does not rewrite the row per event.
+
+**A garbage collector**, `npm run workspace:gc --workspace @app/server`.
+Reports database size against the 500 MB free-plan limit and sorts workspaces
+into `orphaned` (pre-accounts, unclaimed, memberless), `empty`, and `archived`,
+plus repository directories with no workspace row. **It changes nothing without
+`--delete`**, because which workspaces are junk is a person's call. A workspace
+with members and content is never listed at any age.
+
+**Two bugs fixed in passing, both pre-existing:**
+- **`AuthProvider` requested the session in an infinite loop.** `api = new
+  AuthApi(supabaseConfig())` as a default parameter constructs a new instance
+  per render; `refresh` is a `useCallback` keyed on it, so a new instance meant
+  a new `refresh`, which re-ran the effect that called it, which set state.
+  Measured at 300+ `GET /api/auth/session` in a few seconds on one page load.
+  Invisible in tests (all of them pass a stable `api`) and in the browser
+  (every request succeeded). Memoized; now two per load, which is React's
+  development double-invoke.
+- **The workspace read was keyed on the browser session's revision**, left over
+  from when the request carried an owner key from storage. It carries no
+  per-browser secret now, so renaming yourself refetched the whole workspace.
+
+**One display name, not two.** Signing in adopts the account's name for
+presence, document cursors, discussion authorship and upload attribution, via
+one call on `BrowserSession` rather than eleven call sites learning about
+accounts. §1.3 is unchanged: a display name is still never authority — it has
+simply stopped contradicting the account the server already verified.
+
+**A thing that was checked and turned out to be a non-issue**, recorded because
+the reasoning is not obvious: `agent_questions.answer_entry_id` is ON DELETE
+RESTRICT and looked certain to block deleting any workspace with an answered
+agent question. It does not — the cascade removes the question before the
+RESTRICT check runs, confirmed directly for both `delete from workspaces` and
+`delete from tasks`. The constraint is left exactly as `0002` wrote it, and
+there is a test so a change to that chain fails a test rather than a deletion.
+
+Verified: `npm run build`; server `unit` (121), `schema` (49),
+`workspace-lifecycle` (13), `workspaces`, `permissions`, `events`, plus
+`integration`, `tasks`, `inbox`, `briefings`, `runs`, `reviews` (115); web 141
+across 12 files. Driven end to end in a browser against the live database: home
+list, switcher, archive, archived-write refusal, delete with name confirmation,
+and the visited list — then every row it created was removed again.
+
 ## Inbox — actionable items across the workspace
 **Landed:** 2026-09-13 (not yet merged) · contracts, server, frontend
 **Affects:** everyone. **Action required:** none (no migration).

@@ -13,6 +13,7 @@ import type { Material } from './material.js';
 import type { Review, ReviewAssessment, ReviewSource } from './review.js';
 import type { PostedTask, TaskDetail } from './task.js';
 import type { Workspace } from './workspace.js';
+import type { WorkspaceStatus } from './enums.js';
 import type { TaskEventType } from './events.js';
 import type { GitReadTarget } from './git.js';
 import { ApiError } from './errors.js';
@@ -66,6 +67,28 @@ export interface WorkspaceService {
     workspaceId: string,
     input: { name?: string; purpose?: string; guidance?: string },
   ): Promise<Workspace>;
+
+  /**
+   * Archive or restore. Reversible, and keeps everything.
+   *
+   * An archived workspace refuses writes through the same gate that refuses a
+   * viewer's, drops out of the switcher, and stays fully readable.
+   */
+  setStatus(workspaceId: string, status: WorkspaceStatus): Promise<Workspace>;
+
+  /**
+   * Delete the workspace and everything in it. Irreversible.
+   *
+   * `confirmName` must match the workspace's current name. That is not the
+   * authorization -- the gate already established the caller is an owner -- it
+   * is the difference between a deliberate act and a misplaced click.
+   */
+  destroy(input: { workspaceId: string; confirmName: string }): Promise<{
+    workspaceId: string;
+    name: string;
+    deletedTasks: number;
+    deletedMaterials: number;
+  }>;
 }
 
 export interface TaskService {
@@ -381,13 +404,36 @@ export class NullReviewAssessmentService implements ReviewAssessmentService {
  */
 export interface WorkspaceLifecycleHook {
   onWorkspaceCreated(input: { workspaceId: string }): void;
+
+  /**
+   * The workspace row and everything cascading from it is already gone.
+   *
+   * Called after the deleting transaction commits, for the same reason
+   * `onWorkspaceCreated` is called after the creating one: the database is the
+   * record, and a repository that fails to be removed is disk to reclaim, not
+   * a reason to refuse the deletion the person asked for.
+   *
+   * Consequences worth stating, because they are what makes this safe to call
+   * from Role B's service:
+   *  - **Idempotent.** May be called for a workspace with no repository, or
+   *    twice after a retry.
+   *  - **Must not throw into the caller.** A failure is logged and the
+   *    deletion still succeeds; the orphaned directory is then the garbage
+   *    collector's problem, which is exactly what it is for.
+   */
+  onWorkspaceDeleted(input: { workspaceId: string }): void;
 }
 
 /** Stand-in used until D01 lands, and in tests. Records calls for assertions. */
 export class NullWorkspaceLifecycleHook implements WorkspaceLifecycleHook {
   readonly created: string[] = [];
+  readonly deleted: string[] = [];
 
   onWorkspaceCreated(input: { workspaceId: string }): void {
     this.created.push(input.workspaceId);
+  }
+
+  onWorkspaceDeleted(input: { workspaceId: string }): void {
+    this.deleted.push(input.workspaceId);
   }
 }
