@@ -103,12 +103,22 @@ it('serves the app and carries live drafts and materials through parallel agents
     expect((await api(`${base}/history`)).entries).toHaveLength(1);
     const budgets = await db.db.selectFrom('task_agent_budgets').selectAll().where('task_id', '=', task.id).execute();
     expect(budgets.every((budget) => budget.reserved_tokens === 0 && budget.consumed_tokens > 0)).toBe(true);
+    // A completed task can run again in the same process after its rooms closed.
+    await db.db.updateTable('tasks').set({ status: 'completed' }).where('id', '=', task.id).execute();
+    await api(`${taskPath}/start`, { expectedVersion: (await api(taskPath)).version, clientRequestId: randomUUID() }, undefined, 202);
+    await expect.poll(async () => ['ready_for_review', 'incomplete', 'interrupted'].includes((await api(taskPath)).status), { timeout: 120000 }).toBe(true);
+    expect((await api(taskPath)).status, JSON.stringify(adapter.requests.flatMap((r) => r.messages.flatMap((m) => m.role === 'tool' ? m.results.filter((result) => result.result.error) : [])))).toBe('ready_for_review');
+    const nextReview = await api(`${taskPath}/review`, {});
+    expect(nextReview.review.id).not.toBe(review.review.id);
+    await api(`${base}/reviews/${nextReview.review.id}/apply`, { candidateSha: nextReview.candidateSha }, ws.ownerKey);
+    expect(editor.state).toBe('closed');
+    const rerunApproved = await api(`${base}/files`);
     for (const client of clients) client.destroy(); clients.length = 0;
     await runtime.close();
     runtime = await startRuntime({ ...options, config: { ...config, bootId: randomUUID() } });
-    expect((await api(`${base}/files`)).mainSha).toBe(approved.mainSha);
-    expect((await api(`${base}/history`)).entries).toHaveLength(1);
-    expect((await api(taskPath)).status).toBe('completed');
+    expect((await api(`${base}/files`)).mainSha).toBe(rerunApproved.mainSha);
+    expect((await api(`${base}/history`)).entries).toHaveLength(2);
+    expect((await api(taskPath)).status).toBe('awaiting_confirmation');
     await api(`${taskPath}/drafts`, { path: 'documents/new.md' }, undefined, 409);
     const reopened = await api(`${base}/drafts/open`, { path: 'documents/result.md', guestLabel: 'Sweep' }, undefined, 201);
     const restored = peer(ws.workspaceId, reopened.taskId, reopened.draftFile);

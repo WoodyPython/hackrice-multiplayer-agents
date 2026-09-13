@@ -1,3 +1,5 @@
+import { ownerKeyMatches } from '../workspaces/owner-key.js';
+import { randomUUID } from 'node:crypto';
 import type { Transaction } from 'kysely';
 import {
   ACTIVE_RUN_STATUSES,
@@ -219,6 +221,7 @@ export class PgTaskService {
       }
 
       assertTransition(task.status, 'planning', 'start this task');
+      await invalidateTaskReviews(trx, taskId, `start:${input.clientRequestId}`);
       const retryRecord = retry ? await prepareRetry(trx, workspaceId, taskId, retry) : undefined;
 
       const workspace = await trx
@@ -314,6 +317,59 @@ export class PgTaskService {
       clientRequestId: input.clientRequestId,
     }, { ...input, savedOutputs: input.savedOutputs ?? [] });
     return { run: started.run, taskStatus: started.taskStatus, idempotentReplay: started.idempotentReplay };
+  }
+
+  /** Move settled work without changing published files or reviving an old run. */
+  async move(workspaceId: string, taskId: string, input: {
+    expectedStatus: TaskDetail['status'];
+    status: 'posted' | 'ready_for_review' | 'awaiting_confirmation' | 'completed' | 'unmark';
+  }, ownerKey?: string): Promise<TaskDetail> {
+    return this.deps.db.transaction().execute(async (trx) => {
+      const task = await this.lockTask(trx, workspaceId, taskId);
+      const workspace = await trx.selectFrom('workspaces').select('owner_key_hash')
+        .where('id', '=', workspaceId).executeTakeFirstOrThrow();
+      const completionChange = input.status === 'completed' || input.status === 'unmark';
+      if (!completionChange && !ownerKeyMatches(ownerKey, workspace.owner_key_hash)) throw new ApiError('OWNER_KEY_REQUIRED');
+      await assertTaskMutable(trx, taskId);
+      if (task.active_run_id || task.status !== input.expectedStatus) {
+        throw new ApiError('INVALID_STATE', 'This task changed. Reload before moving it.');
+      }
+      let target: TaskDetail['status'];
+      if (input.status === 'unmark') {
+        if (task.status !== 'completed') throw new ApiError('INVALID_STATE');
+        const last = await trx.selectFrom('task_events').select('payload')
+          .where('task_id', '=', taskId).where('type', '=', 'task.status_changed')
+          .orderBy('id', 'desc').executeTakeFirst();
+        const previous = last?.payload.to === 'completed' ? last.payload.from : undefined;
+        const restorable = ['posted', 'ready_for_review', 'awaiting_confirmation', 'conflict', 'incomplete', 'interrupted', 'canceled'];
+        if (typeof previous === 'string' && restorable.includes(previous)) target = previous as TaskDetail['status'];
+        else {
+          const applied = await trx.selectFrom('reviews').select('id').where('task_id', '=', taskId)
+            .where('status', '=', 'applied').executeTakeFirst();
+          target = applied ? 'awaiting_confirmation' : 'posted';
+        }
+      } else target = input.status;
+      const moves: Partial<Record<TaskDetail['status'], readonly string[]>> = {
+        awaiting_confirmation: ['completed', 'posted', 'ready_for_review'],
+        completed: ['awaiting_confirmation', 'posted', 'ready_for_review'],
+        ready_for_review: ['posted'], conflict: ['posted'], incomplete: ['posted'],
+        interrupted: ['posted'], canceled: ['posted'],
+      };
+      if (completionChange) {
+        if (input.status === 'completed' && ['planning', 'working', 'needs_input', 'completed'].includes(task.status)) throw new ApiError('INVALID_STATE');
+      } else {
+        if (!moves[task.status]?.includes(target)) throw new ApiError('INVALID_STATE');
+        assertTransition(task.status, target, 'move this task');
+        await invalidateTaskReviews(trx, taskId, `move:${randomUUID()}`);
+      }
+      try {
+        await trx.updateTable('tasks').set({ status: target, updated_at: new Date() })
+          .where('id', '=', taskId).execute();
+      } catch (error) { throw manualEditPathTaken(error, task.manual_source_path); }
+      await appendEvent(trx, { workspaceId, taskId, type: 'task.status_changed',
+        eventKey: `move:${randomUUID()}`, payload: { from: task.status, to: target } });
+      return this.loadDetail(trx, workspaceId, taskId);
+    });
   }
 
   async savedOutputs(workspaceId: string, taskId: string) {

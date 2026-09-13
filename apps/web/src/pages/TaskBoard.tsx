@@ -99,7 +99,7 @@ export function TaskBoard({
   const filtered = visibleTasks.filter(
     (task) =>
       task.title.toLowerCase().includes(query.toLowerCase()) &&
-      (status === "all" || task.status === status),
+      (status === "all" || task.status === status || (status === "ready_for_review" && task.status === "awaiting_confirmation")),
   );
   const filtering = query !== "" || status !== "all";
 
@@ -125,7 +125,7 @@ export function TaskBoard({
             Task board
           </h2>
           <Badge size="sm" className="tabular-nums">
-            {visibleTasks.length}
+            {filtered.length}
           </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -163,7 +163,7 @@ export function TaskBoard({
               className="h-9 pl-8.5 text-[12.5px]"
             >
               <option value="all">All statuses</option>
-              {TASK_STATUSES.map((value) => (
+              {TASK_STATUSES.filter((value) => value !== "awaiting_confirmation").map((value) => (
                 <option value={value} key={value}>
                   {statusPresentation[value].label}
                 </option>
@@ -209,8 +209,8 @@ export function TaskBoard({
         </EmptyState>
       ) : (
         <div className="-mx-4 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0">
-          <div className="grid min-w-[900px] grid-cols-5 gap-4 lg:min-w-0">
-            {groupTasks(filtered).map((column) => {
+          <div className={cn("grid gap-4", status !== "all" && "max-w-sm")} style={{ gridTemplateColumns: `repeat(${status === "all" ? 5 : 1}, minmax(210px, 1fr))` }}>
+            {groupTasks(filtered).filter((column) => status === "all" || column.tasks.length > 0).map((column) => {
               const meta = columnPresentation[column.name];
               return (
                 <section
@@ -223,7 +223,7 @@ export function TaskBoard({
                     title={meta.hint}
                   >
                     <Dot tone={meta.tone} />
-                    <span className="truncate">{column.name}</span>
+                    <span>{column.name}</span>
                     <Badge
                       size="sm"
                       className="ml-auto shrink-0 tabular-nums"
@@ -261,8 +261,8 @@ export function TaskBoard({
       )}
 
       <p className="mt-6 text-[11.5px] text-muted-foreground">
-        Tasks move as the work progresses. Every change gets a review before it
-        reaches the approved files.
+        Open a task to mark it complete or unmark it. Anyone in the workspace can
+        update completion, and you can run tasks again whenever you need to.
       </p>
     </>
   );

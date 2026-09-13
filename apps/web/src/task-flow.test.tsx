@@ -1074,7 +1074,7 @@ describe("deep links", () => {
     const { transport } = server({
       [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [] }),
     });
-    open(`/w/${workspaceId}/tasks/${taskId}?tab=Changes`, transport);
+    open(`/w/${workspaceId}/tasks/${taskId}?tab=Changes&from=history`, transport);
 
     // Request review says it will show you the review; this is what makes that
     // true rather than landing on the task and leaving the reader to hunt.
@@ -1248,7 +1248,7 @@ describe("history", () => {
     });
     // §4.1: "Applied changes and associated tasks" -- the task is half of it.
     expect(link.getAttribute("href")).toBe(
-      `/w/${workspaceId}/tasks/${taskId}?tab=Changes`,
+      `/w/${workspaceId}/tasks/${taskId}?tab=Changes&from=history`,
     );
     expect(screen.getByText("Applied")).toBeTruthy();
   });
@@ -1499,4 +1499,70 @@ describe("A08 cross-flow integration", () => {
       await screen.findByText(/owner access cannot be recovered/i),
     ).toBeTruthy();
   });
+});
+
+
+describe("finishing and rerunning tasks", () => {
+  it.each(["completed", "ready_for_review", "awaiting_confirmation"])("can rerun and stop %s work", async (initialStatus) => {
+    let current = { ...task, status: initialStatus, activeRunId: null as string | null };
+    const runId = "70000000-0000-4000-8000-000000000ff1";
+    const { transport, calls } = server({
+      [`GET /tasks/${taskId}`]: () => json(current),
+      [`POST /tasks/${taskId}/start`]: () => {
+        current = { ...current, status: "planning", activeRunId: runId };
+        return json({ runId, attempt: 2, taskStatus: "planning", idempotentReplay: false }, 202);
+      },
+      [`POST /tasks/${taskId}/cancel`]: () => {
+        current = { ...current, status: "canceled", activeRunId: null };
+        return json(current);
+      },
+    });
+    const user = userEvent.setup();
+    open(`/w/${workspaceId}/tasks/${taskId}`, transport);
+    await user.click(await screen.findByRole("button", { name: "Run again" }));
+    await user.click(await screen.findByRole("button", { name: "Stop this attempt" }));
+    await screen.findByRole("button", { name: "Run again" });
+    expect(calls.some((call) => call.url.endsWith("/cancel"))).toBe(true);
+  });
+
+  it.each(["posted", "ready_for_review", "awaiting_confirmation"])("lets a contributor complete and unmark a %s task", async (initialStatus) => {
+    let current = { ...task, status: initialStatus };
+    const session = new BrowserSession();
+    const { transport } = server({
+      "GET ": () => json({ ...workspace, isOwner: false }),
+      [`GET /tasks/${taskId}`]: () => json(current),
+      [`PATCH /tasks/${taskId}/status`]: (call) => {
+        const body = call.body as { status: string; expectedStatus: string };
+        expect(body.expectedStatus).toBe(current.status);
+        current = { ...current, status: body.status === "unmark" ? initialStatus : body.status };
+        return json(current);
+      },
+    });
+    render(<MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
+      <App session={session} api={new WorkspaceApi(session, transport)} />
+    </MemoryRouter>);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Mark as Complete" }));
+    await user.click(await screen.findByRole("button", { name: "Unmark as Complete" }));
+    await screen.findByRole("button", { name: "Mark as Complete" });
+    expect(current.status).toBe(initialStatus);
+  });
+
+  it("returns task details to History", async () => {
+    const { transport } = server();
+    open(`/w/${workspaceId}/tasks/${taskId}?from=history`, transport);
+    expect((await screen.findByRole("link", { name: "Back to history" })).getAttribute("href"))
+      .toBe(`/w/${workspaceId}/history`);
+  });
+});
+
+
+it("offers a new review for rerun results while preserving the applied review", async () => {
+  const { user, calls } = await openChanges({
+    [`GET /tasks/${taskId}`]: () => json({ ...task, status: "ready_for_review" }),
+    [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow({ status: "applied" })] }),
+    [`POST /tasks/${taskId}/review`]: () => json(reviewDetail()),
+  });
+  await user.click(await screen.findByRole("button", { name: "Prepare new review" }));
+  expect(calls.some((call) => call.method === "POST" && call.url.endsWith("/review"))).toBe(true);
 });

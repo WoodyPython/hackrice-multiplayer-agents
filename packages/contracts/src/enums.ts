@@ -24,6 +24,7 @@ export const TASK_STATUSES = [
   'working',
   'needs_input',
   'ready_for_review',
+  'awaiting_confirmation',
   'conflict',
   'incomplete',
   'interrupted',
@@ -34,11 +35,11 @@ export const taskStatusSchema = z.enum(TASK_STATUSES);
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
 
 /**
- * Terminal means "this task will never do more work".
+ * Settled task statuses. An explicit action may reopen or rerun these tasks.
  *
  * `incomplete` and `interrupted` are deliberately NOT terminal: section 2.4
- * offers manual retry from both, and the manual-edit uniqueness index keys on
- * this same set, so a stalled editing task must keep owning its file.
+ * offers manual retry from both, so a stalled editing task keeps its file.
+ * Applied tasks awaiting confirmation also release their closed drafts.
  */
 export const TERMINAL_TASK_STATUSES = ['completed', 'canceled'] as const;
 export type TerminalTaskStatus = (typeof TERMINAL_TASK_STATUSES)[number];
@@ -49,6 +50,9 @@ export function isTerminalTaskStatus(status: TaskStatus): boolean {
 
 /** States from which a fresh Start is allowed to create a new attempt. */
 export const STARTABLE_TASK_STATUSES = [
+  'ready_for_review',
+  'awaiting_confirmation',
+  'completed',
   'posted',
   'incomplete',
   'interrupted',

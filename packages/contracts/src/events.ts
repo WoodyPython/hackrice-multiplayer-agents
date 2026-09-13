@@ -10,6 +10,7 @@ import { runIdSchema, taskIdSchema, timestampSchema, workspaceIdSchema } from '.
  */
 export const TASK_EVENT_TYPES = [
   'task.posted',
+  'task.status_changed',
   'discussion.posted',
   'task.started',
   'task.requirements_changed',

@@ -42,7 +42,7 @@ export class PgDraftStore {
       const task = await db.selectFrom('tasks').select(['id', 'status'])
         .where('id', '=', taskId).where('workspace_id', '=', workspaceId).forUpdate().executeTakeFirst();
       if (!task) throw new ApiError('TASK_NOT_FOUND');
-      if (task.status === 'completed') throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+      if ((task.status === 'completed' || task.status === 'awaiting_confirmation')) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
       await assertTaskMutable(db, taskId);
       const store = new PgDraftStore({ db });
       const existing = await store.findActive(taskId, path);
@@ -462,7 +462,7 @@ export class PgDraftStore {
       .where('workspace_id', '=', workspaceId)
       .where('kind', '=', 'manual_edit')
       .where('manual_source_path', '=', path)
-      .where('status', 'not in', ['completed', 'canceled'])
+      .where('status', 'not in', ['completed', 'canceled', 'awaiting_confirmation'])
       .executeTakeFirst();
     return row?.id;
   }

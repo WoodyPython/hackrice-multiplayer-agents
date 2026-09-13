@@ -94,7 +94,7 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     for (const result of results) expect(result.statusCode, result.body).toBe(200);
     expect(results.map((r) => r.json().alreadyApplied).sort()).toEqual([false, true, true]);
     expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(review.candidateSha);
-    expect((await db.db.selectFrom('tasks').select('status').where('id', '=', taskId).executeTakeFirstOrThrow()).status).toBe('completed');
+    expect((await db.db.selectFrom('tasks').select('status').where('id', '=', taskId).executeTakeFirstOrThrow()).status).toBe('awaiting_confirmation');
     expect((await new PgReviewStore({ db: db.db }).read(review.review.id))!.status).toBe('applied');
     expect(await db.db.selectFrom('apply_operations').select('id').where('review_id', '=', review.review.id).execute()).toHaveLength(1);
     expect(await db.db.selectFrom('task_events').select('id').where('task_id', '=', taskId).where('type', '=', 'task.applied').execute()).toHaveLength(1);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Plus, TriangleAlert } from "lucide-react";
 import type { TaskSummary, Workspace } from "@app/contracts";
 import { useBrowser } from "../browser-context";
@@ -13,18 +13,14 @@ import { TaskBoard } from "./TaskBoard";
 /**
  * The live board (design §4.3).
  *
- * Placement is state-derived and nothing here can move a card: §4.3 is explicit
- * that "dragging a card cannot mark work approved", so there is no drag
- * affordance at all rather than one that is refused on drop.
+ * Owners move settled tasks from task details; live runs update their own status.
  *
  * Refresh hints fetch authoritative state; polling repairs missed hints.
  */
 export function TaskBoardPage({
   workspace,
-  share,
 }: {
   workspace: Workspace;
-  share: ReactNode;
 }) {
   const { api } = useBrowser();
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
@@ -87,7 +83,6 @@ export function TaskBoardPage({
             <Plus aria-hidden="true" />
             Post a task
           </ButtonLink>
-          {share}
         </>
       }
     />

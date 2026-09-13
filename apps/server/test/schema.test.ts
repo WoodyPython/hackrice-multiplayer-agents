@@ -63,6 +63,8 @@ describe('migrations', () => {
       '0006_agent_write_guard.sql',
       '0007_stale_building_reviews.sql',
       '0008_security_hardening.sql',
+      '0009_task_confirmation.sql',
+      '0010_confirmation_file_ownership.sql',
     ]);
   });
 
@@ -147,9 +149,9 @@ describe('partial index predicates match the contracts package', () => {
     }
   });
 
-  it('tasks_manual_active_uq excludes exactly TERMINAL_TASK_STATUSES', async () => {
+  it('tasks_manual_active_uq releases canceled and applied tasks', async () => {
     const def = await indexPredicate('tasks_manual_active_uq');
-    for (const status of TERMINAL_TASK_STATUSES) {
+    for (const status of [...TERMINAL_TASK_STATUSES, 'awaiting_confirmation']) {
       expect(def, `tasks_manual_active_uq is missing ${status}`).toContain(status);
     }
   });
@@ -417,7 +419,7 @@ describe('manual-edit task uniqueness', () => {
     );
   });
 
-  it.each(TERMINAL_TASK_STATUSES)(
+  it.each([...TERMINAL_TASK_STATUSES, 'awaiting_confirmation'] as const)(
     'allows a new editing task once the previous one is %s',
     async (status) => {
       const ws = await insertWorkspace(db);

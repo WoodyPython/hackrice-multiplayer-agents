@@ -323,6 +323,23 @@ function TaskDetailState({
   const action = (
     <div className="flex max-w-xs flex-col items-stretch gap-2 sm:items-end">
       <div className="flex flex-wrap justify-end gap-2">
+        {!running && (
+          <Button variant={task.status === "completed" ? "outline" : "secondary"} disabled={busy}
+            onClick={() => void act(async () => setTask(await api.moveTask(workspaceId, task.id, task.status,
+              task.status === "completed" ? "unmark" : "completed")))}>
+            {task.status === "completed" ? "Unmark as Complete" : "Mark as Complete"}
+          </Button>
+        )}
+        {isOwner && !running && task.status !== "posted" && (
+          <select aria-label="Move task" value="" disabled={busy}
+            className="h-9 max-w-full rounded-lg border border-border bg-card px-3 text-[12px]"
+            onChange={(event) => { if (event.target.value) { const target = event.target.value as "posted" | "ready_for_review";
+              void act(async () => setTask(await api.moveTask(workspaceId, task.id, task.status, target))); } }}>
+            <option value="" disabled>Move to...</option>
+            <option value="posted">Posted</option>
+            {(task.status === "completed" || task.status === "awaiting_confirmation") && <option value="ready_for_review">In review</option>}
+          </select>
+        )}
         {startable && (
           <Button
             variant="primary"
@@ -343,7 +360,7 @@ function TaskDetailState({
             }
           >
             <Play aria-hidden="true" />
-            {busy ? "Starting…" : "Start task"}
+            {busy ? "Starting…" : task.status === "posted" ? "Start task" : "Run again"}
           </Button>
         )}
         {running && (
@@ -389,7 +406,7 @@ function TaskDetailState({
       </div>
       {startable && (
         <small className="text-[11px] leading-relaxed text-muted-foreground sm:text-right">
-          Starting freezes the requirements and discussion as context.
+          Each run starts with the current brief and conversation.
         </small>
       )}
       {actionError && (
@@ -559,6 +576,7 @@ function TaskDetailState({
     <TaskDetail
       task={task}
       base={base}
+      backTo={params.get("from") === "history" ? `${base}/history` : undefined}
       options={options}
       banner={
         <>
@@ -636,7 +654,7 @@ function TaskDetailState({
           : undefined
       }
       onEditRequirements={
-        task.status === "completed" ? undefined : () => setEditing(task)
+        ["completed", "awaiting_confirmation"].includes(task.status) ? undefined : () => setEditing(task)
       }
     />
   );

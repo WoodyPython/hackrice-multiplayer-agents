@@ -2,7 +2,17 @@
 
 Anonymous collaborators create tasks, discuss requirements, and co-edit drafts.
 An explicit **Start** action freezes a snapshot and dispatches parallel Gemini
-agents. The workspace creator reviews the exact combined result and applies it.
+agents. The workspace creator reviews the result and applies the changes.
+Anyone can mark a task complete from its details, or unmark it to return it
+to its previous status. Applied changes stay in Review until marked complete.
+Settled tasks can move back to Posted or In review from
+task details. Agent tasks can run again from review or completed;
+any running attempt can be stopped.
+
+Use the top bar to copy the workspace link or switch between light and dark.
+The first visit follows your system theme until you choose one. Board filters
+show only matching tasks and columns, and History details link back to History.
+Live updates include a short polling fallback for missed events.
 
 **New here? Start with [SETUP.md](SETUP.md).** Working alongside other roles? [docs/](docs) has the changelog, the per-role interface notes, and the handoff procedure.
 

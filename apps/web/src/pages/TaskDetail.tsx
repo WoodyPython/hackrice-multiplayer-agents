@@ -43,9 +43,11 @@ export function TaskDetail({
   renderTab,
   onEditRequirements,
   initialTab,
+  backTo,
 }: {
   task: Task;
   base: string;
+  backTo?: string;
   options: TaskInputOption[];
   action?: ReactNode;
   /** Run-level explanation (§4.7), shown above the panels rather than in a tab. */
@@ -66,7 +68,7 @@ export function TaskDetail({
 
   return (
     <>
-      <BackLink to={base}>All tasks</BackLink>
+      <BackLink to={backTo ?? base}>{backTo ? "Back to history" : "All tasks"}</BackLink>
 
       <PageHeading
         badge={

@@ -55,7 +55,7 @@ export function History({ workspaceId }: { workspaceId: string }) {
       <PageHeading
         eyebrow="A record of progress"
         title="History"
-        description="Changes that were applied to the approved files, newest first."
+        description="See what changed and how it went, newest first."
       />
 
       {failure && (
@@ -102,7 +102,7 @@ export function History({ workspaceId }: { workspaceId: string }) {
                 <div className="rounded-xl border border-border bg-card p-4 shadow-xs">
                   <div className="flex flex-wrap items-center gap-2.5">
                     <Link
-                      to={`${base}/tasks/${entry.taskId}?tab=Changes`}
+                      to={`${base}/tasks/${entry.taskId}?tab=Changes&from=history`}
                       className="min-w-0 text-[13.5px] font-semibold tracking-tight underline-offset-2 hover:underline"
                     >
                       {entry.taskTitle}

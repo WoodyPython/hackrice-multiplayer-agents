@@ -25,18 +25,18 @@ import { Eyebrow } from "../components/ui/misc";
 const PILLARS = [
   {
     icon: MessagesSquare,
-    title: "Agree before you spend",
+    title: "Talk it through first",
     body: "Posting a task opens a discussion. No agent runs, and nothing is spent, until someone presses Start.",
   },
   {
     icon: GitBranch,
     title: "Parallel agents, one result",
-    body: "Assignments fan out across independent files, then integrate into a single candidate you can read.",
+    body: "Agents can work on different files at the same time. Their changes come together for you to review.",
   },
   {
     icon: ShieldCheck,
     title: "Nothing ships unreviewed",
-    body: "Every change lands through an explicit review. The owner sees the exact diff before it is applied.",
+    body: "Look over the changes before saving them to your workspace. Anyone can mark a task complete or unmark it later.",
   },
 ];
 

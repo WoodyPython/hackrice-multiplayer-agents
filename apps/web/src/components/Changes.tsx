@@ -107,7 +107,7 @@ export function Changes({
       }
     })();
     return () => controller.abort();
-  }, [api, task.workspaceId, task.id, nonce, staleSignal]);
+  }, [api, task.workspaceId, task.id, nonce, staleSignal, task.status, task.activeRunId]);
 
   async function act<T>(run: () => Promise<T>, commit?: (result: T) => void) {
     readEpoch.current += 1;
@@ -219,9 +219,18 @@ export function Changes({
       {current.status === "applied" && (
         <Notice role="status" title="These changes were applied">
           <p>
-            This is the record of what went onto the approved files. Nothing
-            further is needed.
+            {task.status === "awaiting_confirmation"
+              ? "Your changes are saved. Anyone can choose Mark as Complete above."
+              : "These changes are saved in your workspace. You can find them in History anytime."}
           </p>
+          {task.activeRunId === null && (task.status === "ready_for_review" || (task.kind === "manual_edit" && task.status === "posted")) && (
+            <Button disabled={busy} onClick={() => void act(() => api.prepareReview(task.workspaceId, task.id), (next) => {
+              setReviews((items) => [next.review, ...(items ?? []).filter((item) => item.id !== next.review.id)]);
+              setDetail(next);
+            })}>
+              Prepare new review
+            </Button>
+          )}
         </Notice>
       )}
 

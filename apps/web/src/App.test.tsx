@@ -194,3 +194,28 @@ describe("A01 workspace shell", () => {
     ).toBeTruthy();
   });
 });
+
+
+it("shows only completed tasks and their column when filtered", async () => {
+  const user = userEvent.setup();
+  open();
+  await user.selectOptions(screen.getByLabelText("Filter by status"), "completed");
+  expect(screen.getByRole("region", { name: "Completed" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Working" })).toBeNull();
+  expect(screen.queryByRole("link", { name: /Write the launch announcement/ })).toBeNull();
+});
+
+
+it("keeps saved changes in Review and lets demo users toggle completion", async () => {
+  const user = userEvent.setup();
+  open();
+  expect(screen.queryByRole("region", { name: "Final confirmation" })).toBeNull();
+  expect(within(screen.getByRole("region", { name: "Review" })).getByText("Give the launch checklist a final look")).toBeTruthy();
+  await user.selectOptions(screen.getByLabelText("Filter by status"), "ready_for_review");
+  expect(screen.getByText("Give the launch checklist a final look")).toBeTruthy();
+  await user.selectOptions(screen.getByLabelText("Filter by status"), "all");
+  await user.click(screen.getByRole("link", { name: /Write the launch announcement/ }));
+  await user.click(screen.getByRole("button", { name: "Mark as Complete" }));
+  await user.click(screen.getByRole("button", { name: "Unmark as Complete" }));
+  expect(screen.getByRole("button", { name: "Mark as Complete" })).toBeTruthy();
+});

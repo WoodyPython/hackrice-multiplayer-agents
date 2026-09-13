@@ -27,3 +27,5 @@ desktop.ini
 # Test/tool caches
 .vitest/
 .vite/
+
+.npm-cache/

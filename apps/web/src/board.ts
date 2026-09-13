@@ -36,7 +36,7 @@ export const statusPresentation = {
   planning: {
     column: "Working",
     label: "Planning",
-    summary: "Planning assignments",
+    summary: "Figuring out the next steps",
     tone: "info",
   },
   working: {
@@ -53,14 +53,14 @@ export const statusPresentation = {
   },
   ready_for_review: {
     column: "Review",
-    label: "Ready for review",
-    summary: "Owner review needed",
+    label: "In review",
+    summary: "Ready for you to take a look",
     tone: "review",
   },
   conflict: {
     column: "Needs attention",
     label: "Conflict",
-    summary: "Overlapping edits need resolution",
+    summary: "Some edits overlap. Take a look.",
     tone: "warn",
   },
   incomplete: {
@@ -72,7 +72,7 @@ export const statusPresentation = {
   interrupted: {
     column: "Needs attention",
     label: "Interrupted",
-    summary: "Checkpoint preserved for retry",
+    summary: "Work saved. Ready to try again.",
     tone: "warn",
   },
   canceled: {
@@ -81,10 +81,16 @@ export const statusPresentation = {
     summary: "Stopped — saved work remains available",
     tone: "warn",
   },
+  awaiting_confirmation: {
+    column: "Review",
+    label: "In review",
+    summary: "Changes are saved. Mark as complete when you are happy.",
+    tone: "review",
+  },
   completed: {
     column: "Completed",
     label: "Completed",
-    summary: "Reviewed and complete",
+    summary: "All done. You can reopen this anytime.",
     tone: "done",
   },
 } satisfies Record<
@@ -110,9 +116,9 @@ export function groupTasks(tasks: TaskSummary[]) {
 export const columnPresentation = {
   Posted: { tone: "neutral", hint: "Waiting to be started" },
   Working: { tone: "info", hint: "Agents are running" },
-  "Needs attention": { tone: "warn", hint: "Blocked on a person" },
+  "Needs attention": { tone: "warn", hint: "Could use a hand" },
   Review: { tone: "review", hint: "Ready to be read" },
-  Completed: { tone: "done", hint: "Applied to the approved files" },
+  Completed: { tone: "done", hint: "Marked complete by the team" },
 } satisfies Record<(typeof columns)[number], { tone: Tone; hint: string }>;
 
 /**
@@ -132,7 +138,7 @@ const TONES: Record<string, Tone> = {
   dispatched: "info",
   pending: "info",
   queued: "info",
-  // Blocked on a person.
+  // Could use a hand.
   needs_input: "warn",
   conflict: "warn",
   incomplete: "warn",

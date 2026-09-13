@@ -56,7 +56,7 @@ const demoTabCopy: Record<TaskTab, readonly [string, string]> = {
 import { useGuest } from "./browser-context";
 import { GuestNameControl } from "./components/GuestNameControl";
 
-function TaskRoute({ tasks, base }: { tasks: Task[]; base: string }) {
+function TaskRoute({ tasks, base, onToggleComplete }: { tasks: Task[]; base: string; onToggleComplete: (task: Task) => void }) {
   const { taskId } = useParams();
   const task = tasks.find((item) => item.id === taskId);
   return task ? (
@@ -65,8 +65,11 @@ function TaskRoute({ tasks, base }: { tasks: Task[]; base: string }) {
       task={task}
       base={base}
       options={inputOptions}
-      action={
-        task.kind === "agent_task" &&
+      action={<div className="flex max-w-xs flex-col items-end gap-2">
+        {task.activeRunId === null && <Button onClick={() => onToggleComplete(task)}>
+          {task.status === "completed" ? "Unmark as Complete" : "Mark as Complete"}
+        </Button>}
+        {task.kind === "agent_task" &&
         task.activeRunId === null &&
         isStartableTaskStatus(task.status) ? (
           <div className="flex max-w-xs flex-col items-stretch gap-2 sm:items-end">
@@ -81,8 +84,8 @@ function TaskRoute({ tasks, base }: { tasks: Task[]; base: string }) {
               Execution is not connected in this preview.
             </small>
           </div>
-        ) : undefined
-      }
+        ) : undefined}
+      </div>}
       renderTab={(tab) => (
         <EmptyState title={demoTabCopy[tab][0]}>
           {demoTabCopy[tab][1]}
@@ -109,6 +112,13 @@ function WorkspaceShell() {
   const guest = useGuest();
   const { workspaceId } = useParams();
   const [tasks, setTasks] = useState(initialTasks);
+  const [previousStatuses, setPreviousStatuses] = useState<Record<string, Task['status']>>({});
+  const toggleComplete = (task: Task) => {
+    if (task.status !== "completed") setPreviousStatuses((old) => ({ ...old, [task.id]: task.status }));
+    setTasks((old) => old.map((item) => item.id === task.id ? { ...item,
+      status: item.status === "completed" ? previousStatuses[item.id] ?? "ready_for_review" : "completed",
+    } : item));
+  };
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -251,7 +261,7 @@ function WorkspaceShell() {
           />
           <Route
             path="tasks/:taskId"
-            element={<TaskRoute tasks={tasks} base={base} />}
+            element={<TaskRoute tasks={tasks} base={base} onToggleComplete={toggleComplete} />}
           />
           <Route
             path="files"

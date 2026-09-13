@@ -113,6 +113,15 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
     room.destroy();
   }
 
+  /** Called under the task gate. Old rooms stay closed; only new work is admitted. */
+  private async admitReopenedTask(workspaceId: string, taskId: string): Promise<void> {
+    if (!this.closedTasks.has(taskId)) return;
+    if (!this.captureDeps) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+    await this.captureDeps.checkpoints.requireTask(workspaceId, taskId);
+    await this.assertWritable?.(taskId);
+    this.closedTasks.delete(taskId);
+  }
+
   private async load(id: LiveRoomId): Promise<LoadedDraft> {
     const loaded = await this.deps.drafts.load(id.workspaceId, id.draftFileId);
     if (!loaded || loaded.draftFile.taskId !== id.taskId) throw new ApiError('DRAFT_NOT_FOUND');
@@ -133,7 +142,7 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
       });
     }
     return this.gates.run(id.taskId, async () => {
-      if (this.closedTasks.has(id.taskId)) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+      await this.admitReopenedTask(id.workspaceId, id.taskId);
       await this.assertWritable?.(id.taskId);
       // An intervening capture may have seeded the row; initialize's database
       // guard returns that winner, never merging an independently seeded copy.
@@ -176,7 +185,7 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
     const parsed = liveRoomSchema.parse(input);
     const id = { ...parsed, workspaceId: parsed.workspaceId.toLowerCase(),
       taskId: parsed.taskId.toLowerCase(), draftFileId: parsed.draftFileId.toLowerCase() };
-    if (this.closedTasks.has(id.taskId)) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+    await this.gates.run(id.taskId, () => this.admitReopenedTask(id.workspaceId, id.taskId));
     await this.assertWritable?.(id.taskId);
     const draft = await this.deps.drafts.resolveRoom(id);
     if (draft.epoch !== id.epoch) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
@@ -213,7 +222,6 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
   }
 
   capture(input: { workspaceId: string; taskId: string }): Promise<DraftCapture> {
-    if (this.closedTasks.has(input.taskId.toLowerCase())) return Promise.reject(new ApiError('DOCUMENT_EPOCH_CLOSED'));
     if (this.stopping) return Promise.reject(new ApiError('DRAFT_NOT_SAVED', 'The server is shutting down.'));
     const operation = this.captureDraft(input);
     this.captures.add(operation);
@@ -230,10 +238,10 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
     try {
       await deps.checkpoints.requireTask(workspaceId, taskId);
       return await deps.git.withDraftCapture({ workspaceId, taskId }, (git) => this.gates.run(taskId, async () => {
-        if (this.closedTasks.has(taskId)) throw new ApiError('DOCUMENT_EPOCH_CLOSED');
+        await this.admitReopenedTask(workspaceId, taskId);
         await this.assertWritable?.(taskId);
         const pinned = [...this.entries.entries()].filter(([, entry]) =>
-          entry.id.workspaceId === workspaceId && entry.id.taskId === taskId && entry.room);
+          entry.id.workspaceId === workspaceId && entry.id.taskId === taskId && entry.room && !entry.room.closed);
         for (const [, entry] of pinned) entry.users++;
         try {
           const drafts = await deps.drafts.listActiveForTask(workspaceId, taskId);
@@ -311,7 +319,7 @@ export class LiveDocumentCoordinator implements Pick<CollaborationService, 'capt
     if (this.closedTasks.has(taskId) || !this.captureDeps) return false;
     // Resolve scope through the stored task, never through caller-provided document IDs.
     const ids = Object.keys(revisions);
-    const entries = [...this.entries.values()].filter((e) => e.id.taskId === taskId);
+    const entries = [...this.entries.values()].filter((e) => e.id.taskId === taskId && !e.room?.closed);
     const workspaceId = entries[0]?.id.workspaceId;
     if (!workspaceId) return this.checkUnloaded?.(taskId, revisions) ?? false;
     const drafts = await this.captureDeps.drafts.listActiveForTask(workspaceId, taskId);

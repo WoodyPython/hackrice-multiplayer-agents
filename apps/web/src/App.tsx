@@ -126,6 +126,7 @@ function LiveWorkspace({ id }: { id: string }) {
           >
             {visibleWorkspace.isOwner ? "Owner" : "Contributor"}
           </Badge>
+          <ShareWorkspace id={id} compact />
           <GuestNameControl />
         </div>
       }
@@ -164,7 +165,7 @@ function LiveWorkspace({ id }: { id: string }) {
           element={
             <TaskBoardPage
               workspace={workspace}
-              share={<ShareWorkspace id={id} />}
+
             />
           }
         />

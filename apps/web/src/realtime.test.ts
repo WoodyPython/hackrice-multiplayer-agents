@@ -62,22 +62,21 @@ it('refreshes immediately, coalesces bursts during a slow request and filters ot
   finish();
 });
 
-it('uses a slow safety poll while connected, restores fallback and cleans up', async () => {
+it('repairs missed hints every five seconds even while connected and cleans up', async () => {
   setup();
   const pull = vi.fn(async () => {});
   const stop = refreshLoop(workspaceId, taskId, pull, () => 5000);
   cleanups.push(stop);
-  const source = Source.instances[0]!;
-  source.readyState = 1;
+  Source.instances[0]!.readyState = 1;
   await vi.advanceTimersByTimeAsync(5000);
-  expect(pull).toHaveBeenCalledTimes(1);
-  source.readyState = 0;
-  source.dispatchEvent(new Event('error'));
-  await vi.advanceTimersByTimeAsync(0);
   expect(pull).toHaveBeenCalledTimes(2);
-  await vi.advanceTimersByTimeAsync(5000);
+  window.dispatchEvent(new Event('focus'));
+  await vi.advanceTimersByTimeAsync(0);
   expect(pull).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(pull).toHaveBeenCalledTimes(4);
   stop();
   await vi.advanceTimersByTimeAsync(60000);
-  expect(pull).toHaveBeenCalledTimes(3);
+  window.dispatchEvent(new Event('focus'));
+  expect(pull).toHaveBeenCalledTimes(4);
 });
