@@ -2,6 +2,65 @@
 
 Newest first. One entry per landed ticket.
 
+## UI — review prominence, readable diffs, file explorer, presence
+**Landed:** 2026-09-13 · frontend, with two server changes
+**Affects:** everyone. **Action required:** read the Apply note below.
+
+Six assigned UI items. Two changed rules rather than pixels.
+
+**Apply is no longer owner-gated.** A deliberate departure from §10.3. Owner-only
+apply blocked the collaboration the product is for, and there is no identity to
+build a narrower rule on: §1.3 forbids treating a guest label as authority, and
+"people involved in the task" is a self-typed label anyone with the link can
+set. Either the link is enough or the key is; a self-asserted middle ground
+would only look like security. **The cost, stated plainly: the workspace URL is
+now sufficient to publish to approved main.** Server and client changed
+together — §4.6 is right that hiding a button is insufficient, and a visible
+button the server refuses is as broken. Settings and guidance stay owner-only.
+Four tests across both suites asserted the old policy and now assert the new
+one, each saying so at the site: an assertion that encodes a permission rule is
+easy to restore by accident.
+
+**A review is announced, still requested.** §4.6 keeps preparation explicit for
+two reasons worth keeping — a prepare refuses from about a dozen states and
+those refusals only make sense as an answer to something someone asked for, and
+it stops two viewers racing a candidate build. So a banner above the tabs says
+"The agents have finished their work" in plain language with one button that
+prepares and lands the reader on the changes, plus a dot on the Changes tab.
+Opening goes through the URL, so a review is linkable.
+
+**Diffs are rendered.** `git diff` stdout was a `<pre>` with `tab-size: 2`. Now
+dual line-number gutters, +/- glyphs, word-level highlighting for one-for-one
+replacements (skipped where runs differ in length, since no honest line-to-line
+correspondence exists), and hunk headers spelled "Lines 1-7" rather than
+`@@ -1,6 +1,7 @@`. Colour is never the only signal: every row carries a glyph
+and an off-screen label.
+
+**Files is an explorer.** A tree beside a detail pane, replacing four panels
+that showed one action and three kinds of file as four equal lists. Categories
+stay separate top-level folders: approved files and drafts carry repository
+paths and nest; materials have a filename and no path, and splicing them into
+`documents/` would imply they can be edited or applied. An empty category still
+appears and still reads as empty.
+
+**Presence**, on the existing SSE room rather than a second transport. Nothing
+is stored — §1.3 rules out a persistent participant list, and a durable row
+would outlive the browser that wrote it and read as "someone is here" when
+nobody is. Everything in the roster is self-asserted and the panel says so.
+
+**Favicon.** `index.html` had no `<link rel="icon">` at all. Drawn from
+`LogoMark` so it cannot drift, on a navy tile because a tab strip can be light
+or dark and the icon cannot ask which.
+
+Two things worth knowing: `npm install` is required — `@tailwindcss/vite` was
+missing from `node_modules`, so the web suite and dev server were both dead on
+a fresh checkout. And the `.gitignore` rule for Role D's data root was an
+unanchored `data/`, which matches at any depth; it is `/data/` now.
+
+Verified: apps/web 102, server unit 113, apply 26, runtime-flow + tasks 38.
+
+---
+
 ## UI follow-up — responsive actions and simpler task/file flows
 **Landed:** 2026-09-13 · frontend
 
