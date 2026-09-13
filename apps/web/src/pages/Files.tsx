@@ -20,6 +20,7 @@ import {
   type ApprovedFileContent,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { useWorkspaceAccess } from "../workspace-access";
 import { apiMessage } from "../workspace-api";
 import { PageHeading } from "../components/PageHeading";
 import { FileTree, type Entry } from "../components/FileTree";
@@ -73,6 +74,7 @@ const ROOTS = [
 
 export function Files({ workspaceId }: { workspaceId: string }) {
   const { api, session } = useBrowser();
+  const gate = useWorkspaceAccess();
   const navigate = useNavigate();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [drafts, setDrafts] = useState<DraftFile[]>([]);
@@ -285,6 +287,14 @@ export function Files({ workspaceId }: { workspaceId: string }) {
         </div>
       )}
 
+      {/*
+        "Edit a file together" and the upload dropzone both write. A viewer keeps
+        the file tree and every preview -- reading is the whole point of sharing
+        a link -- and gets the reason where the controls were.
+      */}
+      {!gate.canWrite ? (
+        <p className="mb-4 text-[12.5px] text-muted-foreground">{gate.readOnlyReason}</p>
+      ) : (
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Button
           variant="primary"
@@ -344,6 +354,7 @@ export function Files({ workspaceId }: { workspaceId: string }) {
           {Math.round(MAX_MATERIAL_FILE_BYTES / 1024 / 1024)} MB each. Non-text files stay read-only.
         </small>
       </div>
+      )}
 
       {creating && (
         <section className="mb-4 max-w-md rounded-xl border border-border bg-card p-3 shadow-xs" aria-label="Choose a file to edit together">

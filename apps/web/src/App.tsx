@@ -35,6 +35,7 @@ import { Overview } from "./pages/Overview";
 import { Agents } from "./pages/Agents";
 import { Inbox } from "./pages/Inbox";
 import { useInbox } from "./inbox";
+import { WorkspaceAccessProvider } from "./workspace-access";
 
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
@@ -175,6 +176,15 @@ function LiveWorkspace({ id }: { id: string }) {
     { to: `${base}/history`, label: "History", icon: "history" },
   ];
   return (
+    /*
+      One source for "may this person change anything", so a screen does not
+      have to re-derive it from `access` and `status` and get one of them wrong.
+      Presentation only: the server refuses a viewer's write either way.
+    */
+    <WorkspaceAccessProvider
+      access={workspace.access ?? "viewer"}
+      archived={archived}
+    >
     <AppShell
       workspaceName={workspace.name}
       // A link holder has nothing to do on the settings page: the member list
@@ -319,6 +329,7 @@ function LiveWorkspace({ id }: { id: string }) {
         />
       </Routes>
     </AppShell>
+    </WorkspaceAccessProvider>
   );
 }
 

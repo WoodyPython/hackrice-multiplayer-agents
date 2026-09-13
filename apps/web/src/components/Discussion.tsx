@@ -8,6 +8,7 @@ import { setPresenceTyping } from "../presence";
 import { refreshLoop } from "../realtime";
 import { readDiscussionPages } from "../task-polling";
 import { apiMessage } from "../workspace-api";
+import { useWorkspaceAccess, writeGuard } from "../workspace-access";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Label, Textarea } from "./ui/field";
@@ -19,6 +20,7 @@ export function Discussion({ workspaceId, taskId, entries, activeRunCutoffSeq, m
   busy: boolean; participants: Participant[]; presenceId: string;
 }) {
   const { api, session } = useBrowser();
+  const gate = useWorkspaceAccess();
   const [body, setBody] = useState("");
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -104,6 +106,16 @@ export function Discussion({ workspaceId, taskId, entries, activeRunCutoffSeq, m
           {typingParticipants.length === 1 ? " is" : " are"} typing<span aria-hidden="true" className="ml-1 tracking-widest">•••</span>
         </span>}
       </div>
+      {/*
+        A viewer used to be able to write a whole message and lose it on send.
+        The composer is replaced rather than disabled: an empty box with a dead
+        button reads as broken, where a sentence explains and points somewhere.
+      */}
+      {!gate.canWrite ? (
+        <p className="border-t border-border bg-muted/20 p-3 text-[12.5px] text-muted-foreground sm:p-4">
+          {gate.readOnlyReason}
+        </p>
+      ) : (
       <form className="border-t border-border bg-muted/20 p-3 sm:p-4" onSubmit={(event) => { event.preventDefault(); void post(); }}>
         {activeRunCutoffSeq !== null && <small className="mb-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
           <Clock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
@@ -127,6 +139,7 @@ export function Discussion({ workspaceId, taskId, entries, activeRunCutoffSeq, m
         </div>
         <small className="mt-1.5 block px-1 text-[10.5px] text-muted-foreground">Enter to send · Shift+Enter for a new line · files up to {Math.round(MAX_MATERIAL_FILE_BYTES / 1024 / 1024)} MB</small>
       </form>
+      )}
     </div>
   );
 }

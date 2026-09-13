@@ -15,6 +15,7 @@ import {
   type Participant,
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
+import { useWorkspaceAccess } from "../workspace-access";
 import { refreshLoop } from "../realtime";
 import { readEventPages } from "../task-polling";
 import { apiMessage } from "../workspace-api";
@@ -98,6 +99,7 @@ function TaskDetailState({
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { api, session } = useBrowser();
+  const gate = useWorkspaceAccess();
   const [task, setTask] = useState<Task | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [taskMaterials, setTaskMaterials] = useState<Material[]>([]);
@@ -341,7 +343,16 @@ function TaskDetailState({
   const retryable =
     RETRYABLE.includes(task.status) && task.activeRunId === null;
 
-  const action = (
+  /*
+    Every control in this bar changes the task. A viewer could press Start or
+    Mark as Complete and only learn at the end that the server refuses, so the
+    bar is replaced by the reason rather than filled with dead buttons.
+  */
+  const action = !gate.canWrite ? (
+    <p className="max-w-xs text-[12.5px] text-muted-foreground sm:text-right">
+      {gate.readOnlyReason}
+    </p>
+  ) : (
     <div className="flex max-w-xs flex-col items-stretch gap-2 sm:items-end">
       <div className="flex flex-wrap justify-end gap-2">
         {!running && (

@@ -123,6 +123,8 @@ function BoundEditor({
 }) {
   const { session } = useBrowser();
   const host = useRef<HTMLDivElement>(null);
+  /** Latched at the first successful sync; a reconnect must not re-lock. */
+  const everSynced = useRef(false);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const state = useSyncExternalStore(live.subscribe, live.getSnapshot);
   const [text, setText] = useState("");
@@ -208,9 +210,29 @@ function BoundEditor({
   useEffect(() => {
     onSaved(state === "saved");
     if (state === "closed") onClosed?.();
+    if (state === "saving" || state === "saved") everSynced.current = true;
+    /*
+      `connecting` locks the editor so nobody types into an empty document
+      before the server's state merges in. That reason expires after the first
+      sync -- and a reconnect re-enters `connecting`.
+
+      Without the latch, a laptop waking, a wifi blip, or the server's own 30s
+      ping timeout put a member who had been editing all along back into a
+      read-only editor, with nothing to see but the status pill. Worse, the
+      state they pass through on the way -- `offline` -- is editable, so typing
+      works, stops, and works again. Normally that window is one round trip; on
+      a half-dead socket (readyState still 1 after a sleep) it is unbounded,
+      because nothing here watches for a resync that never lands.
+
+      After one successful sync the local document already holds the content,
+      so staying editable across a resync is both safe and what the `offline`
+      state next to it already does.
+    */
     editorRef.current?.updateOptions({
       readOnly:
-        state === "connecting" || state === "closed" || state === "rejected",
+        (state === "connecting" && !everSynced.current) ||
+        state === "closed" ||
+        state === "rejected",
     });
     const warn = (event: BeforeUnloadEvent) => {
       if (state !== "saved") {

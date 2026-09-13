@@ -151,7 +151,30 @@ export class LiveRoom {
         void processUpdate(async () => {
           // A socket can outlive logout, session expiry, or membership removal.
           // Recheck inside the update queue so capture cannot overtake this edit.
-          await authorizeWrite?.();
+          //
+          // Wrapped on its own because this is the one step here that can fail
+          // for a reason that is nobody's decision. `authorizeWrite` reads
+          // Postgres, and the catch below closes 1008 -- which the client
+          // treats as terminal: `rejected`, no retry, the editor read-only for
+          // the life of the page with no way back but a manual reload. That is
+          // the right answer for "you are not a member any more" and the wrong
+          // one for "the session lookup timed out". One database hiccup on one
+          // keystroke locked a genuine member out of a document they had been
+          // editing all along.
+          //
+          // An ApiError from the authorizer is a decision and is re-thrown to
+          // the 1008 path. Anything else is this server failing at its own
+          // work: 1011, which the client treats like any other dropped socket
+          // and reconnects from.
+          if (authorizeWrite) {
+            try {
+              await authorizeWrite();
+            } catch (error: unknown) {
+              if (error instanceof ApiError) throw error;
+              socket.close(1011, 'INTERNAL_ERROR');
+              return;
+            }
+          }
           if (!this.closed) this.accept(socket, payload);
         }).catch((error: unknown) => socket.close(1008,
           error instanceof ApiError ? error.code : 'VALIDATION_FAILED')).finally(() => {

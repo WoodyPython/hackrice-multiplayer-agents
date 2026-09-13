@@ -16,6 +16,7 @@ import { EmptyState } from "../components/EmptyState";
 import { PageHeading } from "../components/PageHeading";
 import { Badge, Dot } from "../components/ui/badge";
 import { Button, ButtonLink } from "../components/ui/button";
+import { useWorkspaceAccess } from "../workspace-access";
 import { Input, Select } from "../components/ui/field";
 import { Avatar } from "../components/ui/misc";
 
@@ -100,6 +101,7 @@ export function TaskBoard({
   starredIds?: string[];
   onToggleStar?: (taskId: string) => void;
 }) {
+  const gate = useWorkspaceAccess();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [localStarredIds, setLocalStarredIds] = useState<string[]>([]);
@@ -121,12 +123,12 @@ export function TaskBoard({
           eyebrow="Your shared workspace"
           title="Good work starts here."
           description="Bring an idea. Shape it together. Ship something useful."
-          actions={
+          actions={gate.canWrite ? (
             <ButtonLink variant="primary" to={`${base}/tasks/new`}>
               <Plus aria-hidden="true" />
               Post a task
             </ButtonLink>
-          }
+          ) : undefined}
         />
       )}
 
@@ -184,16 +186,17 @@ export function TaskBoard({
 
       {tasks.length === 0 ? (
         <EmptyState
-          title="Make room for your first idea."
-          action={
+          title={gate.canWrite ? "Make room for your first idea." : "Nothing here yet"}
+          action={gate.canWrite ? (
             <ButtonLink variant="primary" to={`${base}/tasks/new`}>
               <Plus aria-hidden="true" />
               Post a task
             </ButtonLink>
-          }
+          ) : undefined}
         >
-          Describe a small piece of work to begin. You can discuss the details
-          before starting.
+          {gate.canWrite
+            ? "Describe a small piece of work to begin. You can discuss the details before starting."
+            : gate.readOnlyReason}
         </EmptyState>
       ) : filtered.length === 0 ? (
         <EmptyState
