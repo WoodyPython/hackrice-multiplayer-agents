@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import {
   Bot,
+  Inbox,
   Clock3,
   Compass,
   FileText,
@@ -19,12 +20,15 @@ import { Badge } from "./ui/badge";
 export type NavItem = {
   to: string;
   label: string;
-  icon: "overview" | "board" | "agents" | "files" | "history" | "settings";
+  icon: "overview" | "board" | "agents" | "files" | "history" | "settings" | "inbox";
   end?: boolean;
   count?: number;
+  /** Spoken meaning of the count, e.g. "3 actionable items". */
+  countLabel?: string;
 };
 
 const ICONS = {
+  inbox: Inbox,
   overview: Compass,
   board: LayoutGrid,
   agents: Bot,
@@ -49,6 +53,7 @@ function NavList({
             key={item.to}
             to={item.to}
             end={item.end}
+            aria-label={item.count !== undefined && item.countLabel ? `${item.label}, ${item.countLabel}` : undefined}
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(
