@@ -6,7 +6,7 @@ import { BrowserContext, useBrowser } from "./browser-context";
 import { BrowserSession } from "./session";
 import { WorkspaceApi, workspaceError } from "./workspace-api";
 import { DemoApp } from "./DemoApp";
-import { AppShell, Breadcrumb, type NavItem } from "./components/AppShell";
+import { AppShell, type NavItem } from "./components/AppShell";
 import { EmptyState } from "./components/EmptyState";
 import { GuestNameControl } from "./components/GuestNameControl";
 import { PresencePanel } from "./components/PresencePanel";
@@ -31,15 +31,16 @@ function LiveWorkspace({ id }: { id: string }) {
   // appear as such, and it must not survive a reload as a ghost.
   const [presenceId] = useState(() => crypto.randomUUID());
   const guest = session.getGuest();
-  const participants = usePresence(id, {
-    presenceId,
-    name: guest.name,
-    color: guest.color,
-  });
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [failure, setFailure] = useState<unknown>(null);
   const [retry, setRetry] = useState(0);
   const [loading, setLoading] = useState(true);
+  const participants = usePresence(id, {
+    presenceId,
+    name: guest.name,
+    color: guest.color,
+    isHost: !!workspace?.isOwner && !!session.getOwnerKey(id),
+  });
   const location = useLocation();
   const base = `/w/${id}`;
   useEffect(() => {
@@ -126,9 +127,8 @@ function LiveWorkspace({ id }: { id: string }) {
       settingsTo={`${base}/settings`}
       items={items}
       guestName={session.getGuest().name}
-      guestRole={visibleWorkspace.isOwner ? "Workspace owner" : "Contributor"}
+      guestRole={visibleWorkspace.isOwner ? "Host" : "Contributor"}
       profileControl={<GuestNameControl sidebar />}
-      breadcrumb={<Breadcrumb trail={["Workspace", workspace.name]} />}
       topbarEnd={
         <div className="flex items-center gap-2.5">
           <PresencePanel
@@ -144,14 +144,14 @@ function LiveWorkspace({ id }: { id: string }) {
           role="alert"
           tone="warn"
           className="mb-6"
-          title="Owner access was not saved in this browser"
+          title="Host access was not saved in this browser"
         >
           <p>
-            Workspace created, but this browser could not save owner access.
+            Workspace created, but this browser could not save host access.
             Keep this tab open and retry saving before leaving.
           </p>
           <Button size="sm" onClick={() => session.retryOwnerSave(id)}>
-            Retry saving owner access
+            Retry saving host access
           </Button>
         </Notice>
       )}

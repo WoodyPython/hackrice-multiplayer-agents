@@ -30,6 +30,8 @@ export const participantSchema = z.object({
   since: z.number().int().nonnegative(),
   /** Ephemeral task-local typing state. Omitted when this browser is idle. */
   typingTaskId: uuidSchema.optional(),
+  /** Display-only host marker for the currently connected browser. */
+  isHost: z.boolean().optional(),
 });
 export type Participant = z.infer<typeof participantSchema>;
 
@@ -44,6 +46,7 @@ export const announcePresenceRequestSchema = z
     presenceId: uuidSchema,
     name: guestLabelSchema,
     color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+    isHost: z.boolean().optional(),
   })
   .strict();
 export type AnnouncePresenceRequest = z.infer<typeof announcePresenceRequestSchema>;

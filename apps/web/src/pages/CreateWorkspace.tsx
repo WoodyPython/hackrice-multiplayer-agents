@@ -184,11 +184,6 @@ export function CreateWorkspace() {
               />
             </div>
 
-            <p className="rounded-lg border border-border bg-muted/50 p-3 text-[11.5px] leading-relaxed text-muted-foreground">
-              This browser keeps owner access. Clearing its storage loses that
-              access; there is no recovery flow.
-            </p>
-
             {error && (
               <p role="alert">
                 <FieldError>{error}</FieldError>

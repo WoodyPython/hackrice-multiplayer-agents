@@ -63,6 +63,7 @@ const task = {
 const summary = {
   ...task,
   materialCount: 1,
+  discussionCount: 1,
   openQuestionCount: 0,
 };
 
@@ -562,21 +563,20 @@ describe("files", () => {
   it("opens a shared document and lands in the editor for its task", async () => {
     const user = userEvent.setup();
     const { transport, calls } = server({
+      "GET /files": () => json({
+        mainSha: "a".repeat(40),
+        files: [{ path: "documents/guide.md", hash: "b".repeat(40) }],
+      }),
       "POST /drafts/open": () =>
         json({ taskId, draftFile: draft, created: false }, 200),
     });
     open(`/w/${workspaceId}/files`, transport);
 
-    // The path form now opens from the explorer toolbar rather than sitting
-    // permanently in a panel; opening a file for editing is unchanged.
+    // The toolbar opens a familiar file tree instead of asking for a path.
     await user.click(
       await screen.findByRole("button", { name: "Edit a file together" }),
     );
-    await user.type(
-      await screen.findByLabelText("File path"),
-      "documents/guide.md",
-    );
-    await user.click(screen.getByRole("button", { name: "Open for editing" }));
+    await user.click(await screen.findByRole("button", { name: /guide\.md/ }));
 
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith("/drafts/open"))).toBe(
@@ -1604,7 +1604,7 @@ describe("A08 cross-flow integration", () => {
     expect(screen.queryByText("This document was closed")).toBeNull();
   });
 
-  it("says owner access cannot be recovered, where the owner controls are", async () => {
+  it("says host access cannot be recovered, where the host controls are", async () => {
     const { transport } = server({
       "GET ": () => json({ ...workspace, isOwner: false }),
     });
@@ -1612,7 +1612,7 @@ describe("A08 cross-flow integration", () => {
     // §1.2: the key is returned once and there is no recovery flow. Someone who
     // lost it should learn that here rather than by repeatedly failing.
     expect(
-      await screen.findByText(/owner access cannot be recovered/i),
+      await screen.findByText(/host access cannot be recovered/i),
     ).toBeTruthy();
   });
 });

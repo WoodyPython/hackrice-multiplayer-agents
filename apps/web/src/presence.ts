@@ -43,10 +43,10 @@ export function setPresenceTyping(
  */
 export function usePresence(
   workspaceId: string | undefined,
-  me: { presenceId: string; name: string; color: string },
+  me: { presenceId: string; name: string; color: string; isHost?: boolean },
 ): Participant[] {
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const { presenceId, name, color } = me;
+  const { presenceId, name, color, isHost } = me;
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -60,7 +60,7 @@ export function usePresence(
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ presenceId, name, color }),
+            body: JSON.stringify({ presenceId, name, color, isHost }),
             signal: controller.signal,
           },
         );
@@ -107,7 +107,7 @@ export function usePresence(
       window.removeEventListener("pagehide", leave);
       leave();
     };
-  }, [workspaceId, presenceId, name, color]);
+  }, [workspaceId, presenceId, name, color, isHost]);
 
   return participants;
 }

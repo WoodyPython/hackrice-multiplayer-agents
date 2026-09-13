@@ -3,10 +3,12 @@ import { TASK_STATUSES, type TaskSummary } from "@app/contracts";
 import { useState, type ReactNode } from "react";
 import {
   HelpCircle,
+  MessageSquare,
   Paperclip,
   Plus,
   Search,
   SlidersHorizontal,
+  Star,
 } from "lucide-react";
 import { columnPresentation, groupTasks, statusPresentation } from "../board";
 import { cn } from "../lib/utils";
@@ -17,11 +19,11 @@ import { Button, ButtonLink } from "../components/ui/button";
 import { Input, Select } from "../components/ui/field";
 import { Avatar } from "../components/ui/misc";
 
-function TaskCard({ task, base }: { task: TaskSummary; base: string }) {
+function TaskCard({ task, base, starred, onToggleStar }: { task: TaskSummary; base: string; starred: boolean; onToggleStar: () => void }) {
   const presentation = statusPresentation[task.status];
   return (
     <article className="group relative rounded-xl border border-border bg-card shadow-xs transition-all duration-150 hover:-translate-y-0.5 hover:border-navy-300 hover:shadow-md dark:hover:border-navy-600">
-      <Link to={`${base}/tasks/${task.id}`} className="block p-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <Link to={`${base}/tasks/${task.id}`} className="block p-3.5 pr-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <Badge tone={presentation.tone} size="sm">
         <Dot
           tone={presentation.tone}
@@ -33,9 +35,11 @@ function TaskCard({ task, base }: { task: TaskSummary; base: string }) {
       <h4 className="mt-2.5 text-[13.5px] leading-snug font-semibold tracking-tight text-pretty transition-colors group-hover:text-navy-700 dark:group-hover:text-navy-200">
         {task.title}
       </h4>
-      <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
-        {presentation.summary}
-      </p>
+      {presentation.summary && (
+        <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
+          {presentation.summary}
+        </p>
+      )}
 
       {task.openQuestionCount > 0 && (
         <span className="mt-2.5 flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
@@ -51,14 +55,33 @@ function TaskCard({ task, base }: { task: TaskSummary; base: string }) {
           <Avatar name={task.creatorGuestLabel} size="sm" />
           <span className="truncate">{task.creatorGuestLabel}</span>
         </span>
-        {task.materialCount > 0 && (
-          <span className="flex shrink-0 items-center gap-1 tabular-nums">
+        <span className="flex shrink-0 items-center gap-2 tabular-nums">
+          {task.discussionCount > 0 && (
+            <span className="flex items-center gap-1" aria-label={`${task.discussionCount} discussion messages`}>
+              <MessageSquare className="size-3" aria-hidden="true" />
+              {task.discussionCount}
+            </span>
+          )}
+          {task.materialCount > 0 && (
+            <span className="flex items-center gap-1" aria-label={`${task.materialCount} attachments`}>
             <Paperclip className="size-3" aria-hidden="true" />
             {task.materialCount}
-          </span>
-        )}
+            </span>
+          )}
+        </span>
       </div>
       </Link>
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        className={cn("absolute top-2.5 right-2.5", starred && "text-amber-500")}
+        aria-label={starred ? `Unstar ${task.title}` : `Star ${task.title}`}
+        aria-pressed={starred}
+        title={starred ? "Remove from important" : "Mark as important"}
+        onClick={onToggleStar}
+      >
+        <Star aria-hidden="true" className={starred ? "fill-current" : undefined} />
+      </Button>
     </article>
   );
 }
@@ -67,18 +90,27 @@ export function TaskBoard({
   tasks,
   base,
   heading,
+  starredIds = [],
+  onToggleStar,
 }: {
   tasks: TaskSummary[];
   base: string;
   /** Replaces the default header, so a live workspace can show its own name. */
   heading?: ReactNode;
+  starredIds?: string[];
+  onToggleStar?: (taskId: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
+  const [localStarredIds, setLocalStarredIds] = useState<string[]>([]);
+  const effectiveStarredIds = onToggleStar ? starredIds : localStarredIds;
   const filtered = tasks.filter(
     (task) =>
       task.title.toLowerCase().includes(query.toLowerCase()) &&
       (status === "all" || task.status === status || (status === "ready_for_review" && task.status === "awaiting_confirmation")),
+  );
+  const ordered = [...filtered].sort(
+    (a, b) => Number(effectiveStarredIds.includes(b.id)) - Number(effectiveStarredIds.includes(a.id)),
   );
   const filtering = query !== "" || status !== "all";
 
@@ -182,7 +214,7 @@ export function TaskBoard({
       ) : (
         <div className="-mx-4 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0">
           <div className={cn("grid gap-4", status !== "all" && "max-w-sm")} style={{ gridTemplateColumns: `repeat(${status === "all" ? 5 : 1}, minmax(210px, 1fr))` }}>
-            {groupTasks(filtered).filter((column) => status === "all" || column.tasks.length > 0).map((column) => {
+            {groupTasks(ordered).filter((column) => status === "all" || column.tasks.length > 0).map((column) => {
               const meta = columnPresentation[column.name];
               return (
                 <section
@@ -210,6 +242,15 @@ export function TaskBoard({
                         key={task.id}
                         task={task}
                         base={base}
+                        starred={effectiveStarredIds.includes(task.id)}
+                        onToggleStar={() => {
+                          if (onToggleStar) onToggleStar(task.id);
+                          else setLocalStarredIds((current) =>
+                            current.includes(task.id)
+                              ? current.filter((id) => id !== task.id)
+                              : [...current, task.id],
+                          );
+                        }}
                       />
                     ))}
                     {column.tasks.length === 0 && (

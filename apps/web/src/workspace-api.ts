@@ -825,13 +825,13 @@ export class WorkspaceApi {
  */
 export function apiMessage(error: unknown): string {
   if (error instanceof Error && error.message === "BROWSER_STORAGE_UNAVAILABLE")
-    return "Enable browser storage before creating a workspace so this browser can retain owner access.";
+    return "Enable browser storage before creating a workspace so this browser can retain host access.";
   if (error instanceof ApiError) {
     switch (error.code) {
       case "RATE_LIMITED":
         return "Too many workspaces were created recently. Wait a moment before trying again.";
       case "OWNER_KEY_REQUIRED":
-        return "Owner access is unavailable in this browser. You can still contribute through the workspace link.";
+        return "Host access is unavailable in this browser. You can still contribute through the workspace link.";
       case "WORKSPACE_NOT_FOUND":
         return "This workspace could not be found. Check the contribution link.";
       case "TASK_NOT_FOUND":

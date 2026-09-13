@@ -30,7 +30,7 @@ export const statusPresentation = {
   posted: {
     column: "Posted",
     label: "Posted",
-    summary: "Ready to start when you are",
+    summary: "",
     tone: "neutral",
   },
   planning: {

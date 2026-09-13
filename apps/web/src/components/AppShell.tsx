@@ -153,6 +153,19 @@ function SidebarBody({
           Workspace
         </p>
         <NavList items={items} onNavigate={onNavigate} />
+        {settingsTo && (
+          <NavLink
+            to={settingsTo}
+            onClick={onNavigate}
+            className={({ isActive }) => cn(
+              "mt-1 flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
+              isActive ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            <Settings className="size-4" aria-hidden="true" />
+            Workspace settings
+          </NavLink>
+        )}
       </div>
 
       <div className="grid gap-3 border-t border-border pt-3">
@@ -167,17 +180,6 @@ function SidebarBody({
             </span>
           </span>
           {profileControl}
-          {settingsTo && (
-            <Link
-              to={settingsTo}
-              onClick={onNavigate}
-              aria-label="Workspace settings"
-              title="Workspace settings"
-              className="grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <Settings className="size-4" aria-hidden="true" />
-            </Link>
-          )}
         </div>
       </div>
     </div>
@@ -200,7 +202,6 @@ export function AppShell({
   guestName,
   guestRole,
   profileControl,
-  breadcrumb,
   topbarEnd,
   strip,
   children,
@@ -212,7 +213,6 @@ export function AppShell({
   guestName: string;
   guestRole: string;
   profileControl?: ReactNode;
-  breadcrumb: ReactNode;
   topbarEnd?: ReactNode;
   strip?: ReactNode;
   children: ReactNode;
@@ -284,9 +284,7 @@ export function AppShell({
               <Menu className="size-4" aria-hidden="true" />
             )}
           </button>
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-[12px] text-muted-foreground">
-            {breadcrumb}
-          </div>
+          <div className="min-w-0 flex-1" />
           <ThemeToggle />
           {topbarEnd}
         </header>
@@ -302,30 +300,5 @@ export function AppShell({
         </main>
       </div>
     </div>
-  );
-}
-
-/** `Workspace / Name` breadcrumb, shared by the live and demo topbars. */
-export function Breadcrumb({ trail }: { trail: string[] }) {
-  return (
-    <span className="flex min-w-0 items-center gap-1.5 truncate">
-      {trail.map((part, index) => (
-        <span key={index} className="flex min-w-0 items-center gap-1.5">
-          {index > 0 && (
-            <span aria-hidden="true" className="text-border">
-              /
-            </span>
-          )}
-          <span
-            className={cn(
-              "truncate",
-              index === trail.length - 1 && "font-medium text-foreground",
-            )}
-          >
-            {part}
-          </span>
-        </span>
-      ))}
-    </span>
   );
 }

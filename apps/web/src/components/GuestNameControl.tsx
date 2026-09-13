@@ -74,7 +74,7 @@ export function GuestNameControl({ sidebar = false }: { sidebar?: boolean }) {
         <form
           onSubmit={save}
           className={sidebar
-            ? "absolute right-0 bottom-full z-40 mb-2 w-[250px] space-y-3 rounded-xl border border-border bg-card p-4 shadow-lg animate-[rise_0.2s_cubic-bezier(0.22,1,0.36,1)_both]"
+            ? "fixed bottom-4 left-4 z-[70] max-h-[calc(100dvh-2rem)] w-[min(290px,calc(100vw-2rem))] space-y-3 overflow-y-auto rounded-xl border border-border bg-card p-4 shadow-lg animate-[rise_0.2s_cubic-bezier(0.22,1,0.36,1)_both]"
             : "absolute top-full right-0 z-40 mt-2 w-[290px] max-w-[calc(100vw-2rem)] space-y-3 rounded-xl border border-border bg-card p-4 shadow-lg animate-[rise_0.2s_cubic-bezier(0.22,1,0.36,1)_both]"}
         >
           <div className="space-y-1.5">

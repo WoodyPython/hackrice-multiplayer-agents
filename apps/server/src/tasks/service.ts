@@ -1,6 +1,6 @@
 import { ownerKeyMatches } from '../workspaces/owner-key.js';
 import { randomUUID } from 'node:crypto';
-import type { Transaction } from 'kysely';
+import { sql, type Transaction } from 'kysely';
 import {
   ACTIVE_RUN_STATUSES,
   ApiError,
@@ -468,11 +468,13 @@ export class PgTaskService {
       .selectFrom('tasks')
       .selectAll('tasks')
       .select((eb) => [
-        eb
-          .selectFrom('material_links')
-          .select((e) => e.fn.countAll<number>().as('c'))
-          .whereRef('material_links.task_id', '=', 'tasks.id')
-          .as('material_count'),
+        sql<number>`(
+          select count(distinct material_id) from (
+            select material_id from material_links where task_id = tasks.id
+            union
+            select material_id from task_input_links where task_id = tasks.id and material_id is not null
+          ) as task_materials
+        )`.as('material_count'),
         eb
           .selectFrom('agent_questions')
           .select((e) => e.fn.countAll<number>().as('c'))
@@ -492,6 +494,7 @@ export class PgTaskService {
       creatorGuestLabel: row.creator_guest_label,
       activeRunId: row.active_run_id,
       materialCount: Number(row.material_count ?? 0),
+      discussionCount: row.discussion_seq,
       openQuestionCount: Number(row.open_question_count ?? 0),
       updatedAt: toIso(row.updated_at),
     }));
