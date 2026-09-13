@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { planningContextSchema, workerToolArguments, type GuardedWorkerGitService, type MaterialService,
   type WorkerExecutionService, type WorkerResult } from '@app/contracts';
-import { AgentExecution, AgentExecutionError, PgAgentLedger } from '../agents/index.js';
+import { AgentExecution, AgentExecutionError, PgAgentLedger, providerBackoffMs } from '../agents/index.js';
 import type { Db } from '../db/client.js';
 import { ModelAdapterError, type AgentMessage, type ModelAdapter, type ToolResult } from '../models/index.js';
 import { PgWorkerStore, WorkerToolError } from './store.js';
@@ -75,9 +75,14 @@ export class WorkerExecutor implements WorkerExecutionService {
           backoff = 1000;
         } catch (error) {
           if (!(error instanceof ModelAdapterError) || !error.retryable) throw error;
-          await this.store.providerWait(id, requestKey, backoff, true, scope.signal);
-          await scope.run((signal) => this.deps.wait?.(backoff, signal) ?? waitForWorker(backoff, signal));
-          await this.store.providerWait(id, requestKey, backoff, false, scope.signal);
+          // The provider's own retry-after wins over the local ladder, and a
+          // wait that cannot fit the deadline ends the agent now with the real
+          // cause instead of idling to a timeout that blames the clock.
+          const wait = providerBackoffMs(error, backoff);
+          if (!scope.canWait(wait)) throw new WorkerToolError('provider_rate_limited');
+          await this.store.providerWait(id, requestKey, wait, true, scope.signal);
+          await scope.run((signal) => this.deps.wait?.(wait, signal) ?? waitForWorker(wait, signal));
+          await this.store.providerWait(id, requestKey, wait, false, scope.signal);
           backoff = Math.min(backoff * 2, 30000); continue;
         }
         if (response.blockReason) throw new WorkerToolError('blocked_response');

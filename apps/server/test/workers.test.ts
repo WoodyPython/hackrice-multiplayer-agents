@@ -236,6 +236,38 @@ describe('budgeted worker tool loop and human waits', () => {
     expect((await events(f.agentInstanceId, 'agent.waiting')).some((event) => event.payload.questionId)).toBe(false);
   });
 
+  it('waits the provider stated retry-after rather than its own shorter ladder', async () => {
+    const f = await fixture();
+    // Google states when a slot frees. Retrying on the 1s ladder is a refusal
+    // it already predicted, and against a per-day quota it spends a request.
+    const adapter = new FakeModelAdapter([
+      { inputTokens: 10, result: new ModelAdapterError('rate_limited', 'Retry', true, 429, { status: 'unknown' }, 36_000) },
+      { inputTokens: 20, result: done() }]);
+    const wait = vi.fn(async (_ms: number, signal: AbortSignal) => { signal.throwIfAborted(); });
+    await executor(adapter, git, wait).execute(f);
+    expect(wait).toHaveBeenCalledWith(36_000, expect.any(AbortSignal));
+    const waiting = (await events(f.agentInstanceId, 'agent.waiting')).filter((event) => event.payload.reason === 'provider_backoff');
+    expect(waiting[0]!.payload).toMatchObject({ delayMs: 36_000, retryAt: new Date(clock + 36_000).toISOString() });
+  });
+
+  it('fails as provider_rate_limited when the stated wait outlasts the deadline', async () => {
+    const f = await fixture();
+    // Not a retry quota (section 9.4): the wait provably cannot be followed by
+    // a call, so idling to `timed_out` would blame the clock for the provider.
+    const adapter = new FakeModelAdapter([{ inputTokens: 10,
+      result: new ModelAdapterError('rate_limited', 'Retry', true, 429, { status: 'unknown' }, AGENT_TIMEOUT_MS + 1000) }]);
+    const wait = vi.fn(async (_ms: number, signal: AbortSignal) => { signal.throwIfAborted(); });
+    await expect(executor(adapter, git, wait).execute(f)).rejects.toMatchObject({ code: 'provider_rate_limited' });
+    expect(wait).not.toHaveBeenCalled();
+    expect((await state(f.agentInstanceId)).status).toBe('failed');
+    const failed = await events(f.agentInstanceId, 'agent.failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0]!.payload.code).toBe('provider_rate_limited');
+    // A refusal that says nothing keeps the ladder, so this must not fire on it.
+    expect((await events(f.agentInstanceId, 'agent.waiting'))
+      .filter((event) => event.payload.reason === 'provider_backoff')).toHaveLength(0);
+  });
+
   it('waits for a B03 answer above the cutoff without refreshing the clock', async () => {
     const f = await fixture(); const adapter = new FakeModelAdapter([
       { inputTokens: 20, result: response(call('ask_question', { body: 'Who is the audience?' })) }, { inputTokens: 20, result: done() },

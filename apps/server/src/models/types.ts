@@ -85,6 +85,15 @@ export class ModelAdapterError extends Error {
     readonly retryable = false,
     readonly status?: number,
     readonly usage: ModelUsage = { status: 'unknown' },
+    /**
+     * The provider's own "retry after", in milliseconds, when it states one.
+     *
+     * A quota response says when a slot actually frees. Retrying before then is
+     * a guaranteed second refusal that still spends a request from the very
+     * quota being waited on, so this is a floor for application backoff rather
+     * than advice. Absent when the provider said nothing.
+     */
+    readonly retryDelayMs?: number,
   ) {
     super(message);
   }

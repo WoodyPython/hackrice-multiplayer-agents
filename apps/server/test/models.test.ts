@@ -166,6 +166,21 @@ describe('Gemini adapter through the real SDK', () => {
     expect(http.fetch).toHaveBeenCalledTimes(1);
   });
 
+  // The stated figure is the only thing that makes application backoff correct
+  // on a per-day quota, where retrying early still spends the allowance.
+  it.each([
+    { label: 'RetryInfo detail', body: { error: { code: 429, message: 'Quota exceeded.', details: [
+      { '@type': 'type.googleapis.com/google.rpc.Help' },
+      { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '36s' }] } }, expected: 36_000 },
+    { label: 'stated message', body: { error: { code: 429, message: 'Quota exceeded. Please retry in 8.19s.' } }, expected: 8190 },
+    { label: 'neither', body: { error: { code: 429, message: 'Quota exceeded.' } }, expected: undefined },
+  ])('reads the retry-after from the $label', async ({ body, expected }) => {
+    transport({ status: 429, body });
+    const error = await createGeminiAdapter(config).generate(request, allowance, signal()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ModelAdapterError);
+    expect((error as ModelAdapterError).retryDelayMs).toBe(expected);
+  });
+
   it('does not retry token counting failures', async () => {
     const http = transport({ status: 503, body: { error: { code: 503, message: 'unavailable' } } });
     await expect(createGeminiAdapter(config).countInput(request)).rejects.toMatchObject({ code: 'provider_error' });

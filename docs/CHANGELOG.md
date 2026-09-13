@@ -2,6 +2,83 @@
 
 Newest first. One entry per landed ticket.
 
+## Fix — subagents could not create files: the worker model's free tier is 20 requests **per day**
+**Landed:** 2026-09-13 · Role B (in Role C files)
+**Affects:** every agent call
+**Action required:** Enable billing on the Google Cloud project behind
+`GEMINI_API_KEY`. No code change makes 20 requests/day support a demo.
+
+The orchestrator planned correctly and every writer then failed to produce a
+file. It was not the tools, not the token budget, and not the context.
+
+The provider says exactly what it is:
+
+```
+429 RESOURCE_EXHAUSTED   model: gemini-3.6-flash
+quotaId:    GenerateRequestsPerDayPerProjectPerModel-FreeTier
+quotaValue: 20
+```
+
+**Per day, per project, per model.** A healthy run spends 6-8 worker requests
+(`write-haiku` 4 + `review-haiku` 2; `create-hello-doc` 5 + `review-hello-doc` 3),
+so a free key funds two or three runs a day. The orchestrator survived because
+`ORCHESTRATOR_MODEL` is a *different* model with its own 20, and planning costs
+one request — which is precisely why the failure looked like "subagents can't
+write files" rather than "out of quota".
+
+From the live database, the writer on the `hello_world.md` run:
+
+```
+agent                  preset   calls  billed  refused
+orchestrator           orch.        1       1        0
+create-markdown-file   writer      14       1       13
+review-markdown-file   reviewer     0       0        0
+```
+
+One call through, then thirteen refusals at 1s, 2s, 4s, 8s, 16s, 30s, 30s… —
+the ladder in `workers/executor.ts` — until the server was restarted.
+
+**The tools were never the problem.** Driven against the live API, a writer goes
+`read_file` → `propose_changes {expectedHash: null, newText: "hello world
+"}`.
+Textbook file creation. It just never got a second request.
+
+Three defects made this unreadable, all fixed here:
+
+- **The provider's `retryDelay` was discarded.** `safeError` kept only the HTTP
+  status. Google states when a slot frees; the app retried in 1s when it had
+  been told 36s. On a per-day quota each of those is a guaranteed refusal that
+  still spends the allowance being waited on. `ModelAdapterError` now carries
+  `retryDelayMs`, and `providerBackoffMs` takes the larger of it and the local
+  ladder — the ladder still governs errors that say nothing.
+- **A hopeless wait burned the whole deadline.** When the stated delay cannot
+  fit the remaining time, the agent now fails immediately as
+  `provider_rate_limited` instead of idling to `timed_out`, which named the
+  clock for something the provider caused. This is deadline arithmetic, not the
+  retry cap §9.4 forbids: it counts time, never attempts.
+- **A throttled *plan* was completely silent.** C04 emitted
+  `agent.waiting {reason: 'provider_backoff'}`; the planner emitted nothing, so
+  a rate-limited orchestrator was indistinguishable from one that was thinking.
+  `PgPlanStore.providerWait` now mirrors C04's receipt. §8.7 asks for visible
+  waiting states and this was the one agent without them.
+
+**Still open, deliberately:** the frontend ignores `provider_backoff` entirely —
+`RunOutcome.tsx` only handles `phase === 'start'`, and `Assignments.tsx` keeps
+rendering "running". The durable events exist; surfacing them crosses into Role
+A's `GET /tasks/:t/agents` schema and is not done here.
+
+Also unfixed, worth a look: a writer's first call is a `read_file` on the file
+it is about to create, which returns null. A fifth of a writer's request cost
+buys nothing. It is a prompt change, and prompt changes could not be A/B tested
+while the quota was exhausted.
+
+Verified: `npm run build`, `models` (**43**), `workers` (**37**), `planning`
+(**70**), `agents` (**28**), `start` (**9**), `scheduler` (**20**).
+Mutation-checked by neutralising both the retry-after and the deadline guard and
+watching exactly the four new tests fail.
+
+---
+
 ## Fix — the orchestrator reserved the entire token budget on its first call
 **Landed:** 2026-09-13 · Role B (in Role C files)
 **Affects:** every agent call

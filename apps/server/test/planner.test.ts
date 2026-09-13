@@ -155,6 +155,39 @@ describe('orchestrator planning with real persistence and budget accounting', ()
     expect((await handle.db.selectFrom('task_agent_budgets').select('consumed_tokens').where('task_id', '=', f.taskId).executeTakeFirstOrThrow()).consumed_tokens).toBe(125);
   });
 
+  it('records a durable waiting receipt for a throttled plan and obeys the stated retry-after', async () => {
+    // A planning instance that waits silently is indistinguishable from one
+    // that is thinking, which is how a quota-stalled run read as a hang.
+    const f = await fixture(); const adapter = new FakeModelAdapter([
+      { inputTokens: 20, result: new ModelAdapterError('rate_limited', 'Retry later', true, 429, { status: 'unknown' }, 18_000) },
+      { inputTokens: 20, result: response() },
+    ]);
+    const wait = vi.fn(async (_ms: number, signal: AbortSignal) => { signal.throwIfAborted(); });
+    await planner(adapter, wait).plan(f);
+    expect(wait).toHaveBeenCalledWith(18_000, expect.any(AbortSignal));
+    const waiting = await handle.db.selectFrom('task_events').selectAll()
+      .where('run_id', '=', f.runId).where('type', '=', 'agent.waiting').execute();
+    expect(waiting.map((event) => event.payload.waiting)).toEqual([true, false]);
+    expect(waiting[0]!.payload).toMatchObject({ agentId: f.agentInstanceId, reason: 'provider_backoff',
+      delayMs: 18_000, retryAt: new Date(clock + 18_000).toISOString() });
+    expect(waiting[1]!.payload.retryAt).toBeNull();
+    expect(waiting.some((event) => event.payload.questionId)).toBe(false);
+    expect(await agentStatus(f.agentInstanceId)).toBe('completed');
+  });
+
+  it('fails planning as provider_rate_limited when the stated wait outlasts the deadline', async () => {
+    const f = await fixture(); const adapter = new FakeModelAdapter([{ inputTokens: 20,
+      result: new ModelAdapterError('rate_limited', 'Retry later', true, 429, { status: 'unknown' }, AGENT_TIMEOUT_MS + 1000) }]);
+    const wait = vi.fn(async (_ms: number, signal: AbortSignal) => { signal.throwIfAborted(); });
+    await expect(planner(adapter, wait).plan(f)).rejects.toMatchObject({ code: 'provider_rate_limited' });
+    expect(wait).not.toHaveBeenCalled();
+    expect(await agentStatus(f.agentInstanceId)).toBe('failed');
+    const failed = await handle.db.selectFrom('task_events').selectAll()
+      .where('run_id', '=', f.runId).where('type', '=', 'agent.failed').execute();
+    expect(failed).toHaveLength(1);
+    expect(failed[0]!.payload.code).toBe('provider_rate_limited');
+  });
+
   it('stops repairs when the cumulative task-agent budget is exhausted', async () => {
     const f = await fixture(); const bad = { ...response({ invalid: true }), usage: { status: 'reported' as const, totalTokens: 64000 } };
     const adapter = new FakeModelAdapter([{ inputTokens: 20, result: bad }, { inputTokens: 20, result: response() }]);

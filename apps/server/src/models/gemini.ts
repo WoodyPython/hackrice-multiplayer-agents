@@ -252,6 +252,35 @@ function redactProviderDetail(error: unknown): string {
     .slice(0, 600);
 }
 
+/**
+ * When the provider says a slot will be free again, in milliseconds.
+ *
+ * A 429 carries `google.rpc.RetryInfo` and repeats the same figure in its
+ * message. Discarding it and retrying on a local ladder produces a refusal the
+ * provider already told us was too early — and on a per-day quota each of those
+ * still spends a request from the allowance being waited on. Measured against a
+ * rate-limited writer, thirteen of its fourteen calls were exactly that.
+ *
+ * Not clamped. A stated delay longer than the agent's remaining deadline is
+ * real information: the caller fails the agent instead of idling until timeout.
+ */
+export function parseRetryDelayMs(error: unknown): number | undefined {
+  const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (!raw) return undefined;
+  let seconds: number | undefined;
+  try {
+    const details = (JSON.parse(raw) as { error?: { details?: Array<Record<string, unknown>> } }).error?.details;
+    const info = details?.find((detail) => String(detail['@type'] ?? '').endsWith('google.rpc.RetryInfo'));
+    const stated = /^([\d.]+)s$/.exec(String(info?.retryDelay ?? ''));
+    if (stated) seconds = Number(stated[1]);
+  } catch { /* Not a JSON body. The human message below carries it too. */ }
+  if (seconds === undefined) {
+    const stated = /retry in ([\d.]+)s/i.exec(raw);
+    if (stated) seconds = Number(stated[1]);
+  }
+  return seconds !== undefined && Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds * 1000) : undefined;
+}
+
 function isTokenCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
@@ -334,7 +363,11 @@ function safeError(error: unknown, signal?: AbortSignal, model = 'unknown'): Mod
     typeof error.status === 'number' ? error.status : undefined;
   // Report the real cause to the log before it is collapsed into a code.
   reportProviderError?.({ model, status, detail: redactProviderDetail(error) });
-  if (status === 429) return new ModelAdapterError('rate_limited', 'Gemini request was rate limited.', true, status);
+  const retryDelayMs = parseRetryDelayMs(error);
+  if (status === 429) {
+    return new ModelAdapterError('rate_limited', 'Gemini request was rate limited.',
+      true, status, { status: 'unknown' }, retryDelayMs);
+  }
   return new ModelAdapterError('provider_error', 'Gemini request failed.',
-    status === undefined || status === 408 || status >= 500, status);
+    status === undefined || status === 408 || status >= 500, status, { status: 'unknown' }, retryDelayMs);
 }

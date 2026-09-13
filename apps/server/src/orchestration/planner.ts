@@ -6,7 +6,7 @@ import {
   type AgentPlan, type OrchestratorPlanningService, type PlanningContext, type PlanValidationError,
 } from '@app/contracts';
 import type { Db } from '../db/client.js';
-import { AgentExecution, AgentExecutionError, PgAgentLedger } from '../agents/index.js';
+import { AgentExecution, AgentExecutionError, PgAgentLedger, providerBackoffMs } from '../agents/index.js';
 import { ModelAdapterError, type AgentMessage, type AgentResponse, type ModelAdapter } from '../models/index.js';
 import { PgPlanStore, PlanningError } from './plan-store.js';
 import { validatePlan } from './validate-plan.js';
@@ -96,15 +96,23 @@ export class OrchestratorPlanner implements OrchestratorPlanningService {
     try {
       while (true) {
         let response: AgentResponse;
+        const requestKey = randomUUID();
         try {
-          response = await scope.generate(randomUUID(), { preset: 'orchestrator', systemInstruction: SYSTEM_INSTRUCTION,
+          response = await scope.generate(requestKey, { preset: 'orchestrator', systemInstruction: SYSTEM_INSTRUCTION,
             responseJsonSchema: PLAN_RESPONSE_SCHEMA, messages });
           backoffMs = 1000;
         } catch (error) {
           if (!(error instanceof ModelAdapterError) || !error.retryable) throw error;
           // Backoff is bounded in duration, never in number of attempts. It
-          // remains inside this same instance's fixed deadline and budget.
-          await scope.run((signal) => this.deps.wait?.(backoffMs, signal) ?? delay(backoffMs, undefined, { signal }));
+          // remains inside this same instance's fixed deadline and budget, and
+          // honours the provider's stated retry-after over the local ladder.
+          const wait = providerBackoffMs(error, backoffMs);
+          // A wait outlasting the deadline cannot be followed by a call, so the
+          // plan has already failed; saying so beats idling until `timed_out`.
+          if (!scope.canWait(wait)) throw new PlanningError('provider_rate_limited');
+          await this.store.providerWait(agentId, requestKey, wait, true, scope.signal);
+          await scope.run((signal) => this.deps.wait?.(wait, signal) ?? delay(wait, undefined, { signal }));
+          await this.store.providerWait(agentId, requestKey, wait, false, scope.signal);
           backoffMs = Math.min(backoffMs * 2, 30000);
           continue;
         }

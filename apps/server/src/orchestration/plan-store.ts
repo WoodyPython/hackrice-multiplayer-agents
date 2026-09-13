@@ -11,7 +11,9 @@ import { validatePlan } from './validate-plan.js';
 export class PlanningError extends Error {
   override readonly name = 'PlanningError';
   constructor(readonly code: 'context_mismatch' | 'snapshot_not_ready' | 'invalid_plan' | 'blocked_response' |
-    'unexpected_tools' | 'stored_plan_invalid' | 'planning_conflict') { super(`Planning refused (${code}).`); }
+    'unexpected_tools' | 'stored_plan_invalid' | 'planning_conflict' | 'provider_rate_limited') {
+    super(`Planning refused (${code}).`);
+  }
 }
 
 /** Durable plan artifact in the existing completion event, committed together
@@ -39,6 +41,28 @@ export class PgPlanStore {
       throw new PlanningError('context_mismatch');
     }
     return run.input_snapshot_sha;
+  }
+
+  /**
+   * The same provider waiting receipt C04 emits, for the planning instance.
+   *
+   * Without it a rate-limited orchestrator is indistinguishable from one that
+   * is thinking: the run sits in `planning` with no durable evidence until its
+   * deadline. Section 8.7 asks for visible waiting states, and this is the only
+   * agent that had none. It creates no question and does not set `needs_input`.
+   */
+  async providerWait(agentInstanceId: string, requestKey: string, delayMs: number,
+    waiting: boolean, signal: AbortSignal): Promise<void> {
+    await this.deps.ledger.withActiveWrite(agentInstanceId, async (trx, agent) => {
+      signal.throwIfAborted();
+      await appendEvent(trx, {
+        workspaceId: agent.workspace_id, taskId: agent.task_id, runId: agent.run_id,
+        eventKey: `agent:${agent.id}:provider:${requestKey}:${waiting ? 'waiting' : 'resumed'}`,
+        type: 'agent.waiting',
+        payload: { agentId: agent.id, reason: 'provider_backoff', waiting, delayMs,
+          retryAt: waiting ? new Date((this.deps.now?.() ?? new Date()).getTime() + delayMs).toISOString() : null },
+      });
+    });
   }
 
   async read(agentInstanceId: string, contextDigest: string, inputSnapshotSha: string): Promise<AgentPlan | null> {

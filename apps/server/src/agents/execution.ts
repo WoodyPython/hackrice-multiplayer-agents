@@ -22,6 +22,19 @@ import { AgentExecutionError, PgAgentLedger } from './ledger.js';
  */
 export const DEFAULT_OUTPUT_ALLOWANCE = 8192;
 
+/**
+ * How long to wait before retrying a refused request.
+ *
+ * The caller's exponential ladder is a floor, not the answer. A quota response
+ * states when a slot actually frees; retrying earlier is a refusal the provider
+ * already predicted, and against a per-day quota it also spends a request from
+ * the allowance being waited on. Taking the larger of the two keeps the ladder's
+ * behaviour for errors that say nothing, and obeys the provider when it does.
+ */
+export function providerBackoffMs(error: ModelAdapterError, ladderMs: number): number {
+  return Math.max(ladderMs, error.retryDelayMs ?? 0);
+}
+
 export interface ExecutionDeps {
   ledger: PgAgentLedger;
   adapter: ModelAdapter;
@@ -70,6 +83,18 @@ export class AgentExecution {
   }
 
   private now() { return this.deps.now?.() ?? Date.now(); }
+
+  /**
+   * Whether a wait of this length still leaves the fixed deadline room to act.
+   *
+   * This is not a retry quota (section 9.4 forbids one): it counts time, not
+   * attempts. A wait that outlasts the deadline cannot be followed by a model
+   * call, so the agent has already failed — it just has not said so yet. Idling
+   * to the ten-minute mark and reporting `timed_out` instead names the clock as
+   * the cause when the real one was the provider, which is exactly what made a
+   * rate-limited run read as an unexplained hang.
+   */
+  canWait(ms: number): boolean { return this.now() + ms < this.deadlineAt; }
 
   /** Wrap tool/backoff/question waits too. A tool must separately guard every
    * write using ledger.withActiveWrite (DB) or its Git/document mutation gate.
