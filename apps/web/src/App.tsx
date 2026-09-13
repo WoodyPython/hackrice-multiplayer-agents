@@ -24,6 +24,7 @@ import { Files } from "./pages/Files";
 import { ApprovedFile } from "./pages/ApprovedFile";
 import { History } from "./pages/History";
 import { Overview } from "./pages/Overview";
+import { Agents } from "./pages/Agents";
 
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
@@ -120,6 +121,7 @@ function LiveWorkspace({ id }: { id: string }) {
   const items: NavItem[] = [
     { to: `${base}/overview`, label: "Overview", icon: "overview" },
     { to: base, label: "Tasks", icon: "board", end: true },
+    { to: `${base}/agents`, label: "Agents", icon: "agents" },
     { to: `${base}/files`, label: "Files", icon: "files" },
     { to: `${base}/history`, label: "History", icon: "history" },
   ];
@@ -204,6 +206,7 @@ function LiveWorkspace({ id }: { id: string }) {
         <Route path="files" element={<Files workspaceId={id} />} />
         <Route path="history" element={<History workspaceId={id} />} />
         <Route path="overview" element={<Overview workspaceId={id} />} />
+        <Route path="agents" element={<Agents workspaceId={id} />} />
         <Route
           path="*"
           element={

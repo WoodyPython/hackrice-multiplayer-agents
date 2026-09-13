@@ -206,6 +206,29 @@ export class WorkspaceApi {
     );
   }
 
+  /** Full workspace traversal; mutable task timestamps cannot move rows between pages. */
+  async listAllTasks(workspaceId: string, signal?: AbortSignal): Promise<TaskSummary[]> {
+    uuidSchema.parse(workspaceId);
+    const tasks = new Map<string, TaskSummary>();
+    let afterId: string | undefined;
+    while (!signal?.aborted) {
+      const query = new URLSearchParams({ order: 'id', limit: '100' });
+      if (afterId) query.set('afterId', afterId);
+      const page = z.object({ tasks: z.array(taskSummarySchema) }).parse(
+        await this.request(`/${workspaceId}/tasks?${query}`, 'GET', undefined, workspaceId, signal),
+      ).tasks;
+      for (const task of page) {
+        if (task.workspaceId !== workspaceId || (afterId && task.id <= afterId))
+          throw new Error('Invalid workspace task page');
+        tasks.set(task.id, task);
+      }
+      if (page.length < 100) break;
+      afterId = page.at(-1)!.id;
+    }
+    signal?.throwIfAborted();
+    return [...tasks.values()];
+  }
+
   async postTask(
     workspaceId: string,
     input: PostTaskRequest,

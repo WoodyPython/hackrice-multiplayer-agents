@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import {
+  Bot,
   Clock3,
   Compass,
   FileText,
@@ -18,7 +19,7 @@ import { Badge } from "./ui/badge";
 export type NavItem = {
   to: string;
   label: string;
-  icon: "overview" | "board" | "files" | "history" | "settings";
+  icon: "overview" | "board" | "agents" | "files" | "history" | "settings";
   end?: boolean;
   count?: number;
 };
@@ -26,6 +27,7 @@ export type NavItem = {
 const ICONS = {
   overview: Compass,
   board: LayoutGrid,
+  agents: Bot,
   files: FileText,
   history: Clock3,
   settings: Settings,

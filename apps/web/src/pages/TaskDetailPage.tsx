@@ -589,7 +589,9 @@ function TaskDetailState({
     <TaskDetail
       task={task}
       base={base}
-      backTo={params.get("from") === "history" ? `${base}/history` : undefined}
+      backTo={params.get("from") === "history" ? `${base}/history`
+        : params.get("from") === "agents" ? `${base}/agents` : undefined}
+      backLabel={params.get("from") === "agents" ? "Back to agents" : undefined}
       options={options}
       banner={
         <>

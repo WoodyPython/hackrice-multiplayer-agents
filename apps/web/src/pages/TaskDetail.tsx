@@ -46,10 +46,12 @@ export function TaskDetail({
   initialTab,
   attention,
   backTo,
+  backLabel = "Back to history",
 }: {
   task: Task;
   base: string;
   backTo?: string;
+  backLabel?: string;
   options: TaskInputOption[];
   action?: ReactNode;
   /** Run-level explanation (§4.7), shown above the panels rather than in a tab. */
@@ -85,7 +87,7 @@ export function TaskDetail({
 
   return (
     <>
-      <BackLink to={backTo ?? base}>{backTo ? "Back to history" : "All tasks"}</BackLink>
+      <BackLink to={backTo ?? base}>{backTo ? backLabel : "All tasks"}</BackLink>
 
       <PageHeading
         badge={
