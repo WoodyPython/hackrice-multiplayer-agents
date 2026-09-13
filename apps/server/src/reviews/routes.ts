@@ -2,11 +2,10 @@ import { z } from 'zod';
 import { ApiError, prepareReviewRequestSchema, resolveCandidateRequestSchema, reviewDetailSchema,
   reviewCandidateDataSchema, reviewPreviewSchema, reviewEvidenceSchema, reviewAssessmentSchema,
   uuidSchema, repoPathSchema, type ReviewAssessmentService,
-  applyReviewRequestSchema, applyReviewResponseSchema, OWNER_KEY_HEADER } from '@app/contracts';
+  applyReviewRequestSchema, applyReviewResponseSchema } from '@app/contracts';
 import type { FastifyInstance } from 'fastify';
 import { parseOrThrow } from '../http/errors.js';
 import type { LocalReviewService } from './service.js';
-import { readOwnerKeyHeader } from '../workspaces/owner-key.js';
 import { ReviewAssessmentError } from '../orchestration/review-assessment.js';
 import type { ReviewEvidenceComposer } from '../orchestration/review-evidence.js';
 
@@ -36,8 +35,9 @@ export async function registerReviewRoutes(app: FastifyInstance, reviews: LocalR
   app.post('/api/workspaces/:workspaceId/reviews/:reviewId/apply', async (request) => {
     const params = parseOrThrow(reviewParams, request.params);
     const body = parseOrThrow(applyReviewRequestSchema.strict(), request.body);
-    return applyReviewResponseSchema.parse(await reviews.apply({ ...params, candidateSha: body.candidateSha,
-      ownerKey: readOwnerKeyHeader(request.headers[OWNER_KEY_HEADER]) }));
+    // Apply is open to any link holder; see LocalReviewService.apply for why
+    // and for what that costs. The owner key is not read here any more.
+    return applyReviewResponseSchema.parse(await reviews.apply({ ...params, candidateSha: body.candidateSha }));
   });
   app.post('/api/workspaces/:workspaceId/tasks/:taskId/review', async (request, reply) => {
     const { workspaceId, taskId } = parseOrThrow(taskParams, request.params);

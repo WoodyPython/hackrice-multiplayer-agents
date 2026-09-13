@@ -171,10 +171,7 @@ function LiveWorkspace({ id }: { id: string }) {
         <Route
           path="tasks/:taskId"
           element={
-            <TaskDetailPage
-              workspaceId={id}
-              isOwner={visibleWorkspace.isOwner}
-            />
+            <TaskDetailPage workspaceId={id} />
           }
         />
         <Route

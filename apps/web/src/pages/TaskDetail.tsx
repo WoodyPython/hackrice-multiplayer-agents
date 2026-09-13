@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { FileText, PencilLine, Square } from "lucide-react";
 import { type TaskDetail as Task } from "@app/contracts";
 import { statusPresentation } from "../board";
@@ -42,6 +42,7 @@ export function TaskDetail({
   renderTab,
   onEditRequirements,
   initialTab,
+  attention,
 }: {
   task: Task;
   base: string;
@@ -52,6 +53,14 @@ export function TaskDetail({
   renderTab: (tab: TaskTab) => ReactNode;
   onEditRequirements?: () => void;
   /**
+   * Tabs with something waiting on the reader, marked with a dot.
+   *
+   * The dot is accompanied by off-screen text, because a coloured dot alone
+   * conveys nothing to a screen reader and nothing to anyone who cannot
+   * distinguish it from the tab label's own colour.
+   */
+  attention?: readonly TaskTab[];
+  /**
    * Opens on a specific tab. §4.2 makes Discussion the default; this exists so
    * an action that says it will show you the review actually does, rather than
    * landing on the task and leaving the reader to find it.
@@ -59,6 +68,13 @@ export function TaskDetail({
   initialTab?: TaskTab;
 }) {
   const [tab, setTab] = useState<TaskTab>(initialTab ?? "Discussion");
+  // `initialTab` is the `?tab=` query parameter. Following it after mount is
+  // what lets an action elsewhere on the page say "read the changes" and
+  // actually land there, and it keeps the opened tab in the URL so the view is
+  // linkable. A user's own click still wins until the parameter changes again.
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
   const presentation = statusPresentation[task.status];
 
   return (
@@ -216,6 +232,15 @@ export function TaskDetail({
                 )}
               >
                 {name}
+                {attention?.includes(name) && (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="ml-1.5 inline-block size-1.5 rounded-full bg-status-review align-middle"
+                    />
+                    <span className="sr-only"> (needs attention)</span>
+                  </>
+                )}
               </button>
             ))}
           </div>

@@ -9,9 +9,14 @@ coverage/
 .env.*
 !.env.example
 
-# Local Git data root used by Role D (repos/worktrees)
-data/
-local-tasks/
+# Local Git data root used by Role D (repos/worktrees). Anchored: an unanchored
+# `data/` matches at any depth, which would also swallow .claude/skills/*/data.
+/data/
+/local-tasks/
+
+# Local agent tooling. Teammates on Codex bring their own skills, so this stays
+# a personal working aid rather than a repository-wide one.
+/.claude/
 
 .DS_Store
 *.log
@@ -27,3 +32,4 @@ desktop.ini
 # Test/tool caches
 .vitest/
 .vite/
+__pycache__/

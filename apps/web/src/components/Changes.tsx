@@ -13,6 +13,7 @@ import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
 import { humanizeStatus, toneFor } from "../board";
 import { cn } from "../lib/utils";
+import { DiffView } from "./DiffView";
 import { EmptyState } from "./EmptyState";
 import { Badge, Dot } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -33,20 +34,22 @@ import { ErrorText, Notice, Path, Skeleton } from "./ui/misc";
  * means the human draft or approved workspace; never label both simply
  * 'ours'." Every side carries which of the three sources it is.
  *
- * **Apply is the server's decision.** The button is hidden without an owner
- * key, and that is presentation only — the server checks the key on every
- * apply, and §4.6 says hiding a button is insufficient. It also sends the
- * candidate SHA it was looking at, so a review that moved underneath is
- * refused rather than silently applying something else.
+ * **Apply is open to every contributor.** This departs from §10.3's owner key,
+ * deliberately: owner-only apply blocked the collaboration the product is for,
+ * and there is no identity to build a narrower rule on — §1.3 forbids treating
+ * a guest label as authority. The server enforces the same thing, because §4.6
+ * is right that hiding a button is insufficient; showing one the server would
+ * refuse is equally broken, which is why both changed together.
+ *
+ * **Apply still sends the candidate SHA it was looking at**, so a review that
+ * moved underneath is refused rather than silently applying something else.
  */
 export function Changes({
   task,
-  isOwner,
   onApplied,
   staleSignal,
 }: {
   task: TaskDetail;
-  isOwner: boolean;
   onApplied: () => void;
   /**
    * Identifies the most recent `review.stale` event on this task (§7.6).
@@ -256,9 +259,8 @@ export function Changes({
             Generated content was not executed. Read it as text.
           </p>
 
-          {current.status === "ready" &&
-            (isOwner ? (
-              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-muted/30 p-4">
+          {current.status === "ready" && (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-muted/30 p-4">
                 <Button
                   variant="primary"
                   disabled={busy || detail.conflicts.length > 0}
@@ -278,18 +280,18 @@ export function Changes({
                   <ShieldCheck aria-hidden="true" />
                   {busy ? "Applying…" : "Apply these changes"}
                 </Button>
-                {detail.conflicts.length > 0 && (
-                  <small className="text-[11.5px] text-muted-foreground">
-                    Resolve the conflicts above before applying.
-                  </small>
-                )}
-              </div>
-            ) : (
-              <p className="text-[13px] text-muted-foreground">
-                Only the workspace owner can apply changes. You can still
-                discuss them on the task.
-              </p>
-            ))}
+              {detail.conflicts.length > 0 ? (
+                <small className="text-[11.5px] text-muted-foreground">
+                  Resolve the decisions above before applying.
+                </small>
+              ) : (
+                <small className="text-[11.5px] text-muted-foreground">
+                  This publishes the changes to the approved files for everyone
+                  in the workspace.
+                </small>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -490,9 +492,7 @@ function ChangedFile({
       </summary>
 
       <div className="border-t border-border">
-        <pre className="cf-diff max-h-96 overflow-auto p-3.5 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
-          {file.diff}
-        </pre>
+        <DiffView diff={file.diff} />
 
         {markdown && file.changeKind !== "deleted" && (
           <div className="border-t border-border bg-muted/30 p-3.5">

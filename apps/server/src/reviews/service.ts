@@ -12,7 +12,6 @@ import { PgReviewStore } from '../runs/review-store.js';
 import { TaskDocumentGate } from '../collaboration/gate.js';
 import { filePath } from '../git/files.js';
 import { LiveDocumentCoordinator } from '../collaboration/coordinator.js';
-import { ownerKeyMatches } from '../workspaces/owner-key.js';
 import { applyReviewRequestSchema } from '@app/contracts';
 import { invalidateTaskReviews } from '../tasks/mutation-guard.js';
 
@@ -162,13 +161,33 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
     });
   }
 
-  async apply(input: { workspaceId: string; reviewId: string; candidateSha: string; ownerKey?: string }) {
+  /**
+   * Apply is open to any holder of the workspace link, not only the owner.
+   *
+   * This is a deliberate departure from design section 10.3 ("Apply takes a
+   * review ID and the browser-held owner key"), made because owner-only apply
+   * blocked the collaboration the product is for. It is recorded here rather
+   * than only in the changelog because the removed lines were a permission
+   * check, and a future reader should find the reason at the site.
+   *
+   * What it costs, stated plainly: the workspace URL is now sufficient to
+   * publish to approved main. Section 1.2 already says the contribution URL is
+   * link access rather than identity, so this widens what link access permits
+   * rather than inventing a new trust level. What it does NOT do is accept a
+   * claimed identity: section 1.3 forbids treating a guest label as authority,
+   * and no caller-supplied "I am involved in this task" flag is consulted —
+   * there is nothing to verify it against. Either the link is enough or the
+   * owner key is; a self-asserted middle ground would only look like security.
+   *
+   * Every other owner-gated operation is untouched: workspace settings and
+   * guidance still require the key.
+   */
+  async apply(input: { workspaceId: string; reviewId: string; candidateSha: string }) {
     const workspaceId = uuidSchema.parse(input.workspaceId).toLowerCase(), reviewId = uuidSchema.parse(input.reviewId).toLowerCase();
     const { candidateSha } = applyReviewRequestSchema.parse({ candidateSha: input.candidateSha });
-    const workspace = await this.deps.db.selectFrom('workspaces').select('owner_key_hash').where('id', '=', workspaceId).executeTakeFirst();
+    const workspace = await this.deps.db.selectFrom('workspaces').select('id').where('id', '=', workspaceId).executeTakeFirst();
     if (!workspace) throw new ApiError('WORKSPACE_NOT_FOUND');
     const found = await this.scoped(workspaceId, reviewId);
-    if (!ownerKeyMatches(input.ownerKey, workspace.owner_key_hash)) throw new ApiError('OWNER_KEY_REQUIRED', 'This action requires the workspace owner key.');
     const collaboration = this.deps.collaboration;
     if (!(collaboration instanceof LiveDocumentCoordinator) || !this.deps.bootId) throw new ApiError('INVALID_STATE', 'Apply is not configured.');
     return this.operations.run(found.taskId, () => this.deps.git.withApply(workspaceId, (git) => collaboration.withApply(found.taskId, async (live) => {
@@ -205,12 +224,13 @@ export class LocalReviewService implements Pick<ReviewService, 'prepare' | 'reso
       // The pending row is committed first. Only final validation + the single ref update
       // run under DB row locks, preventing requirements/Start/guidance races.
       try { await this.deps.db.transaction().execute(async (db) => {
-        const lockedWorkspace = await db.selectFrom('workspaces').selectAll().where('id', '=', workspaceId).forNoKeyUpdate().executeTakeFirstOrThrow();
+        // Still locked, for ordering against guidance/Start writers. The owner
+        // re-check that used to read this row is gone with the gate above.
+        await db.selectFrom('workspaces').select('id').where('id', '=', workspaceId).forNoKeyUpdate().executeTakeFirstOrThrow();
         await db.selectFrom('tasks').selectAll().where('id', '=', review.taskId).forUpdate().executeTakeFirstOrThrow();
         const lockedReview = await db.selectFrom('reviews').selectAll().where('id', '=', reviewId).forUpdate().executeTakeFirstOrThrow();
         if (alreadyApplied && (!['ready', 'applied'].includes(lockedReview.status) ||
             !await this.publishedStateMatches(db, review, operation!, artifact.context))) throw new ApiError('RUN_INTERRUPTED', 'Published review metadata requires reconciliation.');
-        if (!ownerKeyMatches(input.ownerKey, lockedWorkspace.owner_key_hash)) throw new ApiError('OWNER_KEY_REQUIRED', 'This action requires the workspace owner key.');
         if (!alreadyApplied) {
           if (lockedReview.status !== 'ready' || lockedReview.candidate_sha !== candidateSha) throw new ApiError('REVIEW_STALE');
           await db.selectFrom('draft_files').select('id').where('task_id', '=', review.taskId).forUpdate().execute();

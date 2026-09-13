@@ -79,16 +79,37 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
       expect(await runtime.reviews.reconcilePreviousApplies()).toEqual({ applied: 0, pending: 0, ambiguous: 0 });
       expect(await db.db.selectFrom('task_events').select('id').where('task_id', '=', taskId).where('type', '=', 'task.applied').execute()).toHaveLength(1);
     } else if (outcome === 'expected') {
-      expect((await apply(review, 'wrong')).statusCode).toBe(403);
       expect((await apply(review)).statusCode).toBe(200);
     }
   });
 
-  it('requires the real owner key and publishes the exact multi-file candidate once', async () => {
+  it('lets a contributor with no owner key apply', async () => {
+    // Apply is deliberately no longer owner-gated (see LocalReviewService.apply):
+    // possession of the workspace link is the whole permission. A contributor
+    // with no key, and one holding the wrong key, both succeed. Both assertions
+    // previously expected 403 and ARE the policy, not incidental setup --
+    // restoring them silently would restore the old rule.
     const review = await prepare();
-    const absent = await runtime.app.inject({ method: 'POST', url: `/api/workspaces/${workspaceId}/reviews/${review.review.id}/apply`, payload: { candidateSha: review.candidateSha } });
+    const absent = await runtime.app.inject({ method: 'POST',
+      url: `/api/workspaces/${workspaceId}/reviews/${review.review.id}/apply`, payload: { candidateSha: review.candidateSha } });
+    expect(absent.statusCode, absent.body).toBe(200);
+    expect(absent.json().alreadyApplied).toBe(false);
+    expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(review.candidateSha);
+
+    // A wrong key is not rejected either -- the key is simply never consulted.
     const wrong = await apply(review, 'wrong');
-    expect(absent.statusCode).toBe(403); expect(wrong.body).toBe(absent.body);
+    expect(wrong.statusCode, wrong.body).toBe(200);
+    expect(wrong.json().alreadyApplied).toBe(true);
+
+    // Settings stay owner-only: this change widened apply, nothing else.
+    const settings = await runtime.app.inject({ method: 'PATCH', url: `/api/workspaces/${workspaceId}`,
+      payload: { guidance: 'No key supplied.' } });
+    expect(settings.statusCode).toBe(403);
+    expect(settings.json().error.code).toBe('OWNER_KEY_REQUIRED');
+  });
+
+  it('publishes the exact multi-file candidate once', async () => {
+    const review = await prepare();
     expect((await runtime.git.initialize(workspaceId)).mainSha).toBe(review.review.source.mainSha);
     const results = await Promise.all([apply(review), apply(review), apply(review)]);
     for (const result of results) expect(result.statusCode, result.body).toBe(200);
@@ -217,11 +238,10 @@ describe('D07 owner apply', { timeout: 60_000 }, () => {
     } finally { acquired.release(); }
   });
 
-  it('requires fresh owner validation when retrying a pending operation still at expected main', async () => {
+  it('retries a pending operation still at expected main', async () => {
     const review = await prepare();
     const store = new PgReviewStore({ db: db.db });
     await store.begin({ workspaceId, reviewId: review.review.id, candidateSha: review.candidateSha, expectedMainSha: review.review.source.mainSha, bootId: randomUUID() });
-    expect((await apply(review, 'wrong')).statusCode).toBe(403);
     const response = await apply(review); expect(response.statusCode, response.body).toBe(200);
     expect(response.json().alreadyApplied).toBe(false);
   });

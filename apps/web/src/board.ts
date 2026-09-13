@@ -54,7 +54,7 @@ export const statusPresentation = {
   ready_for_review: {
     column: "Review",
     label: "Ready for review",
-    summary: "Owner review needed",
+    summary: "Waiting for someone to review",
     tone: "review",
   },
   conflict: {

@@ -20,6 +20,7 @@ import { inputOptionsFrom, type TaskInputOption } from "../task-inputs";
 import { Assignments } from "../components/Assignments";
 import { Changes } from "../components/Changes";
 import { Discussion, useDiscussion } from "../components/Discussion";
+import { ReviewReady } from "../components/ReviewReady";
 import { RunOutcome } from "../components/RunOutcome";
 import { SavedWork } from "../components/SavedWork";
 import { EmptyState } from "../components/EmptyState";
@@ -48,25 +49,13 @@ const POLL_IDLE_MS = 5000;
  * the other is the server's unique active-run index, which we cannot see from
  * here and must not assume is doing the work alone.
  */
-export function TaskDetailPage({
-  workspaceId,
-  isOwner,
-}: {
-  workspaceId: string;
-  /**
-   * Presentation only. The server checks the owner key on every apply, so this
-   * decides what to render and never what is permitted (§4.6: "hiding a button
-   * is insufficient").
-   */
-  isOwner: boolean;
-}) {
+export function TaskDetailPage({ workspaceId }: { workspaceId: string }) {
   const { taskId } = useParams();
   return (
     <TaskDetailState
       key={`${workspaceId}:${taskId?.toLowerCase()}`}
       workspaceId={workspaceId}
       taskId={taskId?.toLowerCase()}
-      isOwner={isOwner}
     />
   );
 }
@@ -74,13 +63,11 @@ export function TaskDetailPage({
 function TaskDetailState({
   workspaceId,
   taskId,
-  isOwner,
 }: {
   workspaceId: string;
   taskId: string | undefined;
-  isOwner: boolean;
 }) {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const { api, session } = useBrowser();
   const [task, setTask] = useState<Task | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -272,6 +259,12 @@ function TaskDetailState({
     });
   }
 
+  // §7.6: continued typing invalidates a review. The event record is already
+  // polled here, so both the banner and the Changes tab learn about it without
+  // a second loop of their own.
+  const staleSignal = [...events]
+    .reverse()
+    .find((event) => event.type === "review.stale")?.id;
   const startable =
     task.kind === "agent_task" &&
     task.activeRunId === null &&
@@ -433,15 +426,7 @@ function TaskDetailState({
         return (
           <Changes
             task={task}
-            isOwner={isOwner}
-            staleSignal={
-              // §7.6: continued typing invalidates a review. The event record
-              // is already polled here, so the Changes tab learns it without a
-              // second loop of its own.
-              [...events]
-                .reverse()
-                .find((event) => event.type === "review.stale")?.id
-            }
+            staleSignal={staleSignal}
             onApplied={() => {
               reload();
               thread.refresh();
@@ -522,6 +507,17 @@ function TaskDetailState({
       banner={
         <>
           {pollError && <ErrorText role="alert">{pollError}</ErrorText>}
+          <ReviewReady
+            task={task}
+            staleSignal={staleSignal}
+            onOpenReview={() => {
+              // Through the URL rather than component state, so the opened
+              // review is linkable and the back button behaves.
+              const next = new URLSearchParams(params);
+              next.set("tab", "Changes");
+              setParams(next, { replace: true });
+            }}
+          />
           <RunOutcome
             events={events}
             status={task.status}
@@ -547,6 +543,7 @@ function TaskDetailState({
       }
       action={action}
       renderTab={renderTab}
+      attention={task.status === "ready_for_review" ? ["Changes"] : undefined}
       initialTab={
         // Only a tab name we actually have; a hand-edited query must not
         // produce a panel with nothing in it.

@@ -72,6 +72,24 @@
   --color-status-review: #7248a8;
   --color-status-done: #1d7a54;
 
+  /*
+   * Diff surfaces. Derived from the status hues above rather than generic
+   * red/green so a diff reads as part of this palette. The row tints stay pale
+   * enough that foreground text keeps well over 4.5:1 on them; the -word tints
+   * are the intra-line emphasis and sit one step stronger.
+   *
+   * Colour is never the only signal: every row also carries a +/- glyph in the
+   * gutter, because a red/green-only diff is unreadable for the ~8% of men
+   * with a red-green deficiency and invisible to a screen reader.
+   */
+  --color-diff-add-bg: #e9f5ef;
+  --color-diff-add-word: #bfe4d1;
+  --color-diff-add-ink: #14603f;
+  --color-diff-del-bg: #fdecea;
+  --color-diff-del-word: #f7cfcc;
+  --color-diff-del-ink: #8f1c19;
+  --color-diff-meta: #eef0f4;
+
   --radius: 0.75rem;
 
   --shadow-xs: 0 1px 2px 0 rgb(19 30 51 / 0.05);
@@ -116,6 +134,14 @@
   --color-status-warn: #d9a441;
   --color-status-review: #b18ce0;
   --color-status-done: #4fbf8f;
+
+  --color-diff-add-bg: #15291f;
+  --color-diff-add-word: #1f4a35;
+  --color-diff-add-ink: #7fd9ae;
+  --color-diff-del-bg: #2b1a1c;
+  --color-diff-del-word: #4d2529;
+  --color-diff-del-ink: #f0918b;
+  --color-diff-meta: #1f2532;
 
   color-scheme: dark;
 }

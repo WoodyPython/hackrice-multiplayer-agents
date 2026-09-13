@@ -807,6 +807,75 @@ async function openChanges(
   return { user, calls };
 }
 
+describe("review is announced, not buried in a tab", () => {
+  async function openTask(overrides: Parameters<typeof server>[0] = {}) {
+    const user = userEvent.setup();
+    const session = new BrowserSession();
+    const { transport, calls } = server({
+      [`GET /tasks/${taskId}`]: () => json({ ...task, status: "ready_for_review" }),
+      ...overrides,
+    });
+    render(
+      <MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
+        <App session={session} api={new WorkspaceApi(session, transport)} />
+      </MemoryRouter>,
+    );
+    return { user, calls };
+  }
+
+  it("says the work is finished in plain language, above the tabs", async () => {
+    await openTask();
+    // The point of the banner is that nobody has to know what a "review" is,
+    // or to think to open a tab, to find out the agents are done.
+    expect(
+      await screen.findByText("The agents have finished their work"),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Review the changes/ }),
+    ).toBeTruthy();
+    // ...and the tab itself is marked, for anyone who scrolled past it.
+    expect(
+      within(screen.getByRole("tab", { name: /Changes/ })).getByText(
+        "(needs attention)",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("prepares the review and lands the reader on it in one click", async () => {
+    const { user, calls } = await openTask({
+      [`POST /tasks/${taskId}/review`]: () => json(reviewDetail()),
+      [`GET /reviews/${reviewId}`]: () => json(reviewDetail()),
+    });
+    await user.click(
+      await screen.findByRole("button", { name: /Review the changes/ }),
+    );
+    // §4.6 keeps preparation explicit; this makes asking one obvious click
+    // rather than removing the ask.
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "POST" && call.url.endsWith(`/tasks/${taskId}/review`),
+      ),
+    ).toBe(true);
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("tab", { name: /Changes/ })
+          .getAttribute("aria-selected"),
+      ).toBe("true"),
+    );
+  });
+
+  it("stays out of the way until there is something to review", async () => {
+    await openTask({ [`GET /tasks/${taskId}`]: () => json(task) });
+    await screen.findByRole("tab", { name: /Changes/ });
+    expect(
+      screen.queryByText("The agents have finished their work"),
+    ).toBeNull();
+    expect(screen.queryByText("(needs attention)")).toBeNull();
+  });
+});
+
 describe("review", () => {
   it("offers to prepare one rather than claiming there are no changes", async () => {
     const { user, calls } = await openChanges({});
@@ -854,7 +923,7 @@ describe("review", () => {
     );
   });
 
-  it("hides Apply from a contributor but still shows the changes", async () => {
+  it("offers Apply to a contributor without the owner key", async () => {
     await openChanges(
       {
         [`GET /tasks/${taskId}/reviews`]: () =>
@@ -866,12 +935,14 @@ describe("review", () => {
 
     const panel = await screen.findByRole("tabpanel");
     expect(within(panel).getByText("documents/contributing.md")).toBeTruthy();
-    // Presentation only -- the server checks the key on every apply. §4.6:
-    // "hiding a button is insufficient."
+    // Apply is deliberately no longer owner-gated. This assertion IS the
+    // policy: it previously required the button to be absent for a non-owner,
+    // and the server gate was removed in the same change, because a visible
+    // button the server refuses is as broken as a hidden one it would allow.
     expect(
-      screen.queryByRole("button", { name: "Apply these changes" }),
-    ).toBeNull();
-    expect(screen.getByText(/Only the workspace owner can apply/)).toBeTruthy();
+      screen.getByRole("button", { name: "Apply these changes" }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Only the workspace owner can apply/)).toBeNull();
   });
 
   it("blocks Apply on a stale review and offers a refresh", async () => {
