@@ -59,6 +59,43 @@ session hook and `bindGuestAwareness`. It publishes the current label immediatel
 and on renames, without reconnecting or changing identity. A03 attaches it to
 the active document's awareness; there is no participant directory.
 
+## Design system
+
+The interface is CoFlow: deep navy on a warm off-white ground, taken from the
+wordmark. Everything visual is driven from one place — `src/styles.css`.
+
+- **Tokens.** `@theme` defines the brand ramp (`--color-navy-*`), a neutral ramp
+  cooled toward the navy (`--color-ink-*`), and semantic surfaces
+  (`--color-background`, `--color-card`, `--color-primary`, `--color-border`,
+  `--color-ring`, …). The names follow the shadcn/ui convention, so a component
+  written against that vocabulary — the 21st.dev catalogue included — drops in
+  without translating class names. Use the semantic token, not the raw ramp,
+  unless you are deliberately reaching for the brand colour.
+- **Dark mode.** A `data-theme` attribute on `<html>` redefines the semantic
+  tokens; nothing else changes. `index.html` stamps the stored choice before
+  first paint so there is no flash, and `src/theme.ts` owns reading, resolving
+  and persisting it. A component that only uses semantic tokens needs no `dark:`
+  variants at all.
+- **Primitives.** `src/components/ui/` holds `Button`/`ButtonLink`, `Card`,
+  `Badge`/`Dot`, the form controls (`Input`, `Textarea`, `Select`, `Label`,
+  `Checkbox`), and `Skeleton`/`Notice`/`Path`/`Avatar`/`Eyebrow`. Prefer these
+  over ad-hoc Tailwind on a bare element, so focus rings, disabled states and
+  dark mode stay consistent.
+- **State colour is data, not a class name.** `src/board.ts` maps every status —
+  tasks, attempts, assignments, reviews, apply operations — to a `Tone`, and
+  badges and dots take that tone. Never build a class out of a status string: a
+  status the API adds later then renders neutral rather than unstyled.
+- **Chrome.** `AppShell` owns the sidebar, the mobile slide-over, the sticky
+  topbar and the `#main` landmark. The live workspace and the fixture demo both
+  render through it, so the two cannot drift apart.
+- **Icons** come from `lucide-react` and are always `aria-hidden`; the
+  accessible name is the adjacent text.
+
+Tailwind v4 runs through `@tailwindcss/vite` with no config file — the tokens in
+`styles.css` are the configuration. Hand-written CSS is limited to what
+utilities cannot reach: the Monaco frame, the Markdown preview (`.cf-prose`),
+remote-cursor styling, and the scrollbar treatment.
+
 ## Verification
 
 ```sh

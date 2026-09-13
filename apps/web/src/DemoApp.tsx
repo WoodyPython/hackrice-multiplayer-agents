@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   Link,
-  NavLink,
   Route,
   Routes,
   useLocation,
@@ -9,6 +8,7 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
+import { ArrowRight, CircleAlert, FlaskConical } from "lucide-react";
 import { isStartableTaskStatus, type TaskDetail as Task } from "@app/contracts";
 import {
   createFixtureTask,
@@ -16,8 +16,16 @@ import {
   summarize,
   workspace,
 } from "./fixtures";
+import { AppShell, Breadcrumb, type NavItem } from "./components/AppShell";
 import { EmptyState } from "./components/EmptyState";
+import { Wordmark } from "./components/Logo";
+import { BackLink, PageHeading } from "./components/PageHeading";
 import { RequirementForm } from "./components/RequirementForm";
+import { ThemeToggle } from "./components/ThemeToggle";
+import { Badge, Dot } from "./components/ui/badge";
+import { Button, ButtonLink } from "./components/ui/button";
+import { Select } from "./components/ui/field";
+import { Eyebrow, Skeleton } from "./components/ui/misc";
 import { TaskBoard } from "./pages/TaskBoard";
 import { TaskDetail, type TaskTab } from "./pages/TaskDetail";
 import { inputOptions } from "./fixtures";
@@ -61,28 +69,34 @@ function TaskRoute({ tasks, base }: { tasks: Task[]; base: string }) {
         task.kind === "agent_task" &&
         task.activeRunId === null &&
         isStartableTaskStatus(task.status) ? (
-          <div className="start-action">
+          <div className="flex max-w-xs flex-col items-stretch gap-2 sm:items-end">
             {/* Inert here on purpose: this route has no backend to start. */}
-            <button className="primary" disabled aria-describedby="start-help">
+            <Button variant="primary" disabled aria-describedby="start-help">
               Start task
-            </button>
-            <small id="start-help">
+            </Button>
+            <small
+              id="start-help"
+              className="text-[11px] text-muted-foreground sm:text-right"
+            >
               Execution is not connected in this preview.
             </small>
           </div>
         ) : undefined
       }
       renderTab={(tab) => (
-        <EmptyState title={demoTabCopy[tab][0]}>{demoTabCopy[tab][1]}</EmptyState>
+        <EmptyState title={demoTabCopy[tab][0]}>
+          {demoTabCopy[tab][1]}
+        </EmptyState>
       )}
     />
   ) : (
     <EmptyState
       title="Task not found"
+      icon={CircleAlert}
       action={
-        <Link className="button" to={base}>
+        <ButtonLink variant="primary" to={base}>
           Back to tasks
-        </Link>
+        </ButtonLink>
       }
     >
       This task isn't available in this workspace. Check the link or return to
@@ -100,19 +114,25 @@ function WorkspaceShell() {
   const location = useLocation();
   const base = `/demo/w/${workspace.id}`;
   const view = search.get("view") ?? "sample";
+  const items: NavItem[] = [
+    { to: base, label: "Tasks", icon: "board", end: true, count: tasks.length },
+    { to: `${base}/files`, label: "Files", icon: "files" },
+    { to: `${base}/history`, label: "History", icon: "history" },
+  ];
   useEffect(() => {
-    document.title = `${workspace.name} — Common`;
-    document.getElementById("main")?.focus();
+    document.title = `${workspace.name} — CoFlow`;
+    document.getElementById("main")?.focus({ preventScroll: true });
   }, [location.pathname]);
   if (workspaceId !== workspace.id)
     return (
-      <main>
+      <main className="mx-auto w-full max-w-2xl px-6 py-20">
         <EmptyState
           title="Workspace not found"
+          icon={CircleAlert}
           action={
-            <Link className="button" to="/">
+            <ButtonLink variant="primary" to="/">
               Back home
-            </Link>
+            </ButtonLink>
           }
         >
           Check the workspace link or open the sample workspace.
@@ -120,249 +140,196 @@ function WorkspaceShell() {
       </main>
     );
   return (
-    <div className="app-shell">
-      <a className="skip-link" href="#main">
-        Skip to content
-      </a>
-      <aside className="sidebar">
-        <Link to="/" className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            c
-          </span>
-          common<span className="brand-period">.</span>
-        </Link>
-        <details className="workspace-menu">
-          <summary>
-            <span className="workspace-icon">L</span>
-            <span>
-              {workspace.name}
-              <small>Shared workspace</small>
-            </span>
-            <span aria-hidden="true">⌄</span>
-          </summary>
-          <Link to={`${base}/settings`}>Workspace settings</Link>
-        </details>
-        <span className="nav-caption">Workspace</span>
-        <nav aria-label="Workspace">
-          <NavLink to={base} end>
-            <span aria-hidden="true">▦</span>Tasks
-            <span className="nav-count">{tasks.length}</span>
-          </NavLink>
-          <NavLink to={`${base}/files`}>
-            <span aria-hidden="true">▤</span>Files
-          </NavLink>
-          <NavLink to={`${base}/history`}>
-            <span aria-hidden="true">◷</span>History
-          </NavLink>
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="collaboration-note">
-            <span aria-hidden="true">✳</span>
-            <p>
-              A shared space.
-              <br />A little more possible.
-            </p>
-          </div>
-          <span className="guest-label">
-            <span className="avatar">{guest.name[0]}</span>
-            {guest.name}
-            <small>Guest contributor</small>
-          </span>
-        </div>
-      </aside>
-      <div className="main-shell">
-        <div className="topbar">
-          <span>
-            Workspace <span className="breadcrumb-slash">/</span>{" "}
-            {workspace.name}
-          </span>
-          <span className="preview-badge">
-            <span />
+    <AppShell
+      workspaceName={workspace.name}
+      workspaceSubtitle="Sample workspace"
+      settingsTo={`${base}/settings`}
+      items={items}
+      guestName={guest.name}
+      guestRole="Guest contributor"
+      breadcrumb={<Breadcrumb trail={["Workspace", workspace.name]} />}
+      topbarEnd={
+        <div className="flex items-center gap-2.5">
+          <Badge tone="info" className="hidden sm:inline-flex">
+            <Dot tone="info" live />
             Sample workspace
-          </span>
+          </Badge>
           <GuestNameControl />
         </div>
-        <div className="preview-strip">
-          <span>Interactive preview · Changes last until you reload.</span>
-          <label>
-            Preview state{" "}
-            <select
-              aria-label="Preview state"
-              value={view}
-              onChange={(event) =>
-                setSearch(
-                  event.target.value === "sample"
-                    ? {}
-                    : { view: event.target.value },
-                )
-              }
-            >
-              <option value="sample">Sample data</option>
-              <option value="empty">Empty</option>
-              <option value="loading">Loading</option>
-              <option value="error">Load error</option>
-            </select>
+      }
+      strip={
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/40 px-4 py-2 sm:px-6 lg:px-8">
+          <span className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+            <FlaskConical aria-hidden="true" className="size-3.5" />
+            Interactive preview · Changes last until you reload.
+          </span>
+          <label className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+            Preview state
+            <span className="w-36">
+              <Select
+                aria-label="Preview state"
+                value={view}
+                className="h-8 text-[11.5px]"
+                onChange={(event) =>
+                  setSearch(
+                    event.target.value === "sample"
+                      ? {}
+                      : { view: event.target.value },
+                  )
+                }
+              >
+                <option value="sample">Sample data</option>
+                <option value="empty">Empty</option>
+                <option value="loading">Loading</option>
+                <option value="error">Load error</option>
+              </Select>
+            </span>
           </label>
         </div>
-        <main id="main" tabIndex={-1}>
-          {view === "loading" ? (
-            <section aria-busy="true" aria-label="Loading workspace">
-              <p role="status">Loading workspace…</p>
-              <div className="skeleton heading-skeleton" />
-              <div className="skeleton-grid">
-                {[0, 1, 2, 3, 4].map((index) => (
-                  <div className="skeleton" key={index} />
-                ))}
-              </div>
-            </section>
-          ) : view === "error" ? (
-            <EmptyState
-              title="We couldn't load this workspace"
-              action={<button onClick={() => setSearch({})}>Try again</button>}
-            >
-              Your work hasn't been changed. Retry loading the workspace to
-              continue.
-            </EmptyState>
-          ) : (
-            <Routes>
-              <Route
-                index
-                element={
-                  <TaskBoard
-                    tasks={view === "empty" ? [] : tasks.map(summarize)}
-                    base={base}
-                  />
-                }
+      }
+    >
+      {view === "loading" ? (
+        <section aria-busy="true" aria-label="Loading workspace">
+          <p role="status" className="sr-only">
+            Loading workspace…
+          </p>
+          <div aria-hidden="true" className="space-y-6">
+            <Skeleton className="h-10 w-1/2" />
+            <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-5">
+              {[0, 1, 2, 3, 4].map((index) => (
+                <Skeleton className="h-40" key={index} />
+              ))}
+            </div>
+          </div>
+        </section>
+      ) : view === "error" ? (
+        <EmptyState
+          title="We couldn't load this workspace"
+          icon={CircleAlert}
+          action={<Button onClick={() => setSearch({})}>Try again</Button>}
+        >
+          Your work hasn't been changed. Retry loading the workspace to
+          continue.
+        </EmptyState>
+      ) : (
+        <Routes>
+          <Route
+            index
+            element={
+              <TaskBoard
+                tasks={view === "empty" ? [] : tasks.map(summarize)}
+                base={base}
               />
-              <Route
-                path="tasks/new"
-                element={
-                  <>
-                    <Link className="back-link" to={base}>
-                      ← All tasks
-                    </Link>
-                    <header className="page-heading">
-                      <div>
-                        <span className="eyebrow">
-                          From an idea to a shared task
-                        </span>
-                        <h1>What shall we work on?</h1>
-                        <p>
-                          Post the brief first. Decide when to start together.
-                        </p>
-                      </div>
-                    </header>
-                    <RequirementForm
-                      guestLabel={guest.name}
-                      options={inputOptions}
-                      onCancel={() => navigate(base)}
-                      onSubmit={(fields) => {
-                        const task = createFixtureTask({
-                          kind: "agent_task",
-                          ...fields,
-                          creatorGuestLabel: guest.name,
-                        });
-                        setTasks((previous) => [task, ...previous]);
-                        navigate(`${base}/tasks/${task.id}`);
-                      }}
-                    />
-                  </>
-                }
-              />
-              <Route
-                path="tasks/:taskId"
-                element={<TaskRoute tasks={tasks} base={base} />}
-              />
-              <Route
-                path="files"
-                element={
-                  <>
-                    <header className="page-heading">
-                      <div>
-                        <span className="eyebrow">The shared library</span>
-                        <h1>Files</h1>
-                        <p>
-                          Approved work, source material, and drafts in one
-                          place.
-                        </p>
-                      </div>
-                    </header>
-                    <div className="library-grid">
-                      {[
-                        "Approved files",
-                        "Reference materials",
-                        "Active shared drafts",
-                      ].map((title) => (
-                        <section className="panel" key={title}>
-                          <EmptyState title={title}>
-                            File browsing and editing will connect in a later
-                            ticket.
-                          </EmptyState>
-                        </section>
-                      ))}
-                    </div>
-                  </>
-                }
-              />
-              <Route
-                path="history"
-                element={
-                  <>
-                    <header className="page-heading">
-                      <div>
-                        <span className="eyebrow">A record of progress</span>
-                        <h1>History</h1>
-                      </div>
-                    </header>
-                    <EmptyState title="The story starts with your first change">
-                      Applied changes and their associated tasks will appear
-                      here when history is connected.
+            }
+          />
+          <Route
+            path="tasks/new"
+            element={
+              <>
+                <BackLink to={base}>All tasks</BackLink>
+                <PageHeading
+                  eyebrow="From an idea to a shared task"
+                  title="What shall we work on?"
+                  description="Post the brief first. Decide when to start together."
+                />
+                <RequirementForm
+                  guestLabel={guest.name}
+                  options={inputOptions}
+                  onCancel={() => navigate(base)}
+                  onSubmit={(fields) => {
+                    const task = createFixtureTask({
+                      kind: "agent_task",
+                      ...fields,
+                      creatorGuestLabel: guest.name,
+                    });
+                    setTasks((previous) => [task, ...previous]);
+                    navigate(`${base}/tasks/${task.id}`);
+                  }}
+                />
+              </>
+            }
+          />
+          <Route
+            path="tasks/:taskId"
+            element={<TaskRoute tasks={tasks} base={base} />}
+          />
+          <Route
+            path="files"
+            element={
+              <>
+                <PageHeading
+                  eyebrow="The shared library"
+                  title="Files"
+                  description="Approved work, source material, and drafts in one place."
+                />
+                <div className="grid gap-4 lg:grid-cols-3">
+                  {[
+                    "Approved files",
+                    "Reference materials",
+                    "Active shared drafts",
+                  ].map((title) => (
+                    <EmptyState key={title} title={title}>
+                      File browsing and editing will connect in a later ticket.
                     </EmptyState>
-                  </>
+                  ))}
+                </div>
+              </>
+            }
+          />
+          <Route
+            path="history"
+            element={
+              <>
+                <PageHeading eyebrow="A record of progress" title="History" />
+                <EmptyState title="The story starts with your first change">
+                  Applied changes and their associated tasks will appear here
+                  when history is connected.
+                </EmptyState>
+              </>
+            }
+          />
+          <Route
+            path="settings"
+            element={
+              <>
+                <PageHeading
+                  eyebrow="Workspace settings"
+                  title={workspace.name}
+                  description={workspace.purpose}
+                />
+                <section className="max-w-2xl space-y-3 rounded-xl border border-border bg-card p-6 shadow-xs">
+                  <h2 className="text-[17px] font-semibold tracking-tight">
+                    Workspace guidance
+                  </h2>
+                  <p className="text-[13px] leading-relaxed text-muted-foreground">
+                    {workspace.guidance}
+                  </p>
+                  <p className="text-[13px] text-muted-foreground">
+                    Owner controls will be available when workspace creation is
+                    connected.
+                  </p>
+                </section>
+              </>
+            }
+          />
+          <Route
+            path="*"
+            element={
+              <EmptyState
+                title="Page not found"
+                action={
+                  <ButtonLink variant="primary" to={base}>
+                    Back to tasks
+                  </ButtonLink>
                 }
-              />
-              <Route
-                path="settings"
-                element={
-                  <>
-                    <header className="page-heading">
-                      <div>
-                        <span className="eyebrow">Workspace settings</span>
-                        <h1>{workspace.name}</h1>
-                        <p>{workspace.purpose}</p>
-                      </div>
-                    </header>
-                    <section className="panel requirements">
-                      <h2>Workspace guidance</h2>
-                      <p>{workspace.guidance}</p>
-                      <p className="muted">
-                        Owner controls will be available when workspace creation
-                        is connected.
-                      </p>
-                    </section>
-                  </>
-                }
-              />
-              <Route
-                path="*"
-                element={
-                  <EmptyState
-                    title="Page not found"
-                    action={
-                      <Link className="button" to={base}>
-                        Back to tasks
-                      </Link>
-                    }
-                  >
-                    This page isn't available in the workspace preview.
-                  </EmptyState>
-                }
-              />
-            </Routes>
-          )}
-        </main>
-      </div>
-    </div>
+              >
+                This page isn't available in the workspace preview.
+              </EmptyState>
+            }
+          />
+        </Routes>
+      )}
+    </AppShell>
   );
 }
 
@@ -372,24 +339,36 @@ export function DemoApp() {
       <Route
         path="/"
         element={
-          <main className="welcome">
-            <Link className="brand" to="/">
-              <span className="brand-mark">c</span>common.
-            </Link>
-            <span className="eyebrow">A little more possible, together</span>
-            <h1>
+          <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center px-6 py-16">
+            <div className="mb-14 flex items-center justify-between">
+              <Link to="/" aria-label="CoFlow home" className="rounded-lg">
+                <Wordmark size="lg" />
+              </Link>
+              <ThemeToggle />
+            </div>
+            <Eyebrow>A little more possible, together</Eyebrow>
+            <h1 className="mt-4 text-[46px] leading-[1.05] font-semibold tracking-[-0.04em] sm:text-[60px]">
               Make room
               <br />
-              for good work.
+              <span className="text-navy-700 dark:text-navy-300">
+                for good work.
+              </span>
             </h1>
-            <p>
+            <p className="mt-5 max-w-md text-[15px] leading-relaxed text-muted-foreground">
               A shared place for your team's ideas, drafts, and the agents that
               help bring them to life.
             </p>
-            <Link className="button primary" to={`/demo/w/${workspace.id}`}>
-              Explore the sample workspace →
-            </Link>
-            <small>
+            <div className="mt-8">
+              <ButtonLink
+                variant="primary"
+                size="lg"
+                to={`/demo/w/${workspace.id}`}
+              >
+                Explore the sample workspace
+                <ArrowRight aria-hidden="true" />
+              </ButtonLink>
+            </div>
+            <small className="mt-5 text-[12px] text-muted-foreground">
               Workspace creation is coming next. This preview uses sample data.
             </small>
           </main>
@@ -399,13 +378,13 @@ export function DemoApp() {
       <Route
         path="*"
         element={
-          <main>
+          <main className="mx-auto w-full max-w-2xl px-6 py-20">
             <EmptyState
               title="Page not found"
               action={
-                <Link className="button" to="/">
+                <ButtonLink variant="primary" to="/">
                   Back home
-                </Link>
+                </ButtonLink>
               }
             >
               Check the address and try again.

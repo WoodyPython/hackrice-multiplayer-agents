@@ -1,8 +1,68 @@
 import { Link } from "react-router-dom";
 import { TASK_STATUSES, type TaskSummary } from "@app/contracts";
 import { useState, type ReactNode } from "react";
-import { groupTasks, statusPresentation } from "../board";
+import {
+  HelpCircle,
+  Paperclip,
+  Plus,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
+import { columnPresentation, groupTasks, statusPresentation } from "../board";
+import { cn } from "../lib/utils";
 import { EmptyState } from "../components/EmptyState";
+import { PageHeading } from "../components/PageHeading";
+import { Badge, Dot } from "../components/ui/badge";
+import { Button, ButtonLink } from "../components/ui/button";
+import { Input, Select } from "../components/ui/field";
+import { Avatar } from "../components/ui/misc";
+
+function TaskCard({ task, base }: { task: TaskSummary; base: string }) {
+  const presentation = statusPresentation[task.status];
+  return (
+    <Link
+      to={`${base}/tasks/${task.id}`}
+      className="group block rounded-xl border border-border bg-card p-3.5 shadow-xs transition-all duration-150 hover:-translate-y-0.5 hover:border-navy-300 hover:shadow-md focus-visible:-translate-y-0.5 dark:hover:border-navy-600"
+    >
+      <Badge tone={presentation.tone} size="sm">
+        <Dot
+          tone={presentation.tone}
+          live={task.status === "working" || task.status === "planning"}
+        />
+        {presentation.label}
+      </Badge>
+
+      <h4 className="mt-2.5 text-[13.5px] leading-snug font-semibold tracking-tight text-pretty transition-colors group-hover:text-navy-700 dark:group-hover:text-navy-200">
+        {task.title}
+      </h4>
+      <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
+        {presentation.summary}
+      </p>
+
+      {task.openQuestionCount > 0 && (
+        <span className="mt-2.5 flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+          <HelpCircle className="size-3.5 shrink-0" aria-hidden="true" />
+          {task.openQuestionCount === 1
+            ? "1 question needs an answer"
+            : `${task.openQuestionCount} questions need an answer`}
+        </span>
+      )}
+
+      <div className="mt-3.5 flex items-center justify-between gap-2 border-t border-border pt-2.5 text-[10.5px] text-muted-foreground">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Avatar name={task.creatorGuestLabel} size="sm" />
+          <span className="truncate">{task.creatorGuestLabel}</span>
+        </span>
+        {task.materialCount > 0 && (
+          <span className="flex shrink-0 items-center gap-1 tabular-nums">
+            <Paperclip className="size-3" aria-hidden="true" />
+            {task.materialCount}
+          </span>
+        )}
+      </div>
+    </Link>
+  );
+}
 
 export function TaskBoard({
   tasks,
@@ -21,60 +81,84 @@ export function TaskBoard({
       task.title.toLowerCase().includes(query.toLowerCase()) &&
       (status === "all" || task.status === status),
   );
+  const filtering = query !== "" || status !== "all";
+
   return (
     <>
       {heading ?? (
-        <header className="page-heading">
-          <div>
-            <span className="eyebrow">Your shared workspace</span>
-            <h1>Good work starts here.</h1>
-            <p>Bring an idea. Shape it together. Ship something useful.</p>
-          </div>
-          <Link className="button primary" to={`${base}/tasks/new`}>
-            ＋ Post a task
-          </Link>
-        </header>
+        <PageHeading
+          eyebrow="Your shared workspace"
+          title="Good work starts here."
+          description="Bring an idea. Shape it together. Ship something useful."
+          actions={
+            <ButtonLink variant="primary" to={`${base}/tasks/new`}>
+              <Plus aria-hidden="true" />
+              Post a task
+            </ButtonLink>
+          }
+        />
       )}
-      <div className="board-toolbar">
-        <div className="board-title">
-          <h2>Task board</h2>
-          <span className="count">{tasks.length}</span>
+
+      <div className="mb-5 flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <h2 className="text-[15px] font-semibold tracking-tight">
+            Task board
+          </h2>
+          <Badge size="sm" className="tabular-nums">
+            {tasks.length}
+          </Badge>
         </div>
-        <div className="filters">
+        <div className="flex flex-wrap items-center gap-2">
           <label className="sr-only" htmlFor="search">
             Search tasks
           </label>
-          <input
-            id="search"
-            type="search"
-            placeholder="Search tasks…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
+          <div className="relative w-full sm:w-56">
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              id="search"
+              type="search"
+              placeholder="Search tasks…"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className="h-9 pl-8.5 text-[12.5px]"
+            />
+          </div>
           <label className="sr-only" htmlFor="status">
             Filter by status
           </label>
-          <select
-            id="status"
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-          >
-            <option value="all">All statuses</option>
-            {TASK_STATUSES.map((value) => (
-              <option value={value} key={value}>
-                {statusPresentation[value].label}
-              </option>
-            ))}
-          </select>
+          <div className="relative w-full sm:w-44">
+            <Select
+              id="status"
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+              className="h-9 pl-8.5 text-[12.5px]"
+            >
+              <option value="all">All statuses</option>
+              {TASK_STATUSES.map((value) => (
+                <option value={value} key={value}>
+                  {statusPresentation[value].label}
+                </option>
+              ))}
+            </Select>
+            <SlidersHorizontal
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+          </div>
         </div>
       </div>
+
       {tasks.length === 0 ? (
         <EmptyState
           title="Make room for your first idea."
           action={
-            <Link className="button primary" to={`${base}/tasks/new`}>
+            <ButtonLink variant="primary" to={`${base}/tasks/new`}>
+              <Plus aria-hidden="true" />
               Post a task
-            </Link>
+            </ButtonLink>
           }
         >
           Describe a small piece of work to begin. You can discuss the details
@@ -83,76 +167,70 @@ export function TaskBoard({
       ) : filtered.length === 0 ? (
         <EmptyState
           title="No matching tasks"
+          icon={Search}
           action={
-            <button
+            <Button
               onClick={() => {
                 setQuery("");
                 setStatus("all");
               }}
             >
               Clear filters
-            </button>
+            </Button>
           }
         >
           Try a different title or status.
         </EmptyState>
       ) : (
-        <div className="board">
-          {groupTasks(filtered).map((column) => (
-            <section
-              className="board-column"
-              key={column.name}
-              aria-label={column.name}
-            >
-              <h3>
-                <span
-                  className={`column-dot dot-${column.name.split(" ")[0]!.toLowerCase()}`}
-                />
-                {column.name}
-                <span className="column-count">{column.tasks.length}</span>
-              </h3>
-              <div className="card-stack">
-                {column.tasks.map((task) => (
-                  <Link
-                    className="task-card"
-                    to={`${base}/tasks/${task.id}`}
-                    key={task.id}
+        <div className="-mx-4 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0">
+          <div className="grid min-w-[900px] grid-cols-5 gap-4 lg:min-w-0">
+            {groupTasks(filtered).map((column) => {
+              const meta = columnPresentation[column.name];
+              return (
+                <section
+                  key={column.name}
+                  aria-label={column.name}
+                  className="flex min-w-0 flex-col"
+                >
+                  <h3
+                    className="mb-3 flex items-center gap-2 text-[11.5px] font-semibold tracking-tight"
+                    title={meta.hint}
                   >
-                    <span className={`status status-${task.status}`}>
-                      {statusPresentation[task.status].label}
-                    </span>
-                    <h4>{task.title}</h4>
-                    <p>{statusPresentation[task.status].summary}</p>
-                    {task.openQuestionCount > 0 && (
-                      <span className="question-note">
-                        {task.openQuestionCount} question needs an answer
-                      </span>
+                    <Dot tone={meta.tone} />
+                    <span className="truncate">{column.name}</span>
+                    <Badge
+                      size="sm"
+                      className="ml-auto shrink-0 tabular-nums"
+                      tone={column.tasks.length > 0 ? meta.tone : "neutral"}
+                    >
+                      {column.tasks.length}
+                    </Badge>
+                  </h3>
+                  <div className="grid content-start gap-2.5">
+                    {column.tasks.map((task) => (
+                      <TaskCard key={task.id} task={task} base={base} />
+                    ))}
+                    {column.tasks.length === 0 && (
+                      <p
+                        className={cn(
+                          "rounded-xl border border-dashed border-border px-3 py-7 text-center text-[11.5px] text-muted-foreground",
+                          filtering && "opacity-60",
+                        )}
+                      >
+                        No tasks here yet
+                      </p>
                     )}
-                    <div className="card-footer">
-                      <span>
-                        <span className="avatar" aria-hidden="true">
-                          {task.creatorGuestLabel.split(" ")[1]?.[0] ?? "G"}
-                        </span>
-                        {task.creatorGuestLabel}
-                      </span>
-                      <span>
-                        {task.materialCount} material
-                        {task.materialCount === 1 ? "" : "s"}
-                      </span>
-                    </div>
-                  </Link>
-                ))}
-                {column.tasks.length === 0 && (
-                  <p className="column-empty">No tasks here yet</p>
-                )}
-              </div>
-            </section>
-          ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
         </div>
       )}
-      <p className="board-note">
-        <span aria-hidden="true">↳</span> Tasks move as the work progresses.
-        Every change gets a review.
+
+      <p className="mt-6 text-[11.5px] text-muted-foreground">
+        Tasks move as the work progresses. Every change gets a review before it
+        reaches the approved files.
       </p>
     </>
   );

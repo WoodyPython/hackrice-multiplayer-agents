@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Plus, TriangleAlert } from "lucide-react";
 import type { TaskSummary, Workspace } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { refreshLoop } from "../realtime";
 import { apiMessage } from "../workspace-api";
 import { EmptyState } from "../components/EmptyState";
+import { PageHeading } from "../components/PageHeading";
+import { Button, ButtonLink } from "../components/ui/button";
+import { ErrorText, Skeleton } from "../components/ui/misc";
 import { TaskBoard } from "./TaskBoard";
 
 /**
@@ -41,7 +44,8 @@ export function TaskBoardPage({
         setTasks(next);
         setFailure(null);
       } catch (error) {
-        if (!controller.signal.aborted && !stopped) setFailure(apiMessage(error));
+        if (!controller.signal.aborted && !stopped)
+          setFailure(apiMessage(error));
       } finally {
         if (!controller.signal.aborted && !stopped) {
           setLoading(false);
@@ -57,26 +61,41 @@ export function TaskBoardPage({
   }, [api, workspace.id, nonce]);
 
   const heading = (
-    <header className="page-heading">
-      <div>
-        <span className="eyebrow">Your shared workspace</span>
-        <h1>{workspace.name}</h1>
-        <p>{workspace.purpose || "A place to shape work together."}</p>
-      </div>
-      <div className="heading-actions">
-        <Link className="button primary" to={`${base}/tasks/new`}>
-          ＋ Post a task
-        </Link>
-        {share}
-      </div>
-    </header>
+    <PageHeading
+      eyebrow="Your shared workspace"
+      title={workspace.name}
+      description={workspace.purpose || "A place to shape work together."}
+      actions={
+        <>
+          <ButtonLink variant="primary" to={`${base}/tasks/new`}>
+            <Plus aria-hidden="true" />
+            Post a task
+          </ButtonLink>
+          {share}
+        </>
+      }
+    />
   );
 
   if (loading && tasks.length === 0)
     return (
       <>
         {heading}
-        <p role="status">Loading tasks…</p>
+        <p role="status" className="sr-only">
+          Loading tasks…
+        </p>
+        <div
+          aria-hidden="true"
+          className="grid gap-4 sm:grid-cols-3 xl:grid-cols-5"
+        >
+          {[0, 1, 2, 3, 4].map((index) => (
+            <div key={index} className="grid gap-2.5">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-28" />
+              {index < 2 && <Skeleton className="h-28" />}
+            </div>
+          ))}
+        </div>
       </>
     );
 
@@ -86,7 +105,8 @@ export function TaskBoardPage({
         {heading}
         <EmptyState
           title="Could not load tasks"
-          action={<button onClick={reload}>Try again</button>}
+          icon={TriangleAlert}
+          action={<Button onClick={reload}>Try again</Button>}
         >
           {failure}
         </EmptyState>
@@ -96,9 +116,9 @@ export function TaskBoardPage({
   return (
     <>
       {failure && (
-        <p role="alert" className="error">
+        <ErrorText role="alert" className="mb-4">
           {failure}
-        </p>
+        </ErrorText>
       )}
       <TaskBoard tasks={tasks} base={base} heading={heading} />
     </>

@@ -12,22 +12,28 @@
   },
   "dependencies": {
     "@app/contracts": "*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "lib0": "^0.2.117",
+    "lucide-react": "^1.45.0",
     "monaco-editor": "^0.56.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.9.0",
+    "tailwind-merge": "^3.7.0",
     "y-monaco": "^0.1.6",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.32"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "jsdom": "^27.0.0",
+    "tailwindcss": "^4.3.3",
     "vite": "^7.1.0",
     "vitest": "^5.0.0"
   }

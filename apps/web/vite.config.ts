@@ -1,6 +1,8 @@
 import { defineConfig } from "vitest/config";
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
+  plugins: [tailwindcss()],
   // y-monaco still imports the pre-0.56 path; Monaco now exports paths below vs.
   resolve: { alias: { "monaco-editor/esm/vs/editor/editor.api.js": "monaco-editor/editor/editor.api.js" } },
   server: { proxy: { "/api": "http://127.0.0.1:3000", "/live": { target: "ws://127.0.0.1:3000", ws: true } } },

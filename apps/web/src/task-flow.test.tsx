@@ -119,60 +119,66 @@ type Call = { url: string; method: string; body: unknown };
  */
 function server(overrides: Record<string, (call: Call) => Response> = {}) {
   const calls: Call[] = [];
-  const transport = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    const method = init?.method ?? "GET";
-    const body = init?.body;
-    const call: Call = {
-      url,
-      method,
-      body:
-        typeof body === "string"
-          ? JSON.parse(body)
-          : body instanceof FormData
-            ? Object.fromEntries(
-                [...body.entries()].map(([k, v]) => [
-                  k,
-                  v instanceof File ? v.name : v,
-                ]),
-              )
-            : undefined,
-    };
-    calls.push(call);
-    const key = `${method} ${url.split("?")[0]!.replace(`/api/workspaces/${workspaceId}`, "")}`;
-    const override = overrides[key];
-    if (override) return override(call);
-    switch (key) {
-      case "GET ":
-        return json(workspace);
-      case "GET /tasks":
-        return json({ tasks: [summary] });
-      case `GET /tasks/${taskId}`:
-        return json(task);
-      case "GET /materials":
-        return json({ materials: [material] });
-      case "GET /drafts":
-        return json({ drafts: [draft] });
-      case "GET /files":
-        return json({ mainSha: 'a'.repeat(40), files: [] });
-      case `GET /tasks/${taskId}/discussion`:
-        return json({ entries: [entry()], latestSeq: 1, activeRunCutoffSeq: null });
-      case `GET /tasks/${taskId}/agents`:
-        return json({ attempts: [] });
-      case `GET /tasks/${taskId}/reviews`:
-        return json({ reviews: [] });
-      case `GET /tasks/${taskId}/drafts`:
-        return json({ drafts: [draft] });
-      case `GET /tasks/${taskId}/saved-outputs`:
-        return json({ outputs: [] });
-      case "GET /history":
-        return json({ entries: [] });
-      case `GET /tasks/${taskId}/events`:
-        return json({ events: [], latestId: null });
-      default:
-        return json({}, 500);
-    }
-  }) as unknown as typeof fetch;
+  const transport = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body;
+      const call: Call = {
+        url,
+        method,
+        body:
+          typeof body === "string"
+            ? JSON.parse(body)
+            : body instanceof FormData
+              ? Object.fromEntries(
+                  [...body.entries()].map(([k, v]) => [
+                    k,
+                    v instanceof File ? v.name : v,
+                  ]),
+                )
+              : undefined,
+      };
+      calls.push(call);
+      const key = `${method} ${url.split("?")[0]!.replace(`/api/workspaces/${workspaceId}`, "")}`;
+      const override = overrides[key];
+      if (override) return override(call);
+      switch (key) {
+        case "GET ":
+          return json(workspace);
+        case "GET /tasks":
+          return json({ tasks: [summary] });
+        case `GET /tasks/${taskId}`:
+          return json(task);
+        case "GET /materials":
+          return json({ materials: [material] });
+        case "GET /drafts":
+          return json({ drafts: [draft] });
+        case "GET /files":
+          return json({ mainSha: "a".repeat(40), files: [] });
+        case `GET /tasks/${taskId}/discussion`:
+          return json({
+            entries: [entry()],
+            latestSeq: 1,
+            activeRunCutoffSeq: null,
+          });
+        case `GET /tasks/${taskId}/agents`:
+          return json({ attempts: [] });
+        case `GET /tasks/${taskId}/reviews`:
+          return json({ reviews: [] });
+        case `GET /tasks/${taskId}/drafts`:
+          return json({ drafts: [draft] });
+        case `GET /tasks/${taskId}/saved-outputs`:
+          return json({ outputs: [] });
+        case "GET /history":
+          return json({ entries: [] });
+        case `GET /tasks/${taskId}/events`:
+          return json({ events: [], latestId: null });
+        default:
+          return json({}, 500);
+      }
+    },
+  ) as unknown as typeof fetch;
   return { transport, calls };
 }
 
@@ -181,7 +187,9 @@ function open(path: string, transport: typeof fetch) {
   const api = new WorkspaceApi(session, transport);
   render(
     <MemoryRouter initialEntries={[path]}>
-      <Link to={`/w/${workspaceId}/tasks/20000000-0000-4000-8000-000000000aa2`}>Other task</Link>
+      <Link to={`/w/${workspaceId}/tasks/20000000-0000-4000-8000-000000000aa2`}>
+        Other task
+      </Link>
       <App session={session} api={api} />
     </MemoryRouter>,
   );
@@ -196,7 +204,18 @@ describe("the board", () => {
   it("places live tasks by state without claiming anything about agents", async () => {
     const { transport } = server({
       "GET /tasks": () =>
-        json({ tasks: [summary, { ...summary, id: "20000000-0000-4000-8000-000000000aa2", title: "Ship it", status: "working", activeRunId: "70000000-0000-4000-8000-000000000ff1" }] }),
+        json({
+          tasks: [
+            summary,
+            {
+              ...summary,
+              id: "20000000-0000-4000-8000-000000000aa2",
+              title: "Ship it",
+              status: "working",
+              activeRunId: "70000000-0000-4000-8000-000000000ff1",
+            },
+          ],
+        }),
     });
     open(`/w/${workspaceId}`, transport);
 
@@ -236,7 +255,9 @@ describe("posting a task", () => {
     await user.click(screen.getByRole("button", { name: "Post task" }));
 
     const post = await waitFor(() => {
-      const found = calls.find((call) => call.method === "POST" && call.url.endsWith("/tasks"));
+      const found = calls.find(
+        (call) => call.method === "POST" && call.url.endsWith("/tasks"),
+      );
       expect(found).toBeTruthy();
       return found!;
     });
@@ -309,7 +330,9 @@ describe("discussion", () => {
       expect(calls.some((call) => call.url.endsWith("/answer"))).toBe(true),
     );
     const answer = calls.find((call) => call.url.endsWith("/answer"))!;
-    expect((answer.body as Record<string, unknown>).questionId).toBe(questionId);
+    expect((answer.body as Record<string, unknown>).questionId).toBe(
+      questionId,
+    );
     // The same words posted as a comment would sit above the run's cutoff and
     // reach nobody. Routing matters more than the text.
     expect(
@@ -430,7 +453,10 @@ describe("starting and revising", () => {
     const user = userEvent.setup();
     const { transport } = server({
       [`PATCH /tasks/${taskId}`]: () =>
-        fail("TASK_VERSION_CHANGED", 409, { currentVersion: 3, expectedVersion: 2 }),
+        fail("TASK_VERSION_CHANGED", 409, {
+          currentVersion: 3,
+          expectedVersion: 2,
+        }),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
 
@@ -446,9 +472,9 @@ describe("starting and revising", () => {
       await screen.findByText(/Someone else changed this task/),
     ).toBeTruthy();
     // Still on the form, still holding what was typed.
-    expect((screen.getByLabelText(/Task title/) as HTMLInputElement).value).toBe(
-      "Renamed while someone else edited",
-    );
+    expect(
+      (screen.getByLabelText(/Task title/) as HTMLInputElement).value,
+    ).toBe("Renamed while someone else edited");
   });
 });
 
@@ -467,14 +493,19 @@ describe("files", () => {
     const png = new File([new Uint8Array([137, 80, 78, 71])], "diagram.png", {
       type: "image/png",
     });
-    Object.defineProperty(picker, "files", { value: [png], configurable: true });
+    Object.defineProperty(picker, "files", {
+      value: [png],
+      configurable: true,
+    });
     fireEvent.change(picker);
 
     expect(await screen.findByRole("alert")).toBeTruthy();
     // Section 3.4 rejects binary server-side too; catching it here is what
     // stops the user finding out by dragging a PDF in and reading an error.
     expect(
-      calls.some((call) => call.method === "POST" && call.url.endsWith("/materials")),
+      calls.some(
+        (call) => call.method === "POST" && call.url.endsWith("/materials"),
+      ),
     ).toBe(false);
   });
 
@@ -486,20 +517,29 @@ describe("files", () => {
     });
     open(`/w/${workspaceId}/files`, transport);
 
-    await user.type(await screen.findByLabelText("File path"), "documents/guide.md");
+    await user.type(
+      await screen.findByLabelText("File path"),
+      "documents/guide.md",
+    );
     await user.click(screen.getByRole("button", { name: "Edit together" }));
 
     await waitFor(() =>
-      expect(calls.some((call) => call.url.endsWith("/drafts/open"))).toBe(true),
+      expect(calls.some((call) => call.url.endsWith("/drafts/open"))).toBe(
+        true,
+      ),
     );
-    expect(await screen.findByRole("heading", { name: "Shared drafts" })).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { name: "Shared drafts" }),
+    ).toBeTruthy();
   });
 
   it("reports an empty approved branch from the actual listing", async () => {
     const { transport } = server();
     open(`/w/${workspaceId}/files`, transport);
 
-    const approved = await screen.findByRole("heading", { name: "Approved files" });
+    const approved = await screen.findByRole("heading", {
+      name: "Approved files",
+    });
     expect(approved).toBeTruthy();
     expect(await screen.findByText("No approved files yet")).toBeTruthy();
   });
@@ -558,12 +598,28 @@ describe("agent progress", () => {
 
   it("lays assignments out in dependency waves so parallel work is visible", async () => {
     const facts = assignment({ assignmentKey: "facts" });
-    const faq = assignment({ assignmentKey: "faq", preset: "writer", dependsOn: [facts.id], writePaths: ["documents/faq.md"] });
-    const announce = assignment({ assignmentKey: "announce", preset: "writer", dependsOn: [facts.id], writePaths: ["documents/announce.md"] });
-    const review = assignment({ assignmentKey: "review", preset: "reviewer", dependsOn: [faq.id, announce.id] });
+    const faq = assignment({
+      assignmentKey: "faq",
+      preset: "writer",
+      dependsOn: [facts.id],
+      writePaths: ["documents/faq.md"],
+    });
+    const announce = assignment({
+      assignmentKey: "announce",
+      preset: "writer",
+      dependsOn: [facts.id],
+      writePaths: ["documents/announce.md"],
+    });
+    const review = assignment({
+      assignmentKey: "review",
+      preset: "reviewer",
+      dependsOn: [faq.id, announce.id],
+    });
     await openAgents({
       [`GET /tasks/${taskId}/agents`]: () =>
-        json({ attempts: [attempt({ assignments: [facts, faq, announce, review] })] }),
+        json({
+          attempts: [attempt({ assignments: [facts, faq, announce, review] })],
+        }),
     });
 
     // §4.5: "Parallel workers are visibly distinct." faq and announce depend on
@@ -578,16 +634,28 @@ describe("agent progress", () => {
       [`GET /tasks/${taskId}/agents`]: () =>
         json({
           attempts: [
-            attempt({ attempt: 2, assignments: [assignment({ assignmentKey: "second" })] }),
-            attempt({ runId: "70000000-0000-4000-8000-000000000ff2", attempt: 1, status: "incomplete", endedAt: at,
-                      assignments: [assignment({ assignmentKey: "first", status: "timed_out" })] }),
+            attempt({
+              attempt: 2,
+              assignments: [assignment({ assignmentKey: "second" })],
+            }),
+            attempt({
+              runId: "70000000-0000-4000-8000-000000000ff2",
+              attempt: 1,
+              status: "incomplete",
+              endedAt: at,
+              assignments: [
+                assignment({ assignmentKey: "first", status: "timed_out" }),
+              ],
+            }),
           ],
         }),
     });
 
     // §4.7: an incomplete task shows preserved output. A retry must not make
     // the earlier attempt's work unreachable.
-    expect(await screen.findByRole("region", { name: "Attempt 1" })).toBeTruthy();
+    expect(
+      await screen.findByRole("region", { name: "Attempt 1" }),
+    ).toBeTruthy();
     expect(screen.getByRole("region", { name: "Attempt 2" })).toBeTruthy();
     expect(screen.getByText("timed out")).toBeTruthy();
   });
@@ -604,15 +672,16 @@ describe("why an attempt ended", () => {
       [`GET /tasks/${taskId}`]: () => json({ ...task, status: "conflict" }),
       [`GET /tasks/${taskId}/events`]: () =>
         json({
-          events: [startEvent("context_captured"), startEvent("snapshot_conflict", { paths: ["documents/faq.md"] })],
+          events: [
+            startEvent("context_captured"),
+            startEvent("snapshot_conflict", { paths: ["documents/faq.md"] }),
+          ],
           latestId: String(eventSequence),
         }),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
 
-    expect(
-      await screen.findByText(/could not be combined/),
-    ).toBeTruthy();
+    expect(await screen.findByText(/could not be combined/)).toBeTruthy();
     expect(screen.getByText("documents/faq.md")).toBeTruthy();
     // The interface note is explicit: never show these codes raw as the
     // primary message. They are stable identifiers, not copy.
@@ -631,28 +700,41 @@ describe("why an attempt ended", () => {
 
     // The easiest payload to ignore and the most damaging to: without it a
     // contributor believes the agents read a document they never saw.
-    expect(await screen.findByText(/were not included/)).toBeTruthy();
-    expect(screen.getByText("brief.md")).toBeTruthy();
+    // Scoped to the notice: the requirements panel lists the same input, so an
+    // unscoped query cannot tell "shown as omitted" from "shown as selected".
+    const notice = (await screen.findByText(/were not included/)).closest(
+      '[role="status"]',
+    ) as HTMLElement;
+    expect(within(notice).getByText("brief.md")).toBeTruthy();
   });
 
   it("still explains an unrecognised reason instead of rendering nothing", async () => {
     const { transport } = server({
       [`GET /tasks/${taskId}`]: () => json({ ...task, status: "incomplete" }),
       [`GET /tasks/${taskId}/events`]: () =>
-        json({ events: [startEvent("some_reason_added_later")], latestId: String(eventSequence) }),
+        json({
+          events: [startEvent("some_reason_added_later")],
+          latestId: String(eventSequence),
+        }),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
 
     // "the codes are stable, the set is not closed" — a new one must not
     // render as a blank panel.
-    expect(await screen.findByText("This attempt did not complete")).toBeTruthy();
+    expect(
+      await screen.findByText("This attempt did not complete"),
+    ).toBeTruthy();
   });
 
   it("shows no outcome panel while the attempt is still running", async () => {
     const { transport } = server({
-      [`GET /tasks/${taskId}`]: () => json({ ...task, status: "working", activeRunId: runId }),
+      [`GET /tasks/${taskId}`]: () =>
+        json({ ...task, status: "working", activeRunId: runId }),
       [`GET /tasks/${taskId}/events`]: () =>
-        json({ events: [startEvent("context_captured")], latestId: String(eventSequence) }),
+        json({
+          events: [startEvent("context_captured")],
+          latestId: String(eventSequence),
+        }),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
 
@@ -670,8 +752,12 @@ const reviewRow = (over: Record<string, unknown> = {}) => ({
   taskId,
   runId: null,
   source: {
-    taskVersion: 2, guidanceVersion: 1, mainSha: "b".repeat(40),
-    humanSha: "c".repeat(40), resultSha: null, documentRevisions: {},
+    taskVersion: 2,
+    guidanceVersion: 1,
+    mainSha: "b".repeat(40),
+    humanSha: "c".repeat(40),
+    resultSha: null,
+    documentRevisions: {},
     contextHash: "ctx",
   },
   candidateSha,
@@ -686,7 +772,13 @@ const reviewDetail = (over: Record<string, unknown> = {}) => ({
   candidateComplete: true,
   conflicts: [],
   changedFiles: [
-    { path: "documents/contributing.md", changeKind: "modified", diff: DIFF, beforeHash: "d".repeat(40), afterHash: "e".repeat(40) },
+    {
+      path: "documents/contributing.md",
+      changeKind: "modified",
+      diff: DIFF,
+      beforeHash: "d".repeat(40),
+      afterHash: "e".repeat(40),
+    },
   ],
   generatedCodeWasNotExecuted: true,
   review: reviewRow(),
@@ -718,13 +810,17 @@ async function openChanges(
 describe("review", () => {
   it("offers to prepare one rather than claiming there are no changes", async () => {
     const { user, calls } = await openChanges({});
-    expect(await screen.findByText("No review has been requested yet")).toBeTruthy();
+    expect(
+      await screen.findByText("No review has been requested yet"),
+    ).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Prepare review" }));
     // Nothing prepares a review automatically, so the absence of one is not
     // evidence that the work produced no changes.
     await waitFor(() =>
-      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/review"))).toBe(true),
+      expect(
+        calls.some((c) => c.method === "POST" && c.url.endsWith("/review")),
+      ).toBe(true),
     );
   });
 
@@ -733,13 +829,19 @@ describe("review", () => {
       [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow()] }),
       [`GET /reviews/${reviewId}`]: () => json(reviewDetail()),
       [`POST /reviews/${reviewId}/apply`]: () =>
-        json({ status: "applied", appliedCommitSha: candidateSha, alreadyApplied: false }),
+        json({
+          status: "applied",
+          appliedCommitSha: candidateSha,
+          alreadyApplied: false,
+        }),
     });
 
     const panel = await screen.findByRole("tabpanel");
     expect(within(panel).getByText("documents/contributing.md")).toBeTruthy();
     expect(within(panel).getByText("modified")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Apply these changes" }));
+    await user.click(
+      screen.getByRole("button", { name: "Apply these changes" }),
+    );
 
     await waitFor(() =>
       expect(calls.some((c) => c.url.endsWith("/apply"))).toBe(true),
@@ -747,13 +849,16 @@ describe("review", () => {
     const apply = calls.find((c) => c.url.endsWith("/apply"))!;
     // Sending the SHA we rendered is what stops a browser applying a candidate
     // that moved underneath it.
-    expect((apply.body as Record<string, unknown>).candidateSha).toBe(candidateSha);
+    expect((apply.body as Record<string, unknown>).candidateSha).toBe(
+      candidateSha,
+    );
   });
 
   it("hides Apply from a contributor but still shows the changes", async () => {
     await openChanges(
       {
-        [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow()] }),
+        [`GET /tasks/${taskId}/reviews`]: () =>
+          json({ reviews: [reviewRow()] }),
         [`GET /reviews/${reviewId}`]: () => json(reviewDetail()),
       },
       false,
@@ -763,20 +868,26 @@ describe("review", () => {
     expect(within(panel).getByText("documents/contributing.md")).toBeTruthy();
     // Presentation only -- the server checks the key on every apply. §4.6:
     // "hiding a button is insufficient."
-    expect(screen.queryByRole("button", { name: "Apply these changes" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Apply these changes" }),
+    ).toBeNull();
     expect(screen.getByText(/Only the workspace owner can apply/)).toBeTruthy();
   });
 
   it("blocks Apply on a stale review and offers a refresh", async () => {
     await openChanges({
-      [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow({ status: "stale" })] }),
-      [`GET /reviews/${reviewId}`]: () => json(reviewDetail({ review: reviewRow({ status: "stale" }) })),
+      [`GET /tasks/${taskId}/reviews`]: () =>
+        json({ reviews: [reviewRow({ status: "stale" })] }),
+      [`GET /reviews/${reviewId}`]: () =>
+        json(reviewDetail({ review: reviewRow({ status: "stale" }) })),
     });
 
     // §4.7: "Review stale | Disable Apply and offer Refresh review".
     expect(await screen.findByText("This review is out of date")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Refresh review" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Apply these changes" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Apply these changes" }),
+    ).toBeNull();
   });
 
   it("names each conflicting side and refuses Apply until every file is decided", async () => {
@@ -787,8 +898,16 @@ describe("review", () => {
           path: "documents/contributing.md",
           stage: "human_agent",
           sides: [
-            { side: "human_draft", text: "what people wrote", sha: "f".repeat(40) },
-            { side: "agent_result", text: "what the agent wrote", sha: "0".repeat(40) },
+            {
+              side: "human_draft",
+              text: "what people wrote",
+              sha: "f".repeat(40),
+            },
+            {
+              side: "agent_result",
+              text: "what the agent wrote",
+              sha: "0".repeat(40),
+            },
           ],
         },
       ],
@@ -800,21 +919,32 @@ describe("review", () => {
     });
 
     // §10.2: never label both sides "ours". Each one says which source it is.
-    expect(await screen.findByText("What people wrote in the shared draft")).toBeTruthy();
+    expect(
+      await screen.findByText("What people wrote in the shared draft"),
+    ).toBeTruthy();
     expect(screen.getByText("What the agents produced")).toBeTruthy();
     // A conflicted candidate must not be publishable.
     expect(
-      (screen.getByRole("button", { name: "Apply these changes" }) as HTMLButtonElement).disabled,
+      (
+        screen.getByRole("button", {
+          name: "Apply these changes",
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(true);
 
     await user.click(screen.getByRole("radio", { name: /What people wrote/ }));
-    await user.click(screen.getByRole("button", { name: "Use these versions" }));
+    await user.click(
+      screen.getByRole("button", { name: "Use these versions" }),
+    );
 
     await waitFor(() =>
       expect(calls.some((c) => c.url.endsWith("/resolve"))).toBe(true),
     );
     const resolve = calls.find((c) => c.url.endsWith("/resolve"))!;
-    const body = resolve.body as { expectedCandidateSha: string; resolutions: unknown[] };
+    const body = resolve.body as {
+      expectedCandidateSha: string;
+      resolutions: unknown[];
+    };
     // Resolving builds a NEW candidate, so the one being replaced is named.
     expect(body.expectedCandidateSha).toBe(candidateSha);
     expect(body.resolutions).toEqual([
@@ -825,13 +955,17 @@ describe("review", () => {
   it("does not read a candidate for a review that is still building", async () => {
     const { calls } = await openChanges({
       [`GET /tasks/${taskId}/reviews`]: () =>
-        json({ reviews: [reviewRow({ status: "building", candidateSha: null })] }),
+        json({
+          reviews: [reviewRow({ status: "building", candidateSha: null })],
+        }),
     });
 
     expect(await screen.findByText(/still being built/)).toBeTruthy();
     // Reading it means reading a Git artifact that does not exist yet, which
     // the server answers with INVALID_STATE.
-    expect(calls.some((c) => c.url.endsWith(`/reviews/${reviewId}`))).toBe(false);
+    expect(calls.some((c) => c.url.endsWith(`/reviews/${reviewId}`))).toBe(
+      false,
+    );
   });
 });
 
@@ -849,10 +983,18 @@ describe("the shared editor", () => {
     // §4.4: Saved means persisted, and capture takes the acknowledged text.
     // Checkpointing before then would commit a version nobody has seen.
     expect(
-      (await screen.findByRole("button", { name: "Checkpoint" }) as HTMLButtonElement).disabled,
+      (
+        (await screen.findByRole("button", {
+          name: "Checkpoint",
+        })) as HTMLButtonElement
+      ).disabled,
     ).toBe(true);
     expect(
-      (screen.getByRole("button", { name: "Request review" }) as HTMLButtonElement).disabled,
+      (
+        screen.getByRole("button", {
+          name: "Request review",
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(true);
     expect(screen.getByText(/Unsaved/)).toBeTruthy();
   });
@@ -883,7 +1025,9 @@ describe("deep links", () => {
     // Request review says it will show you the review; this is what makes that
     // true rather than landing on the task and leaving the reader to hunt.
     expect(
-      (await screen.findByRole("tab", { name: "Changes" })).getAttribute("aria-selected"),
+      (await screen.findByRole("tab", { name: "Changes" })).getAttribute(
+        "aria-selected",
+      ),
     ).toBe("true");
   });
 
@@ -891,7 +1035,9 @@ describe("deep links", () => {
     const { transport } = server();
     open(`/w/${workspaceId}/tasks/${taskId}?tab=Nonsense`, transport);
     expect(
-      (await screen.findByRole("tab", { name: "Discussion" })).getAttribute("aria-selected"),
+      (await screen.findByRole("tab", { name: "Discussion" })).getAttribute(
+        "aria-selected",
+      ),
     ).toBe("true");
   });
 });
@@ -901,19 +1047,39 @@ afterEach(() => vi.useRealTimers());
 describe("task refresh regressions", () => {
   it("retries through the actual response schema and reuses an uncertain intent", async () => {
     let requests = 0;
-    let current = { ...task, status: "incomplete", activeRunId: null as string | null };
+    let current = {
+      ...task,
+      status: "incomplete",
+      activeRunId: null as string | null,
+    };
     const { transport, calls } = server({
       [`GET /tasks/${taskId}`]: () => json(current),
       [`POST /tasks/${taskId}/retry`]: () => {
         if (++requests === 1) return fail("INTERNAL_ERROR", 500);
-        current = { ...current, status: "planning", activeRunId: "70000000-0000-4000-8000-000000000ff1" };
-        return json({ runId: current.activeRunId, attempt: 2, taskStatus: "planning", idempotentReplay: true }, 202);
+        current = {
+          ...current,
+          status: "planning",
+          activeRunId: "70000000-0000-4000-8000-000000000ff1",
+        };
+        return json(
+          {
+            runId: current.activeRunId,
+            attempt: 2,
+            taskStatus: "planning",
+            idempotentReplay: true,
+          },
+          202,
+        );
       },
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
-    fireEvent.click(await screen.findByRole("button", { name: "Retry from saved work" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Retry from saved work" }),
+    );
     await screen.findByText(/We could not confirm the request/);
-    fireEvent.click(screen.getByRole("button", { name: "Retry from saved work" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Retry from saved work" }),
+    );
     await screen.findByRole("button", { name: "Stop this attempt" });
     const retryCalls = calls.filter((call) => call.url.endsWith("/retry"));
     expect(retryCalls).toHaveLength(2);
@@ -930,40 +1096,77 @@ describe("task refresh regressions", () => {
       [`PATCH /tasks/${taskId}`]: () => fail("TASK_VERSION_CHANGED", 409),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
-    fireEvent.click(await screen.findByRole("button", { name: "Edit requirements" }));
-    fireEvent.change(screen.getByLabelText(/Task title/), { target: { value: "My retained edit" } });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit requirements" }),
+    );
+    fireEvent.change(screen.getByLabelText(/Task title/), {
+      target: { value: "My retained edit" },
+    });
     vi.useFakeTimers();
     // The initial poll was scheduled with real timers; a failed save forces a new pull using fake timers.
     fireEvent.click(screen.getByRole("button", { name: "Save requirements" }));
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     current = { ...task, version: 3, title: "Other user's edit" };
-    materials = [{ ...material, id: "30000000-0000-4000-8000-000000000bb2", filename: "new.md" }, material];
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    materials = [
+      {
+        ...material,
+        id: "30000000-0000-4000-8000-000000000bb2",
+        filename: "new.md",
+      },
+      material,
+    ];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save requirements" }));
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     const saves = calls.filter((call) => call.method === "PATCH");
     expect(saves).toHaveLength(2);
-    expect(saves[1]!.body).toMatchObject({ expectedVersion: 2, title: "My retained edit", inputs: [{ materialId }] });
-    expect((screen.getByLabelText(/Task title/) as HTMLInputElement).value).toBe("My retained edit");
+    expect(saves[1]!.body).toMatchObject({
+      expectedVersion: 2,
+      title: "My retained edit",
+      inputs: [{ materialId }],
+    });
+    expect(
+      (screen.getByLabelText(/Task title/) as HTMLInputElement).value,
+    ).toBe("My retained edit");
   });
 
   it("clears old editing state immediately when the task route changes", async () => {
     const { transport } = server();
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
-    fireEvent.click(await screen.findByRole("button", { name: "Edit requirements" }));
-    fireEvent.change(screen.getByLabelText(/Task title/), { target: { value: "Old task edit" } });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit requirements" }),
+    );
+    fireEvent.change(screen.getByLabelText(/Task title/), {
+      target: { value: "Old task edit" },
+    });
     fireEvent.click(screen.getByRole("link", { name: "Other task" }));
-    expect(screen.queryByRole("button", { name: "Save requirements" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Save requirements" }),
+    ).toBeNull();
     await screen.findByText("Could not load this task");
   });
 
   it("lets contributors stop an active run even when task status is incomplete", async () => {
-    const { transport } = server({ [`GET /tasks/${taskId}`]: () => json({ ...task, status: "incomplete", activeRunId: "70000000-0000-4000-8000-000000000ff1" }) });
+    const { transport } = server({
+      [`GET /tasks/${taskId}`]: () =>
+        json({
+          ...task,
+          status: "incomplete",
+          activeRunId: "70000000-0000-4000-8000-000000000ff1",
+        }),
+    });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
     await screen.findByRole("button", { name: "Stop this attempt" });
-    expect(screen.queryByRole("button", { name: "Retry from saved work" })).toBeNull();
-
-});
+    expect(
+      screen.queryByRole("button", { name: "Retry from saved work" }),
+    ).toBeNull();
+  });
 });
 
 const historyEntry = (over: Record<string, unknown> = {}) => ({
@@ -981,18 +1184,27 @@ const historyEntry = (over: Record<string, unknown> = {}) => ({
 
 describe("history", () => {
   it("lists applied changes with the task each came from", async () => {
-    const { transport } = server({ "GET /history": () => json({ entries: [historyEntry()] }) });
+    const { transport } = server({
+      "GET /history": () => json({ entries: [historyEntry()] }),
+    });
     open(`/w/${workspaceId}/history`, transport);
 
-    const link = await screen.findByRole("link", { name: "Write a contributor guide" });
+    const link = await screen.findByRole("link", {
+      name: "Write a contributor guide",
+    });
     // §4.1: "Applied changes and associated tasks" -- the task is half of it.
-    expect(link.getAttribute("href")).toBe(`/w/${workspaceId}/tasks/${taskId}?tab=Changes`);
+    expect(link.getAttribute("href")).toBe(
+      `/w/${workspaceId}/tasks/${taskId}?tab=Changes`,
+    );
     expect(screen.getByText("Applied")).toBeTruthy();
   });
 
   it("shows an apply that did not succeed rather than hiding it", async () => {
     const { transport } = server({
-      "GET /history": () => json({ entries: [historyEntry({ status: "ambiguous", settledAt: null })] }),
+      "GET /history": () =>
+        json({
+          entries: [historyEntry({ status: "ambiguous", settledAt: null })],
+        }),
     });
     open(`/w/${workspaceId}/history`, transport);
 
@@ -1005,7 +1217,9 @@ describe("history", () => {
   it("says nothing has been applied rather than showing a bare empty list", async () => {
     const { transport } = server();
     open(`/w/${workspaceId}/history`, transport);
-    expect(await screen.findByText("Nothing has been applied yet")).toBeTruthy();
+    expect(
+      await screen.findByText("Nothing has been applied yet"),
+    ).toBeTruthy();
   });
 });
 
@@ -1023,7 +1237,15 @@ describe("retrying with saved work", () => {
       [`GET /tasks/${taskId}`]: () => json({ ...task, status: "incomplete" }),
       [`GET /tasks/${taskId}/saved-outputs`]: () => json({ outputs }),
       [`POST /tasks/${taskId}/retry`]: () =>
-        json({ runId, attempt: 2, taskStatus: "planning", idempotentReplay: false }, 202),
+        json(
+          {
+            runId,
+            attempt: 2,
+            taskStatus: "planning",
+            idempotentReplay: false,
+          },
+          202,
+        ),
     });
     open(`/w/${workspaceId}/tasks/${taskId}`, transport);
     await screen.findByRole("region", { name: "Saved work" });
@@ -1033,13 +1255,24 @@ describe("retrying with saved work", () => {
   it("keeps finished work by default and sends identities, not commit SHAs", async () => {
     const { user, calls } = await openIncomplete();
     expect(
-      (screen.getByRole("checkbox", { name: /documents\/faq\.md/ }) as HTMLInputElement).checked,
+      (
+        screen.getByRole("checkbox", {
+          name: /documents\/faq\.md/,
+        }) as HTMLInputElement
+      ).checked,
     ).toBe(true);
 
-    await user.click(screen.getByRole("button", { name: "Retry from saved work" }));
-    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/retry"))).toBe(true));
+    await user.click(
+      screen.getByRole("button", { name: "Retry from saved work" }),
+    );
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/retry"))).toBe(true),
+    );
 
-    const body = calls.find((c) => c.url.endsWith("/retry"))!.body as Record<string, unknown>;
+    const body = calls.find((c) => c.url.endsWith("/retry"))!.body as Record<
+      string,
+      unknown
+    >;
     // C08 resolves the commit under the task lock; a client-supplied SHA is
     // never accepted, so it must not be sent.
     expect(body.savedOutputs).toEqual([
@@ -1050,12 +1283,21 @@ describe("retrying with saved work", () => {
 
   it("lets the selection be cleared, and says what that means", async () => {
     const { user, calls } = await openIncomplete();
-    await user.click(screen.getByRole("checkbox", { name: /documents\/faq\.md/ }));
+    await user.click(
+      screen.getByRole("checkbox", { name: /documents\/faq\.md/ }),
+    );
     expect(screen.getByText(/will redo all of this/)).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Retry from saved work" }));
-    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/retry"))).toBe(true));
-    const body = calls.find((c) => c.url.endsWith("/retry"))!.body as Record<string, unknown>;
+    await user.click(
+      screen.getByRole("button", { name: "Retry from saved work" }),
+    );
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/retry"))).toBe(true),
+    );
+    const body = calls.find((c) => c.url.endsWith("/retry"))!.body as Record<
+      string,
+      unknown
+    >;
     expect(body.savedOutputs).toEqual([]);
   });
 
@@ -1083,51 +1325,93 @@ const staleEvent = () => ({
 describe("A08 cross-flow integration", () => {
   // The task page polls every 5s while idle, so this one needs longer than the
   // suite's 5s default: it is waiting for a real poll to carry a real event.
-  it("disables Apply when typing invalidates the review, without waiting for a failed click", { timeout: 20_000 }, async () => {
-    let stale = false;
-    const { transport } = server({
-      "GET ": () => json({ ...workspace, isOwner: true }),
-      [`GET /tasks/${taskId}/reviews`]: () =>
-        json({ reviews: [reviewRow(stale ? { status: "stale" } : {})] }),
-      [`GET /reviews/${reviewId}`]: () =>
-        json(reviewDetail({ review: reviewRow(stale ? { status: "stale" } : {}) })),
-      [`GET /tasks/${taskId}/events`]: () =>
-        json({ events: stale ? [staleEvent()] : [], latestId: stale ? "9" : null }),
-    });
-    const session = new BrowserSession();
-    session.saveOwner(workspaceId, "owner-key-for-tests-1234567890");
-    render(
-      <MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
-        <App session={session} api={new WorkspaceApi(session, transport)} />
-      </MemoryRouter>,
-    );
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("tab", { name: "Changes" }));
-    expect(await screen.findByRole("button", { name: "Apply these changes" })).toBeTruthy();
+  it(
+    "disables Apply when typing invalidates the review, without waiting for a failed click",
+    { timeout: 20_000 },
+    async () => {
+      let stale = false;
+      const { transport } = server({
+        "GET ": () => json({ ...workspace, isOwner: true }),
+        [`GET /tasks/${taskId}/reviews`]: () =>
+          json({ reviews: [reviewRow(stale ? { status: "stale" } : {})] }),
+        [`GET /reviews/${reviewId}`]: () =>
+          json(
+            reviewDetail({
+              review: reviewRow(stale ? { status: "stale" } : {}),
+            }),
+          ),
+        [`GET /tasks/${taskId}/events`]: () =>
+          json({
+            events: stale ? [staleEvent()] : [],
+            latestId: stale ? "9" : null,
+          }),
+      });
+      const session = new BrowserSession();
+      session.saveOwner(workspaceId, "owner-key-for-tests-1234567890");
+      render(
+        <MemoryRouter initialEntries={[`/w/${workspaceId}/tasks/${taskId}`]}>
+          <App session={session} api={new WorkspaceApi(session, transport)} />
+        </MemoryRouter>,
+      );
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("tab", { name: "Changes" }));
+      expect(
+        await screen.findByRole("button", { name: "Apply these changes" }),
+      ).toBeTruthy();
 
-    // Someone keeps typing (§7.6). The task page already polls the event
-    // record, so this arrives without the Changes tab polling on its own.
-    stale = true;
-    // §4.7: "Review stale | Disable Apply and offer Refresh review" -- before
-    // the click, not after it fails.
-    expect(await screen.findByText("This review is out of date", {}, { timeout: 8000 })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Apply these changes" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Refresh review" })).toBeTruthy();
-  });
+      // Someone keeps typing (§7.6). The task page already polls the event
+      // record, so this arrives without the Changes tab polling on its own.
+      stale = true;
+      // §4.7: "Review stale | Disable Apply and offer Refresh review" -- before
+      // the click, not after it fails.
+      expect(
+        await screen.findByText(
+          "This review is out of date",
+          {},
+          { timeout: 8000 },
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.queryByRole("button", { name: "Apply these changes" }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Refresh review" }),
+      ).toBeTruthy();
+    },
+  );
 
   it("renders a Markdown file as it would read, not only as a diff", async () => {
     const { user } = await openChanges({
       [`GET /tasks/${taskId}/reviews`]: () => json({ reviews: [reviewRow()] }),
       [`GET /reviews/${reviewId}`]: () =>
-        json(reviewDetail({
-          changedFiles: [
-            { path: "documents/guide.md", changeKind: "modified", diff: DIFF, beforeHash: "d".repeat(40), afterHash: "e".repeat(40) },
-            { path: "src/app.ts", changeKind: "added", diff: DIFF, beforeHash: null, afterHash: "e".repeat(40) },
-          ],
-        })),
+        json(
+          reviewDetail({
+            changedFiles: [
+              {
+                path: "documents/guide.md",
+                changeKind: "modified",
+                diff: DIFF,
+                beforeHash: "d".repeat(40),
+                afterHash: "e".repeat(40),
+              },
+              {
+                path: "src/app.ts",
+                changeKind: "added",
+                diff: DIFF,
+                beforeHash: null,
+                afterHash: "e".repeat(40),
+              },
+            ],
+          }),
+        ),
       [`GET /reviews/${reviewId}/preview`]: () =>
-        json({ candidateSha, candidateComplete: true, path: "documents/guide.md",
-               text: ["# The guide", "How it would read."].join("\n"), hash: "e".repeat(40) }),
+        json({
+          candidateSha,
+          candidateComplete: true,
+          path: "documents/guide.md",
+          text: ["# The guide", "How it would read."].join("\n"),
+          hash: "e".repeat(40),
+        }),
     });
 
     await user.click(await screen.findByText("documents/guide.md"));
@@ -1151,7 +1435,9 @@ describe("A08 cross-flow integration", () => {
   });
 
   it("says owner access cannot be recovered, where the owner controls are", async () => {
-    const { transport } = server({ "GET ": () => json({ ...workspace, isOwner: false }) });
+    const { transport } = server({
+      "GET ": () => json({ ...workspace, isOwner: false }),
+    });
     open(`/w/${workspaceId}/settings`, transport);
     // §1.2: the key is returned once and there is no recovery flow. Someone who
     // lost it should learn that here rather than by repeatedly failing.

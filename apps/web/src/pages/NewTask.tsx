@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import type { DraftFile, Material } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
 import { inputOptionsFrom } from "../task-inputs";
-import { RequirementForm, type TaskFields } from "../components/RequirementForm";
+import {
+  RequirementForm,
+  type TaskFields,
+} from "../components/RequirementForm";
+import { BackLink, PageHeading } from "../components/PageHeading";
 
 /**
  * Post a task (design §2.1).
@@ -24,7 +28,9 @@ export function NewTask({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [drafts, setDrafts] = useState<DraftFile[]>([]);
-  const [approved, setApproved] = useState<import('@app/contracts').ApprovedFile[]>([]);
+  const [approved, setApproved] = useState<
+    import("@app/contracts").ApprovedFile[]
+  >([]);
   const [inputError, setInputError] = useState<string>();
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -44,7 +50,10 @@ export function NewTask({ workspaceId }: { workspaceId: string }) {
         setApproved(files.files);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setInputError('Inputs could not be loaded. Reload to select existing files, or attach them after posting.');
+        if (!controller.signal.aborted)
+          setInputError(
+            "Inputs could not be loaded. Reload to select existing files, or attach them after posting.",
+          );
         // A picker that cannot load its options is not a reason to block
         // posting: title and outcome are the required fields, and inputs can be
         // attached afterwards from the task itself.
@@ -72,9 +81,12 @@ export function NewTask({ workspaceId }: { workspaceId: string }) {
 
   return (
     <>
-      <Link className="back-link" to={`/w/${workspaceId}`}>
-        ← All tasks
-      </Link>
+      <BackLink to={`/w/${workspaceId}`}>All tasks</BackLink>
+      <PageHeading
+        eyebrow="From an idea to a shared task"
+        title="What shall we work on?"
+        description="Post the brief first. Nothing runs until someone starts it — decide that together."
+      />
       <RequirementForm
         options={inputOptionsFrom(materials, drafts, approved)}
         optionsNote={inputError}

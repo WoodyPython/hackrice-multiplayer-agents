@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Bot,
+  Clock,
+  FileText,
+  MessageSquare,
+  Paperclip,
+  Send,
+  Settings2,
+  X,
+} from "lucide-react";
+import {
   MAX_TEXT_FILE_BYTES,
   SUPPORTED_TEXT_EXTENSIONS,
   type DiscussionEntry,
@@ -9,7 +19,13 @@ import { useBrowser } from "../browser-context";
 import { refreshLoop } from "../realtime";
 import { readDiscussionPages } from "../task-polling";
 import { apiMessage } from "../workspace-api";
+import { toneFor } from "../board";
+import { cn } from "../lib/utils";
 import { EmptyState } from "./EmptyState";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Label, Textarea } from "./ui/field";
+import { Avatar, ErrorText } from "./ui/misc";
 
 /**
  * Task-local discussion (design §1.1, §2.3, §2.6).
@@ -107,14 +123,14 @@ export function Discussion({
   }
 
   return (
-    <div className="discussion">
+    <div className="space-y-6">
       {entries.length === 0 ? (
-        <EmptyState title="Start with a conversation">
+        <EmptyState title="Start with a conversation" icon={MessageSquare}>
           Discuss the requirements and selected inputs before starting. Posting
           a task starts no agents.
         </EmptyState>
       ) : (
-        <ol className="entries">
+        <ol className="space-y-3">
           {entries.map((entry) => (
             <DiscussionItem
               key={entry.id}
@@ -129,14 +145,14 @@ export function Discussion({
       )}
 
       <form
-        className="compose"
+        className="space-y-3 rounded-xl border border-border bg-muted/25 p-4"
         onSubmit={(event) => {
           event.preventDefault();
           void post();
         }}
       >
-        <label htmlFor="discussion-body">Add to the discussion</label>
-        <textarea
+        <Label htmlFor="discussion-body">Add to the discussion</Label>
+        <Textarea
           id="discussion-body"
           rows={3}
           value={body}
@@ -144,66 +160,83 @@ export function Discussion({
           onChange={(event) => setBody(event.target.value)}
           placeholder="Ask something, or add detail the task should account for."
         />
+
         {activeRunCutoffSeq !== null && (
-          <small className="muted">
-            An attempt is running. Comments added now are recorded, but this
-            run's agents will not read them — answer an agent's question, or
-            stop the run and start a revised attempt.
+          <small className="flex items-start gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+            <Clock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              An attempt is running. Comments added now are recorded, but this
+              run's agents will not read them — answer an agent's question, or
+              stop the run and start a revised attempt.
+            </span>
           </small>
         )}
+
         {attached.length > 0 && (
-          <ul className="attachments">
+          <ul className="flex flex-wrap gap-1.5">
             {attached.map((material) => (
-              <li key={material.id}>
-                ▤ {material.filename}
-                <button
-                  type="button"
+              <li
+                key={material.id}
+                className="flex items-center gap-1.5 rounded-lg border border-border bg-card py-1 pr-1 pl-2.5 text-[11.5px]"
+              >
+                <FileText
+                  aria-hidden="true"
+                  className="size-3 shrink-0 text-muted-foreground"
+                />
+                <span className="max-w-[180px] truncate">
+                  {material.filename}
+                </span>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={`Remove ${material.filename}`}
                   onClick={() =>
                     setAttached((current) =>
                       current.filter((item) => item.id !== material.id),
                     )
                   }
                 >
-                  Remove
-                </button>
+                  <X aria-hidden="true" />
+                  <span className="sr-only">Remove</span>
+                </Button>
               </li>
             ))}
           </ul>
         )}
-        {failure && (
-          <p role="alert" className="error">
-            {failure}
-          </p>
-        )}
-        {uploadError && (
-          <p role="alert" className="error">
-            {uploadError}
-          </p>
-        )}
-        <div className="compose-footer">
-          <label className="attach-control">
-            <span>Attach a file</span>
-            <input
-              ref={fileInput}
-              type="file"
-              accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) void attach(file);
-              }}
-            />
-          </label>
-          <small className="muted">
-            Text only — Markdown, plain text, and code, up to{" "}
-            {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB. PDFs and images are
-            rejected.
-          </small>
-          <button className="primary" type="submit" disabled={pending || busy}>
+
+        {failure && <ErrorText role="alert">{failure}</ErrorText>}
+        {uploadError && <ErrorText role="alert">{uploadError}</ErrorText>}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-[12px] font-medium transition-colors hover:bg-muted">
+              <Paperclip aria-hidden="true" className="size-3.5" />
+              <span>Attach a file</span>
+              <input
+                ref={fileInput}
+                type="file"
+                className="sr-only"
+                accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void attach(file);
+                }}
+              />
+            </label>
+            <small className="mt-1.5 block text-[11px] text-muted-foreground">
+              Text only — Markdown, plain text, and code, up to{" "}
+              {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB. PDFs and images are
+              rejected.
+            </small>
+          </div>
+          <Button variant="primary" type="submit" disabled={pending || busy}>
+            <Send aria-hidden="true" />
             {pending ? "Posting…" : "Post comment"}
-          </button>
+          </Button>
         </div>
       </form>
-      <p className="muted" aria-live="polite">
+
+      <p className="text-[11.5px] text-muted-foreground" aria-live="polite">
         {latestSeq === 0
           ? "No entries yet."
           : `${latestSeq} entr${latestSeq === 1 ? "y" : "ies"} in this task.`}
@@ -211,6 +244,12 @@ export function Discussion({
     </div>
   );
 }
+
+const ACTOR = {
+  guest: { label: "Guest", Icon: null },
+  agent: { label: "Agent", Icon: Bot },
+  system: { label: "System", Icon: Settings2 },
+} as const;
 
 /** One entry, plus the answer affordance when it carries an open question. */
 function DiscussionItem({
@@ -231,7 +270,8 @@ function DiscussionItem({
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const requestId = useRef(crypto.randomUUID());
-  const open = entry.question?.role === "asked" && entry.question.status === "open";
+  const open =
+    entry.question?.role === "asked" && entry.question.status === "open";
 
   async function submitAnswer() {
     if (!answer.trim() || pending || !entry.question) return;
@@ -258,65 +298,102 @@ function DiscussionItem({
     .map((id) => materials.find((material) => material.id === id))
     .filter((material): material is Material => material !== undefined);
 
+  const author =
+    entry.actorType === "guest"
+      ? (entry.guestLabel ?? "Guest")
+      : (ACTOR[entry.actorType]?.label ?? "System");
+  const Icon =
+    entry.actorType === "guest" ? null : ACTOR[entry.actorType]?.Icon;
+
   return (
-    <li className={`entry actor-${entry.actorType}`}>
-      <div className="entry-head">
-        <span className="author">
-          {entry.actorType === "guest"
-            ? (entry.guestLabel ?? "Guest")
-            : entry.actorType === "agent"
-              ? "Agent"
-              : "System"}
-        </span>
+    <li
+      className={cn(
+        "rounded-xl border p-4",
+        entry.actorType === "agent"
+          ? "border-navy-200/70 bg-navy-50/40 dark:border-navy-800 dark:bg-navy-950/30"
+          : entry.actorType === "system"
+            ? "border-dashed border-border bg-transparent"
+            : "border-border bg-card",
+        open && "ring-1 ring-amber-300/70 dark:ring-amber-800",
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {Icon ? (
+          <span
+            aria-hidden="true"
+            className="grid size-5 shrink-0 place-items-center rounded-full border border-border bg-card text-muted-foreground"
+          >
+            <Icon className="size-3" />
+          </span>
+        ) : (
+          <Avatar name={author} size="sm" />
+        )}
+        <span className="text-[12.5px] font-semibold">{author}</span>
         {entry.question && (
-          <span className={`question-tag status-${entry.question.status}`}>
+          <Badge tone={toneFor(entry.question.status)} size="sm">
             {entry.question.role === "asked"
               ? `Question · ${entry.question.status}`
               : "Answer"}
-          </span>
+          </Badge>
         )}
         {entry.afterActiveRunCutoff && (
-          <span className="cutoff-tag">Added after this run started</span>
+          <Badge tone="warn" size="sm">
+            Added after this run started
+          </Badge>
         )}
       </div>
-      <p className="entry-body">{entry.body}</p>
+
+      <p className="mt-2 text-[13px] leading-relaxed whitespace-pre-wrap">
+        {entry.body}
+      </p>
+
       {attachments.length > 0 && (
-        <ul className="attachments">
+        <ul className="mt-2.5 flex flex-wrap gap-1.5">
           {attachments.map((material) => (
-            <li key={material.id}>▤ {material.filename}</li>
+            <li
+              key={material.id}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2 py-1 text-[11.5px]"
+            >
+              <FileText
+                aria-hidden="true"
+                className="size-3 shrink-0 text-muted-foreground"
+              />
+              {material.filename}
+            </li>
           ))}
         </ul>
       )}
+
       {open && (
         <form
-          className="answer"
+          className="mt-3.5 space-y-2.5 rounded-lg border border-border bg-card p-3.5"
           onSubmit={(event) => {
             event.preventDefault();
             void submitAnswer();
           }}
         >
-          <label htmlFor={`answer-${entry.id}`}>
-            Answer this question
-          </label>
-          <textarea
+          <Label htmlFor={`answer-${entry.id}`}>Answer this question</Label>
+          <Textarea
             id={`answer-${entry.id}`}
             rows={2}
             maxLength={20000}
             value={answer}
             onChange={(event) => setAnswer(event.target.value)}
           />
-          <small className="muted">
+          <small className="block text-[11.5px] text-muted-foreground">
             The waiting agent receives this directly. Its deadline keeps running
             while it waits.
           </small>
-          {failure && (
-            <p role="alert" className="error">
-              {failure}
-            </p>
-          )}
-          <button type="submit" className="primary" disabled={pending}>
+          {failure && <ErrorText role="alert">{failure}</ErrorText>}
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            disabled={pending}
+            className="w-full sm:w-auto"
+          >
             {pending ? "Sending…" : "Send answer"}
-          </button>
+          </Button>
         </form>
       )}
     </li>
@@ -341,14 +418,20 @@ export function useDiscussion(workspaceId: string, taskId: string | undefined) {
 
     const pull = async () => {
       try {
-        const page = await readDiscussionPages(api, workspaceId, taskId, controller.signal);
+        const page = await readDiscussionPages(
+          api,
+          workspaceId,
+          taskId,
+          controller.signal,
+        );
         if (controller.signal.aborted || stopped) return;
         setEntries(page.entries);
         setLatestSeq(page.latestSeq);
         setCutoff(page.activeRunCutoffSeq);
         setFailure(null);
       } catch (error) {
-        if (!controller.signal.aborted && !stopped) setFailure(apiMessage(error));
+        if (!controller.signal.aborted && !stopped)
+          setFailure(apiMessage(error));
       } finally {
         if (!controller.signal.aborted && !stopped) {
           setLoading(false);

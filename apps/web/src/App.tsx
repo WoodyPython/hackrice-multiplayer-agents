@@ -1,23 +1,18 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import {
-  Link,
-  NavLink,
-  Route,
-  Routes,
-  useLocation,
-  useParams,
-} from "react-router-dom";
+import { Route, Routes, useLocation, useParams } from "react-router-dom";
+import { TriangleAlert } from "lucide-react";
 import { ApiError, uuidSchema, type Workspace } from "@app/contracts";
 import { BrowserContext, useBrowser } from "./browser-context";
 import { BrowserSession } from "./session";
-import {
-  contributionLink,
-  WorkspaceApi,
-  workspaceError,
-} from "./workspace-api";
+import { WorkspaceApi, workspaceError } from "./workspace-api";
 import { DemoApp } from "./DemoApp";
+import { AppShell, Breadcrumb, type NavItem } from "./components/AppShell";
 import { EmptyState } from "./components/EmptyState";
 import { GuestNameControl } from "./components/GuestNameControl";
+import { ShareWorkspace } from "./components/ShareWorkspace";
+import { Badge } from "./components/ui/badge";
+import { Button, ButtonLink } from "./components/ui/button";
+import { Notice, Skeleton } from "./components/ui/misc";
 import { CreateWorkspace } from "./pages/CreateWorkspace";
 import { WorkspaceSettings } from "./pages/WorkspaceSettings";
 import { TaskDrafts } from "./pages/TaskDrafts";
@@ -26,43 +21,6 @@ import { TaskDetailPage } from "./pages/TaskDetailPage";
 import { NewTask } from "./pages/NewTask";
 import { Files } from "./pages/Files";
 import { History } from "./pages/History";
-
-function ShareWorkspace({ id }: { id: string }) {
-  const [copied, setCopied] = useState(false);
-  const [manual, setManual] = useState(false);
-  const link = contributionLink(id);
-  return (
-    <div className="share-workspace">
-      <button
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(link);
-            setCopied(true);
-            setManual(false);
-          } catch {
-            setManual(true);
-            setCopied(false);
-          }
-        }}
-      >
-        Copy workspace link
-      </button>
-      {copied && (
-        <small role="status">Link copied. Anyone with it can contribute.</small>
-      )}
-      {manual && (
-        <label>
-          Copy this contribution link
-          <input
-            readOnly
-            value={link}
-            onFocus={(event) => event.target.select()}
-          />
-        </label>
-      )}
-    </div>
-  );
-}
 
 function LiveWorkspace({ id }: { id: string }) {
   const { api, session } = useBrowser();
@@ -92,17 +50,23 @@ function LiveWorkspace({ id }: { id: string }) {
   }, [api, id, revision, retry]);
   useEffect(() => {
     document.title = workspace
-      ? `${workspace.name} — Common`
-      : "Workspace — Common";
+      ? `${workspace.name} — CoFlow`
+      : "Workspace — CoFlow";
   }, [workspace?.name]);
   useEffect(() => {
-    document.getElementById("main")?.focus();
+    document.getElementById("main")?.focus({ preventScroll: true });
   }, [location.pathname]);
   if (!workspace && loading)
     return (
-      <main aria-busy="true">
-        <p role="status">Opening workspace…</p>
-        <div className="skeleton heading-skeleton" />
+      <main aria-busy="true" className="mx-auto w-full max-w-5xl px-6 py-16">
+        <p role="status" className="sr-only">
+          Opening workspace…
+        </p>
+        <div aria-hidden="true" className="space-y-5">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-10 w-2/3" />
+          <Skeleton className="h-48" />
+        </div>
       </main>
     );
   if (
@@ -110,8 +74,9 @@ function LiveWorkspace({ id }: { id: string }) {
     (failure instanceof ApiError && failure.code === "WORKSPACE_NOT_FOUND")
   )
     return (
-      <main>
+      <main className="mx-auto w-full max-w-2xl px-6 py-20">
         <EmptyState
+          icon={TriangleAlert}
           title={
             failure instanceof ApiError &&
             failure.code === "WORKSPACE_NOT_FOUND"
@@ -119,14 +84,14 @@ function LiveWorkspace({ id }: { id: string }) {
               : "Workspace unavailable"
           }
           action={
-            <div className="actions">
-              <button onClick={() => setRetry((value) => value + 1)}>
+            <>
+              <Button onClick={() => setRetry((value) => value + 1)}>
                 Try again
-              </button>
-              <Link className="button" to="/">
+              </Button>
+              <ButtonLink variant="primary" to="/">
                 Back home
-              </Link>
-            </div>
+              </ButtonLink>
+            </>
           }
         >
           {workspaceError(failure)}
@@ -139,122 +104,107 @@ function LiveWorkspace({ id }: { id: string }) {
     isOwner:
       workspace.isOwner && !loading && !failure && !!session.getOwnerKey(id),
   };
+  const items: NavItem[] = [
+    { to: base, label: "Tasks", icon: "board", end: true },
+    { to: `${base}/files`, label: "Files", icon: "files" },
+    { to: `${base}/history`, label: "History", icon: "history" },
+  ];
   return (
-    <div className="app-shell">
-      <a className="skip-link" href="#main">
-        Skip to content
-      </a>
-      <aside className="sidebar">
-        <Link to="/" className="brand">
-          <span className="brand-mark">c</span>common.
-        </Link>
-        <details className="workspace-menu">
-          <summary>
-            <span className="workspace-icon">{workspace.name[0]}</span>
-            <span>
-              {workspace.name}
-              <small>Shared workspace</small>
-            </span>
-            <span aria-hidden="true">⌄</span>
-          </summary>
-          <Link to={`${base}/settings`}>Workspace settings</Link>
-        </details>
-        <span className="nav-caption">Workspace</span>
-        <nav aria-label="Workspace">
-          <NavLink to={base} end>
-            ▦ Tasks
-          </NavLink>
-          <NavLink to={`${base}/files`}>▤ Files</NavLink>
-          <NavLink to={`${base}/history`}>◷ History</NavLink>
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="collaboration-note">
-            <p>
-              A shared space.
-              <br />A little more possible.
-            </p>
-          </div>
-        </div>
-      </aside>
-      <div className="main-shell">
-        <header className="topbar live-topbar">
-          <span>
-            {workspace.name} ·{" "}
+    <AppShell
+      workspaceName={workspace.name}
+      settingsTo={`${base}/settings`}
+      items={items}
+      guestName={session.getGuest().name}
+      guestRole={visibleWorkspace.isOwner ? "Workspace owner" : "Contributor"}
+      breadcrumb={<Breadcrumb trail={["Workspace", workspace.name]} />}
+      topbarEnd={
+        <div className="flex items-center gap-2.5">
+          <Badge
+            tone={visibleWorkspace.isOwner ? "brand" : "neutral"}
+            className="hidden sm:inline-flex"
+          >
             {visibleWorkspace.isOwner ? "Owner" : "Contributor"}
-          </span>
+          </Badge>
           <GuestNameControl />
-        </header>
-        <main id="main" tabIndex={-1}>
-          {session.hasUnsavedOwner(id) && (
-            <div className="storage-notice" role="alert">
-              <p>
-                Workspace created, but this browser could not save owner access.
-                Keep this tab open and retry saving before leaving.
-              </p>
-              <button onClick={() => session.retryOwnerSave(id)}>
-                Retry saving owner access
-              </button>
-            </div>
-          )}
-          {!!failure && (
-            <div role="alert">
-              <p>{workspaceError(failure)}</p>
-              <button onClick={() => setRetry((value) => value + 1)}>
-                Reload workspace
-              </button>
-            </div>
-          )}
-          <Routes>
-            <Route path="tasks/:taskId/drafts" element={<TaskDrafts workspaceId={id} />} />
-            <Route
-              index
-              element={
-                <TaskBoardPage
-                  workspace={workspace}
-                  share={<ShareWorkspace id={id} />}
-                />
-              }
+        </div>
+      }
+    >
+      {session.hasUnsavedOwner(id) && (
+        <Notice
+          role="alert"
+          tone="warn"
+          className="mb-6"
+          title="Owner access was not saved in this browser"
+        >
+          <p>
+            Workspace created, but this browser could not save owner access.
+            Keep this tab open and retry saving before leaving.
+          </p>
+          <Button size="sm" onClick={() => session.retryOwnerSave(id)}>
+            Retry saving owner access
+          </Button>
+        </Notice>
+      )}
+      {!!failure && (
+        <Notice role="alert" tone="warn" className="mb-6">
+          <p>{workspaceError(failure)}</p>
+          <Button size="sm" onClick={() => setRetry((value) => value + 1)}>
+            Reload workspace
+          </Button>
+        </Notice>
+      )}
+      <Routes>
+        <Route
+          path="tasks/:taskId/drafts"
+          element={<TaskDrafts workspaceId={id} />}
+        />
+        <Route
+          index
+          element={
+            <TaskBoardPage
+              workspace={workspace}
+              share={<ShareWorkspace id={id} />}
             />
-            <Route path="tasks/new" element={<NewTask workspaceId={id} />} />
-            <Route
-              path="tasks/:taskId"
-              element={
-                <TaskDetailPage
-                  workspaceId={id}
-                  isOwner={visibleWorkspace.isOwner}
-                />
-              }
+          }
+        />
+        <Route path="tasks/new" element={<NewTask workspaceId={id} />} />
+        <Route
+          path="tasks/:taskId"
+          element={
+            <TaskDetailPage
+              workspaceId={id}
+              isOwner={visibleWorkspace.isOwner}
             />
-            <Route
-              path="settings"
-              element={
-                <WorkspaceSettings
-                  workspace={visibleWorkspace}
-                  onChange={setWorkspace}
-                />
-              }
+          }
+        />
+        <Route
+          path="settings"
+          element={
+            <WorkspaceSettings
+              workspace={visibleWorkspace}
+              onChange={setWorkspace}
             />
-            <Route path="files" element={<Files workspaceId={id} />} />
-            <Route path="history" element={<History workspaceId={id} />} />
-            <Route
-              path="*"
-              element={
-                <EmptyState
-                  title="Page not found"
-                  action={
-                    <Link className="button" to={base}>
-                      Back to workspace
-                    </Link>
-                  }
-                >
-                  Check the address and try again.
-                </EmptyState>
+          }
+        />
+        <Route path="files" element={<Files workspaceId={id} />} />
+        <Route path="history" element={<History workspaceId={id} />} />
+        <Route
+          path="*"
+          element={
+            <EmptyState
+              title="Page not found"
+              action={
+                <ButtonLink variant="primary" to={base}>
+                  Back to workspace
+                </ButtonLink>
               }
-            />
-          </Routes>
-        </main>
-      </div>
-    </div>
+            >
+              Check the address and try again.
+            </EmptyState>
+          }
+        />
+      </Routes>
+    </AppShell>
   );
 }
 
@@ -267,13 +217,14 @@ function WorkspaceRoute() {
       id={parsed.data.toLowerCase()}
     />
   ) : (
-    <main>
+    <main className="mx-auto w-full max-w-2xl px-6 py-20">
       <EmptyState
+        icon={TriangleAlert}
         title="Workspace not found"
         action={
-          <Link className="button" to="/">
+          <ButtonLink variant="primary" to="/">
             Back home
-          </Link>
+          </ButtonLink>
         }
       >
         Check the contribution link.
@@ -301,13 +252,13 @@ export function App({
         <Route
           path="*"
           element={
-            <main>
+            <main className="mx-auto w-full max-w-2xl px-6 py-20">
               <EmptyState
                 title="Page not found"
                 action={
-                  <Link className="button" to="/">
+                  <ButtonLink variant="primary" to="/">
                     Back home
-                  </Link>
+                  </ButtonLink>
                 }
               >
                 Check the address and try again.

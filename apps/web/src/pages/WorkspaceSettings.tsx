@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from "react";
+import { Lock } from "lucide-react";
 import {
   ApiError,
   updateWorkspaceRequestSchema,
@@ -6,6 +7,11 @@ import {
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { workspaceError } from "../workspace-api";
+import { PageHeading } from "../components/PageHeading";
+import { Button } from "../components/ui/button";
+import { Input, Label, Textarea } from "../components/ui/field";
+import { Badge } from "../components/ui/badge";
+import { ErrorText, Notice } from "../components/ui/misc";
 
 export function WorkspaceSettings({
   workspace,
@@ -23,6 +29,7 @@ export function WorkspaceSettings({
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
   const canEdit = workspace.isOwner && !!session.getOwnerKey(workspace.id);
+
   async function save(event: FormEvent) {
     event.preventDefault();
     if (busy.current || !canEdit) return;
@@ -51,64 +58,95 @@ export function WorkspaceSettings({
       setPending(false);
     }
   }
+
   return (
     <>
-      <header className="page-heading">
-        <div>
-          <span className="eyebrow">Workspace settings</span>
-          <h1>{workspace.name}</h1>
-          <p>{workspace.purpose}</p>
-        </div>
-      </header>
-      <form className="panel requirement-form" onSubmit={save} noValidate>
-        <h2>Workspace guidance</h2>
+      <PageHeading
+        eyebrow="Workspace settings"
+        title={workspace.name}
+        description={workspace.purpose}
+        actions={
+          <Badge tone={canEdit ? "brand" : "neutral"}>
+            {canEdit ? "Owner" : "Read only"}
+          </Badge>
+        }
+      />
+
+      <form
+        className="max-w-2xl space-y-5 rounded-xl border border-border bg-card p-6 shadow-xs"
+        onSubmit={save}
+        noValidate
+      >
+        <h2 className="text-[17px] font-semibold tracking-tight">
+          Workspace guidance
+        </h2>
+
         {!canEdit && (
-          <p role="status">
-            Owner controls are unavailable in this browser. You can still
-            participate through the workspace link. If browser storage was
-            cleared, owner access cannot be recovered.
+          <Notice role="status" tone="warn">
+            <p className="flex gap-2">
+              <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                Owner controls are unavailable in this browser. You can still
+                participate through the workspace link. If browser storage was
+                cleared, owner access cannot be recovered.
+              </span>
+            </p>
+          </Notice>
+        )}
+
+        <div className="space-y-1.5">
+          <Label htmlFor="settings-name">Workspace name</Label>
+          <Input
+            id="settings-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            readOnly={!canEdit}
+            maxLength={200}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="settings-purpose">Purpose</Label>
+          <Textarea
+            id="settings-purpose"
+            value={purpose}
+            onChange={(event) => setPurpose(event.target.value)}
+            readOnly={!canEdit}
+            rows={3}
+            maxLength={4000}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="settings-guidance">Guidance</Label>
+          <Textarea
+            id="settings-guidance"
+            value={guidance}
+            onChange={(event) => setGuidance(event.target.value)}
+            readOnly={!canEdit}
+            rows={6}
+            maxLength={20000}
+          />
+          <small className="block text-[11.5px] text-muted-foreground">
+            Guidance version {workspace.guidanceVersion}. Display names do not
+            grant owner access.
+          </small>
+        </div>
+
+        {error && <ErrorText role="alert">{error}</ErrorText>}
+        {message && (
+          <p
+            role="status"
+            className="text-[13px] font-medium text-emerald-700 dark:text-emerald-400"
+          >
+            {message}
           </p>
         )}
-        <label htmlFor="settings-name">Workspace name</label>
-        <input
-          id="settings-name"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          readOnly={!canEdit}
-          maxLength={200}
-        />
-        <label htmlFor="settings-purpose">Purpose</label>
-        <textarea
-          id="settings-purpose"
-          value={purpose}
-          onChange={(event) => setPurpose(event.target.value)}
-          readOnly={!canEdit}
-          rows={3}
-          maxLength={4000}
-        />
-        <label htmlFor="settings-guidance">Guidance</label>
-        <textarea
-          id="settings-guidance"
-          value={guidance}
-          onChange={(event) => setGuidance(event.target.value)}
-          readOnly={!canEdit}
-          rows={6}
-          maxLength={20000}
-        />
-        <small>
-          Guidance version {workspace.guidanceVersion}. Display names do not
-          grant owner access.
-        </small>
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-        {message && <p role="status">{message}</p>}
+
         {canEdit && (
-          <button className="primary" disabled={pending} type="submit">
+          <Button variant="primary" disabled={pending} type="submit">
             {pending ? "Saving…" : "Save workspace settings"}
-          </button>
+          </Button>
         )}
       </form>
     </>

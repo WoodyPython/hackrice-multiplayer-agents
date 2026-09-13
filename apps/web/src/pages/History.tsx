@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Bot, History as HistoryIcon, PenLine } from "lucide-react";
 import type { HistoryEntry } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
+import { toneFor } from "../board";
 import { EmptyState } from "../components/EmptyState";
+import { PageHeading } from "../components/PageHeading";
+import { Badge, Dot } from "../components/ui/badge";
+import { Button, ButtonLink } from "../components/ui/button";
+import { ErrorText, Path, Skeleton } from "../components/ui/misc";
 
 /**
  * Applied changes and the tasks they came from (design §4.1).
@@ -46,61 +52,92 @@ export function History({ workspaceId }: { workspaceId: string }) {
 
   return (
     <>
-      <header className="page-heading">
-        <div>
-          <span className="eyebrow">A record of progress</span>
-          <h1>History</h1>
-          <p>Changes that were applied to the approved files, newest first.</p>
-        </div>
-      </header>
+      <PageHeading
+        eyebrow="A record of progress"
+        title="History"
+        description="Changes that were applied to the approved files, newest first."
+      />
 
       {failure && (
-        <div role="alert">
-          <p className="error">{failure}</p>
-          <button onClick={reload}>Try again</button>
+        <div role="alert" className="mb-5 flex flex-wrap items-center gap-3">
+          <ErrorText>{failure}</ErrorText>
+          <Button size="sm" onClick={reload}>
+            Try again
+          </Button>
         </div>
       )}
 
       {entries === null ? (
-        <p role="status">Loading history…</p>
+        <div className="space-y-2.5">
+          <p role="status" className="sr-only">
+            Loading history…
+          </p>
+          <Skeleton aria-hidden="true" className="h-20" />
+          <Skeleton aria-hidden="true" className="h-20" />
+        </div>
       ) : entries.length === 0 ? (
         <EmptyState
           title="Nothing has been applied yet"
+          icon={HistoryIcon}
           action={
-            <Link className="button" to={base}>
+            <ButtonLink variant="primary" to={base}>
               Back to the board
-            </Link>
+            </ButtonLink>
           }
         >
           When an owner applies a reviewed change, it appears here with the task
           it came from.
         </EmptyState>
       ) : (
-        <ol className="history">
-          {entries.map((entry) => (
-            <li className={`history-entry apply-${entry.status}`} key={entry.applyOperationId}>
-              <div className="history-head">
-                <Link to={`${base}/tasks/${entry.taskId}?tab=Changes`}>
-                  {entry.taskTitle}
-                </Link>
-                <span className={`status apply-${entry.status}`}>
-                  {LABEL[entry.status]}
+        /* A rail down the left ties the entries into one timeline. */
+        <ol className="relative max-w-3xl space-y-3 before:absolute before:top-3 before:bottom-3 before:left-[7px] before:w-px before:bg-border">
+          {entries.map((entry) => {
+            const tone = toneFor(entry.status);
+            const Icon = entry.taskKind === "manual_edit" ? PenLine : Bot;
+            return (
+              <li key={entry.applyOperationId} className="relative pl-8">
+                <span className="absolute top-4 left-0 grid size-3.5 place-items-center rounded-full border-2 border-background bg-card">
+                  <Dot tone={tone} live={entry.status === "pending"} />
                 </span>
-              </div>
-              <p className="muted">
-                {entry.taskKind === "manual_edit"
-                  ? "Written by hand"
-                  : "Produced with agents"}{" "}
-                · <code className="path">{entry.candidateSha.slice(0, 8)}</code>
-                {entry.settledAt
-                  ? ` · ${new Date(entry.settledAt).toLocaleString()}`
-                  : " · not settled"}
-              </p>
-              {entry.status !== "applied" && (
-                <p className="muted">{EXPLAIN[entry.status]}</p>
-              )}
-            </li>
-          ))}
+                <div className="rounded-xl border border-border bg-card p-4 shadow-xs">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <Link
+                      to={`${base}/tasks/${entry.taskId}?tab=Changes`}
+                      className="min-w-0 text-[13.5px] font-semibold tracking-tight underline-offset-2 hover:underline"
+                    >
+                      {entry.taskTitle}
+                    </Link>
+                    <Badge tone={tone} size="sm" className="ml-auto shrink-0">
+                      {LABEL[entry.status]}
+                    </Badge>
+                  </div>
+
+                  <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Icon aria-hidden="true" className="size-3" />
+                      {entry.taskKind === "manual_edit"
+                        ? "Written by hand"
+                        : "Produced with agents"}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <Path>{entry.candidateSha.slice(0, 8)}</Path>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      {entry.settledAt
+                        ? new Date(entry.settledAt).toLocaleString()
+                        : "not settled"}
+                    </span>
+                  </p>
+
+                  {entry.status !== "applied" && (
+                    <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
+                      {EXPLAIN[entry.status]}
+                    </p>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ol>
       )}
     </>

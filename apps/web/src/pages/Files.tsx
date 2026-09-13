@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
+  Download,
+  FileCheck2,
+  FileText,
+  FolderOpen,
+  PencilRuler,
+  Upload,
+  Users,
+  X,
+} from "lucide-react";
+import {
   MAX_TEXT_FILE_BYTES,
   SUPPORTED_TEXT_EXTENSIONS,
   type DraftFile,
@@ -11,6 +21,53 @@ import {
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
 import { EmptyState } from "../components/EmptyState";
+import { PageHeading } from "../components/PageHeading";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Input, Label } from "../components/ui/field";
+import { ErrorText, Path, Skeleton } from "../components/ui/misc";
+
+function Panel({
+  icon: Icon,
+  title,
+  description,
+  children,
+}: {
+  icon: typeof FileText;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-border bg-card shadow-xs">
+      <div className="flex items-start gap-3 border-b border-border p-5">
+        <span
+          aria-hidden="true"
+          className="grid size-8 shrink-0 place-items-center rounded-lg border border-navy-200/70 bg-navy-50 text-navy-700 dark:border-navy-800 dark:bg-navy-950/60 dark:text-navy-300"
+        >
+          <Icon className="size-4" />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
+          {description && (
+            <p className="mt-1 text-[12.5px] text-muted-foreground">
+              {description}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="space-y-3 p-5">{children}</div>
+    </section>
+  );
+}
+
+function FileRow({ children }: { children: React.ReactNode }) {
+  return (
+    <li className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-[12.5px]">
+      {children}
+    </li>
+  );
+}
 
 /** Approved main, immutable references, and active collaborative drafts. */
 export function Files({ workspaceId }: { workspaceId: string }) {
@@ -90,143 +147,230 @@ export function Files({ workspaceId }: { workspaceId: string }) {
   async function viewFile(target: string) {
     setBusy(true);
     setOpenError(null);
-    try { setPreview(await api.readApprovedFile(workspaceId, target)); }
-    catch (error) { setOpenError(apiMessage(error)); }
-    finally { setBusy(false); }
+    try {
+      setPreview(await api.readApprovedFile(workspaceId, target));
+    } catch (error) {
+      setOpenError(apiMessage(error));
+    } finally {
+      setBusy(false);
+    }
   }
+
+  const listSkeleton = (
+    <div aria-hidden="true" className="space-y-2">
+      <Skeleton className="h-9" />
+      <Skeleton className="h-9 w-3/4" />
+    </div>
+  );
 
   return (
     <>
-      <header className="page-heading">
-        <div>
-          <span className="eyebrow">Your shared library</span>
-          <h1>Files</h1>
-          <p>Reference materials to draw on, and documents being written now.</p>
-        </div>
-      </header>
+      <PageHeading
+        eyebrow="Your shared library"
+        title="Files"
+        description="Reference materials to draw on, and documents being written now."
+      />
 
       {failure && (
-        <div role="alert">
-          <p className="error">{failure}</p>
-          <button onClick={reload}>Try again</button>
+        <div role="alert" className="mb-5 flex flex-wrap items-center gap-3">
+          <ErrorText>{failure}</ErrorText>
+          <Button size="sm" onClick={reload}>
+            Try again
+          </Button>
         </div>
       )}
 
-      <section className="panel">
-        <h2>Edit together</h2>
-        <p className="muted">
-          Open a file for shared editing. Everyone with the workspace link edits
-          the same document, and it can be reviewed without starting any agents.
-        </p>
-        <form
-          className="edit-together"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void editTogether(path);
-          }}
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Panel
+          icon={PencilRuler}
+          title="Edit together"
+          description="Open a file for shared editing. Everyone with the workspace link edits the same document, and it can be reviewed without starting any agents."
         >
-          <label htmlFor="edit-path">File path</label>
-          <input
-            id="edit-path"
-            value={path}
-            placeholder="documents/launch.md"
-            onChange={(event) => setPath(event.target.value)}
-          />
-          <button className="primary" type="submit" disabled={busy || !path.trim()}>
-            {busy ? "Opening…" : "Edit together"}
-          </button>
-        </form>
-        {openError && (
-          <p role="alert" className="error">
-            {openError}
-          </p>
-        )}
-      </section>
-
-      <section className="panel">
-        <h2>Active shared drafts</h2>
-        {loading ? (
-          <p role="status">Loading files…</p>
-        ) : drafts.length === 0 ? (
-          <EmptyState title="Nothing is being edited right now">
-            Open a file above and it will appear here for everyone.
-          </EmptyState>
-        ) : (
-          <ul className="file-list">
-            {drafts.map((draft) => (
-              <li key={draft.id}>
-                ▤{" "}
-                <Link to={`/w/${workspaceId}/tasks/${draft.taskId}/drafts`}>
-                  {draft.path}
-                </Link>
-                <small className="muted"> · revision {draft.persistedRevision}</small>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="panel">
-        <h2>Reference materials</h2>
-        <p className="muted">
-          Text only — Markdown, plain text, and code, up to{" "}
-          {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB. PDFs and images are
-          rejected.
-        </p>
-        <label className="attach-control">
-          <span>Upload a material</span>
-          <input
-            ref={fileInput}
-            type="file"
-            accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
-            disabled={busy}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload(file);
+          <form
+            className="flex flex-col gap-2.5 sm:flex-row sm:items-end"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void editTogether(path);
             }}
-          />
-        </label>
-        {uploadError && (
-          <p role="alert" className="error">
-            {uploadError}
-          </p>
-        )}
-        {loading ? null : live.length === 0 ? (
-          <EmptyState title="No reference materials yet">
-            Upload the brief, the notes, the half-finished draft — whatever a
-            task should read before it starts.
-          </EmptyState>
-        ) : (
-          <ul className="file-list">
-            {live.map((material) => (
-              <li key={material.id}>
-                ▤ <a href={`/api/workspaces/${workspaceId}/materials/${material.id}`} download>{material.filename}</a>
-                <small className="muted">
-                  {" "}
-                  · {Math.max(1, Math.round(material.byteSize / 1024))} KB
-                  {material.guestLabel ? ` · ${material.guestLabel}` : ""}
-                </small>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+          >
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Label htmlFor="edit-path">File path</Label>
+              <Input
+                id="edit-path"
+                value={path}
+                placeholder="documents/launch.md"
+                onChange={(event) => setPath(event.target.value)}
+                className="font-mono text-[12.5px]"
+              />
+            </div>
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={busy || !path.trim()}
+            >
+              {busy ? "Opening…" : "Edit together"}
+            </Button>
+          </form>
+          {openError && <ErrorText role="alert">{openError}</ErrorText>}
+        </Panel>
 
-      <section className="panel">
-        <h2>Approved files</h2>
-        {loading ? <p role="status">Loading approved files…</p> : approved.length === 0 ? (
-          <EmptyState title="No approved files yet">Apply a reviewed change to publish files here.</EmptyState>
-        ) : <ul className="file-list">{approved.map((file) => <li key={file.path}>
-          <button disabled={busy} onClick={() => void viewFile(file.path)}>{file.path}</button>{" "}
-          <button disabled={busy} onClick={() => void editTogether(file.path)}>Edit {file.path} together</button>
-        </li>)}</ul>}
-        {preview && <section aria-label="Approved file preview">
-          <h3>{preview.path}</h3>
-          <p className="muted">Approved version {preview.mainSha.slice(0, 8)}</p>
-          <pre className="file-preview">{preview.text ?? "This file is no longer on the approved version. Refresh the list."}</pre>
-          <button onClick={() => setPreview(null)}>Close preview</button>
-        </section>}
-      </section>
+        <Panel icon={Users} title="Active shared drafts">
+          {loading ? (
+            <>
+              <p role="status" className="sr-only">
+                Loading files…
+              </p>
+              {listSkeleton}
+            </>
+          ) : drafts.length === 0 ? (
+            <EmptyState title="Nothing is being edited right now" icon={Users}>
+              Open a file above and it will appear here for everyone.
+            </EmptyState>
+          ) : (
+            <ul className="grid gap-2">
+              {drafts.map((draft) => (
+                <FileRow key={draft.id}>
+                  <FileText
+                    aria-hidden="true"
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  <Link
+                    to={`/w/${workspaceId}/tasks/${draft.taskId}/drafts`}
+                    className="min-w-0 truncate font-medium underline-offset-2 hover:underline"
+                  >
+                    {draft.path}
+                  </Link>
+                  <Badge size="sm" className="ml-auto">
+                    revision {draft.persistedRevision}
+                  </Badge>
+                </FileRow>
+              ))}
+            </ul>
+          )}
+        </Panel>
+
+        <Panel
+          icon={FolderOpen}
+          title="Reference materials"
+          description={`Text only — Markdown, plain text, and code, up to ${Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB. PDFs and images are rejected.`}
+        >
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-2 text-[12.5px] font-medium transition-colors hover:bg-muted">
+            <Upload aria-hidden="true" className="size-3.5" />
+            <span>Upload a material</span>
+            <input
+              ref={fileInput}
+              type="file"
+              className="sr-only"
+              accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void upload(file);
+              }}
+            />
+          </label>
+
+          {uploadError && <ErrorText role="alert">{uploadError}</ErrorText>}
+
+          {loading ? null : live.length === 0 ? (
+            <EmptyState title="No reference materials yet" icon={FolderOpen}>
+              Upload the brief, the notes, the half-finished draft — whatever a
+              task should read before it starts.
+            </EmptyState>
+          ) : (
+            <ul className="grid gap-2">
+              {live.map((material) => (
+                <FileRow key={material.id}>
+                  <FileText
+                    aria-hidden="true"
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  <a
+                    href={`/api/workspaces/${workspaceId}/materials/${material.id}`}
+                    download
+                    className="flex min-w-0 items-center gap-1.5 truncate font-medium underline-offset-2 hover:underline"
+                  >
+                    {material.filename}
+                    <Download aria-hidden="true" className="size-3 shrink-0" />
+                  </a>
+                  <small className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                    {Math.max(1, Math.round(material.byteSize / 1024))} KB
+                    {material.guestLabel ? ` · ${material.guestLabel}` : ""}
+                  </small>
+                </FileRow>
+              ))}
+            </ul>
+          )}
+        </Panel>
+
+        <Panel icon={FileCheck2} title="Approved files">
+          {loading ? (
+            <>
+              <p role="status" className="sr-only">
+                Loading approved files…
+              </p>
+              {listSkeleton}
+            </>
+          ) : approved.length === 0 ? (
+            <EmptyState title="No approved files yet" icon={FileCheck2}>
+              Apply a reviewed change to publish files here.
+            </EmptyState>
+          ) : (
+            <ul className="grid gap-2">
+              {approved.map((file) => (
+                <FileRow key={file.path}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void viewFile(file.path)}
+                    className="min-w-0 truncate font-mono text-[11.5px] font-medium underline-offset-2 hover:underline disabled:opacity-50"
+                  >
+                    {file.path}
+                  </button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="ml-auto"
+                    disabled={busy}
+                    onClick={() => void editTogether(file.path)}
+                  >
+                    Edit {file.path} together
+                  </Button>
+                </FileRow>
+              ))}
+            </ul>
+          )}
+
+          {preview && (
+            <section
+              aria-label="Approved file preview"
+              className="space-y-2 rounded-lg border border-border bg-muted/30 p-3.5"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-[13px] font-semibold">
+                  <Path>{preview.path}</Path>
+                </h3>
+                <Badge size="sm" className="font-mono">
+                  {preview.mainSha.slice(0, 8)}
+                </Badge>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  className="ml-auto"
+                  onClick={() => setPreview(null)}
+                >
+                  <X aria-hidden="true" />
+                  <span className="sr-only">Close preview</span>
+                </Button>
+              </div>
+              <pre className="max-h-80 overflow-auto rounded-lg bg-card p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
+                {preview.text ??
+                  "This file is no longer on the approved version. Refresh the list."}
+              </pre>
+            </section>
+          )}
+        </Panel>
+      </div>
     </>
   );
 }

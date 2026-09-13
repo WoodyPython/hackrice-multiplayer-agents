@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
+import { CircleAlert, FileText, Play, RotateCcw, Square } from "lucide-react";
 import {
   ApiError,
   isStartableTaskStatus,
@@ -22,7 +23,13 @@ import { Discussion, useDiscussion } from "../components/Discussion";
 import { RunOutcome } from "../components/RunOutcome";
 import { SavedWork } from "../components/SavedWork";
 import { EmptyState } from "../components/EmptyState";
-import { RequirementForm, type TaskFields } from "../components/RequirementForm";
+import {
+  RequirementForm,
+  type TaskFields,
+} from "../components/RequirementForm";
+import { BackLink } from "../components/PageHeading";
+import { Button, ButtonLink } from "../components/ui/button";
+import { ErrorText, Skeleton } from "../components/ui/misc";
 import { TaskDetail, tabs, type TaskTab } from "./TaskDetail";
 
 const RETRYABLE = ["incomplete", "interrupted", "canceled"];
@@ -54,20 +61,37 @@ export function TaskDetailPage({
   isOwner: boolean;
 }) {
   const { taskId } = useParams();
-  return <TaskDetailState key={`${workspaceId}:${taskId?.toLowerCase()}`} workspaceId={workspaceId} taskId={taskId?.toLowerCase()} isOwner={isOwner} />;
+  return (
+    <TaskDetailState
+      key={`${workspaceId}:${taskId?.toLowerCase()}`}
+      workspaceId={workspaceId}
+      taskId={taskId?.toLowerCase()}
+      isOwner={isOwner}
+    />
+  );
 }
 
-function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string; taskId: string | undefined; isOwner: boolean }) {
+function TaskDetailState({
+  workspaceId,
+  taskId,
+  isOwner,
+}: {
+  workspaceId: string;
+  taskId: string | undefined;
+  isOwner: boolean;
+}) {
   const [params] = useSearchParams();
   const { api, session } = useBrowser();
   const [task, setTask] = useState<Task | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [drafts, setDrafts] = useState<DraftFile[]>([]);
-  const [approved, setApproved] = useState<import('@app/contracts').ApprovedFile[]>([]);
+  const [approved, setApproved] = useState<
+    import("@app/contracts").ApprovedFile[]
+  >([]);
   const [inputError, setInputError] = useState<string>();
-  const [status, setStatus] = useState<"loading" | "ready" | "missing" | "error">(
-    "loading",
-  );
+  const [status, setStatus] = useState<
+    "loading" | "ready" | "missing" | "error"
+  >("loading");
   const [editing, setEditing] = useState<Task | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -91,9 +115,20 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
 
   useEffect(() => {
     const controller = new AbortController();
-    void api.listApprovedFiles(workspaceId, controller.signal).then((result) => {
-      if (!controller.signal.aborted) { setApproved(result.files); setInputError(undefined); }
-    }).catch(() => { if (!controller.signal.aborted) setInputError('Approved files could not be loaded. Reload to try again.'); });
+    void api
+      .listApprovedFiles(workspaceId, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) {
+          setApproved(result.files);
+          setInputError(undefined);
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setInputError(
+            "Approved files could not be loaded. Reload to try again.",
+          );
+      });
     return () => controller.abort();
   }, [api, workspaceId, nonce]);
 
@@ -114,7 +149,13 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
           api.listMaterials(workspaceId, controller.signal),
           api.listWorkspaceDrafts(workspaceId, controller.signal),
           api.listTaskAgents(workspaceId, taskId, controller.signal),
-          readEventPages(api, workspaceId, taskId, eventCache.current, controller.signal),
+          readEventPages(
+            api,
+            workspaceId,
+            taskId,
+            eventCache.current,
+            controller.signal,
+          ),
           api.listSavedOutputs(workspaceId, taskId, controller.signal),
         ]);
         if (controller.signal.aborted || stopped) return;
@@ -128,7 +169,8 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
         // Default to keeping everything that survived: §2.4's `incomplete`
         // state exists so saved work is reusable, and making someone re-tick
         // it every time invites discarding work by accident.
-        const newOutputs = saved.map((output) => `${output.agentInstanceId}:${output.path}`)
+        const newOutputs = saved
+          .map((output) => `${output.agentInstanceId}:${output.path}`)
           .filter((key) => !knownOutputs.current.has(key));
         newOutputs.forEach((key) => knownOutputs.current.add(key));
         setKeep((current) => [...current, ...newOutputs]);
@@ -162,22 +204,37 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
     return (
       <EmptyState
         title="Task not found"
+        icon={CircleAlert}
         action={
-          <Link className="button" to={base}>
+          <ButtonLink variant="primary" to={base}>
             Back to the board
-          </Link>
+          </ButtonLink>
         }
       >
         Check the link — this task is not in this workspace.
       </EmptyState>
     );
   if (status === "loading" && !task)
-    return <p role="status">Opening task…</p>;
+    return (
+      <>
+        <p role="status" className="sr-only">
+          Opening task…
+        </p>
+        <div aria-hidden="true" className="space-y-5">
+          <Skeleton className="h-9 w-2/3" />
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
+            <Skeleton className="h-72" />
+            <Skeleton className="h-72" />
+          </div>
+        </div>
+      </>
+    );
   if (!task)
     return (
       <EmptyState
         title="Could not load this task"
-        action={<button onClick={reload}>Try again</button>}
+        icon={CircleAlert}
+        action={<Button onClick={reload}>Try again</Button>}
       >
         Check your connection and try again.
       </EmptyState>
@@ -220,75 +277,86 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
     task.activeRunId === null &&
     isStartableTaskStatus(task.status);
   const running = task.activeRunId !== null;
-  const retryable = RETRYABLE.includes(task.status) && task.activeRunId === null;
+  const retryable =
+    RETRYABLE.includes(task.status) && task.activeRunId === null;
 
   const action = (
-    <div className="start-action">
+    <div className="flex max-w-xs flex-col items-stretch gap-2 sm:items-end">
+      <div className="flex flex-wrap justify-end gap-2">
+        {startable && (
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                await api.startTask(workspaceId, task.id, {
+                  expectedVersion: task.version,
+                  clientRequestId: startId.current,
+                });
+                // Rotate only on success. A failed Start keeps its key so a
+                // retry REPLAYS that intent; a Start after a cancel is a new
+                // intent and must not replay the canceled run, which is what
+                // holding one key for the component's lifetime would do.
+                startId.current = crypto.randomUUID();
+              })
+            }
+          >
+            <Play aria-hidden="true" />
+            {busy ? "Starting…" : "Start task"}
+          </Button>
+        )}
+        {running && (
+          <Button
+            disabled={busy}
+            onClick={() =>
+              void act(() =>
+                api.cancelTask(workspaceId, task.id, crypto.randomUUID()),
+              )
+            }
+          >
+            <Square aria-hidden="true" />
+            {busy ? "Stopping…" : "Stop this attempt"}
+          </Button>
+        )}
+        {retryable && (
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                await api.retryTask(workspaceId, task.id, {
+                  expectedVersion: task.version,
+                  clientRequestId: retryId.current,
+                  savedOutputs: savedOutputs
+                    .filter((output) =>
+                      keep.includes(`${output.agentInstanceId}:${output.path}`),
+                    )
+                    // Identities only. The server resolves the commit under the
+                    // task lock; a client-supplied SHA is never accepted.
+                    .map((output) => ({
+                      agentInstanceId: output.agentInstanceId,
+                      path: output.path,
+                    })),
+                });
+                retryId.current = crypto.randomUUID();
+              })
+            }
+          >
+            <RotateCcw aria-hidden="true" />
+            {busy ? "Retrying…" : "Retry from saved work"}
+          </Button>
+        )}
+      </div>
       {startable && (
-        <button
-          className="primary"
-          disabled={busy}
-          onClick={() =>
-            void act(async () => {
-              await api.startTask(workspaceId, task.id, {
-                expectedVersion: task.version,
-                clientRequestId: startId.current,
-              });
-              // Rotate only on success. A failed Start keeps its key so a
-              // retry REPLAYS that intent; a Start after a cancel is a new
-              // intent and must not replay the canceled run, which is what
-              // holding one key for the component's lifetime would do.
-              startId.current = crypto.randomUUID();
-            })
-          }
-        >
-          {busy ? "Starting…" : "Start task"}
-        </button>
-      )}
-      {running && (
-        <button
-          disabled={busy}
-          onClick={() =>
-            void act(() =>
-              api.cancelTask(workspaceId, task.id, crypto.randomUUID()),
-            )
-          }
-        >
-          {busy ? "Stopping…" : "Stop this attempt"}
-        </button>
-      )}
-      {retryable && (
-        <button
-          className="primary"
-          disabled={busy}
-          onClick={() =>
-            void act(async () => {
-              await api.retryTask(workspaceId, task.id, {
-                expectedVersion: task.version,
-                clientRequestId: retryId.current,
-                savedOutputs: savedOutputs
-                  .filter((output) =>
-                    keep.includes(`${output.agentInstanceId}:${output.path}`),
-                  )
-                  // Identities only. The server resolves the commit under the
-                  // task lock; a client-supplied SHA is never accepted.
-                  .map((output) => ({
-                    agentInstanceId: output.agentInstanceId,
-                    path: output.path,
-                  })),
-              });
-              retryId.current = crypto.randomUUID();
-            })
-          }
-        >
-          {busy ? "Retrying…" : "Retry from saved work"}
-        </button>
-      )}
-      {startable && (
-        <small>Starting freezes the requirements and discussion as context.</small>
+        <small className="text-[11px] leading-relaxed text-muted-foreground sm:text-right">
+          Starting freezes the requirements and discussion as context.
+        </small>
       )}
       {actionError && (
-        <small role="alert" className="error">
+        <small
+          role="alert"
+          className="text-[11.5px] text-destructive sm:text-right"
+        >
           {actionError}
         </small>
       )}
@@ -300,13 +368,18 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
     switch (tab) {
       case "Discussion":
         return thread.loading ? (
-          <p role="status">Loading discussion…</p>
+          <>
+            <p role="status" className="sr-only">
+              Loading discussion…
+            </p>
+            <Skeleton aria-hidden="true" className="h-40" />
+          </>
         ) : (
           <>
             {thread.failure && (
-              <p role="alert" className="error">
+              <ErrorText role="alert" className="mb-3">
                 {thread.failure}
-              </p>
+              </ErrorText>
             )}
             <Discussion
               workspaceId={workspaceId}
@@ -323,21 +396,35 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
       case "Drafts": {
         const mine = drafts.filter((draft) => draft.taskId === task.id);
         return mine.length === 0 ? (
-          <EmptyState title="No shared drafts yet">
+          <EmptyState title="No shared drafts yet" icon={FileText}>
             This task has no open documents. Open one from Files with Edit
             together, and it will appear here.
           </EmptyState>
         ) : (
-          <>
-            <ul className="file-list">
+          <div className="space-y-4">
+            <ul className="grid gap-2">
               {mine.map((draft) => (
-                <li key={draft.id}>▤ {draft.path}</li>
+                <li
+                  key={draft.id}
+                  className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2"
+                >
+                  <FileText
+                    aria-hidden="true"
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  <span className="truncate font-mono text-[12px]">
+                    {draft.path}
+                  </span>
+                </li>
               ))}
             </ul>
-            <Link className="button primary" to={`${base}/tasks/${task.id}/drafts`}>
+            <ButtonLink
+              variant="primary"
+              to={`${base}/tasks/${task.id}/drafts`}
+            >
               Open the shared editor
-            </Link>
-          </>
+            </ButtonLink>
+          </div>
         );
       }
       case "Agents":
@@ -367,9 +454,7 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
   if (editing)
     return (
       <>
-        <Link className="back-link" to={`${base}/tasks/${task.id}`}>
-          ← Back to the task
-        </Link>
+        <BackLink to={`${base}/tasks/${task.id}`}>Back to the task</BackLink>
         <RequirementForm
           options={options}
           optionsNote={inputError}
@@ -382,11 +467,32 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
             inputs: editing.inputs.flatMap(
               (link): TaskInputOption["value"][] =>
                 link.materialId
-                  ? [{ materialId: link.materialId, ...(link.sourceVersion !== null ? { sourceVersion: link.sourceVersion } : {}) }]
+                  ? [
+                      {
+                        materialId: link.materialId,
+                        ...(link.sourceVersion !== null
+                          ? { sourceVersion: link.sourceVersion }
+                          : {}),
+                      },
+                    ]
                   : link.draftFileId
-                    ? [{ draftFileId: link.draftFileId, ...(link.sourceVersion !== null ? { sourceVersion: link.sourceVersion } : {}) }]
+                    ? [
+                        {
+                          draftFileId: link.draftFileId,
+                          ...(link.sourceVersion !== null
+                            ? { sourceVersion: link.sourceVersion }
+                            : {}),
+                        },
+                      ]
                     : link.approvedPath
-                      ? [{ approvedPath: link.approvedPath, ...(link.sourceVersion !== null ? { sourceVersion: link.sourceVersion } : {}) }]
+                      ? [
+                          {
+                            approvedPath: link.approvedPath,
+                            ...(link.sourceVersion !== null
+                              ? { sourceVersion: link.sourceVersion }
+                              : {}),
+                          },
+                        ]
                       : [],
             ),
           }}
@@ -415,11 +521,14 @@ function TaskDetailState({ workspaceId, taskId, isOwner }: { workspaceId: string
       options={options}
       banner={
         <>
-          {pollError && <p role="alert">{pollError}</p>}
+          {pollError && <ErrorText role="alert">{pollError}</ErrorText>}
           <RunOutcome
             events={events}
             status={task.status}
-            runId={task.activeRunId ?? [...attempts].sort((a, b) => b.attempt - a.attempt)[0]?.runId}
+            runId={
+              task.activeRunId ??
+              [...attempts].sort((a, b) => b.attempt - a.attempt)[0]?.runId
+            }
           />
           {retryable && savedOutputs.length > 0 && (
             <SavedWork

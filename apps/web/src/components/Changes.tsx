@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronRight, GitCompare, ShieldCheck } from "lucide-react";
 import {
   ApiError,
   currentReview,
@@ -10,7 +11,13 @@ import {
 } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
+import { humanizeStatus, toneFor } from "../board";
+import { cn } from "../lib/utils";
 import { EmptyState } from "./EmptyState";
+import { Badge, Dot } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Checkbox } from "./ui/field";
+import { ErrorText, Notice, Path, Skeleton } from "./ui/misc";
 
 /**
  * Review and conflict resolution (design §4.6, §10.2, §10.3).
@@ -111,30 +118,36 @@ export function Changes({
     }
   }
 
-  if (loading && reviews === null) return <p role="status">Loading review…</p>;
+  if (loading && reviews === null)
+    return (
+      <div className="space-y-3">
+        <p role="status" className="sr-only">
+          Loading review…
+        </p>
+        <Skeleton aria-hidden="true" className="h-5 w-40" />
+        <Skeleton aria-hidden="true" className="h-24" />
+      </div>
+    );
 
   const current = reviews ? currentReview(reviews) : null;
 
   if (!current)
     return (
       <>
-        {failure && (
-          <p role="alert" className="error">
-            {failure}
-          </p>
-        )}
+        {failure && <ErrorText role="alert">{failure}</ErrorText>}
         <EmptyState
           title="No review has been requested yet"
+          icon={GitCompare}
           action={
-            <button
-              className="primary"
+            <Button
+              variant="primary"
               disabled={busy}
               onClick={() =>
                 void act(() => api.prepareReview(task.workspaceId, task.id))
               }
             >
               {busy ? "Preparing…" : "Prepare review"}
-            </button>
+            </Button>
           }
         >
           Preparing a review combines the approved files, the shared draft, and
@@ -144,57 +157,55 @@ export function Changes({
       </>
     );
 
-  return (
-    <div className="review">
-      {failure && (
-        <p role="alert" className="error">
-          {failure}
-        </p>
-      )}
+  const tone = toneFor(current.status);
 
-      <header className="review-head">
-        <span className={`status status-${current.status}`}>
-          {current.status}
-        </span>
-        <small className="muted">
+  return (
+    <div className="space-y-5">
+      {failure && <ErrorText role="alert">{failure}</ErrorText>}
+
+      <header className="flex flex-wrap items-center gap-2.5 border-b border-border pb-3.5">
+        <Badge tone={tone}>
+          <Dot tone={tone} live={current.status === "building"} />
+          {humanizeStatus(current.status)}
+        </Badge>
+        <small className="text-[11.5px] text-muted-foreground">
           Against task version {current.source.taskVersion}
         </small>
       </header>
 
       {current.status === "building" && (
-        <p role="status">
+        <p role="status" className="text-[13px] text-muted-foreground">
           This candidate is still being built. Reopen the tab in a moment.
         </p>
       )}
 
       {current.status === "stale" && (
-        <div className="notice" role="status">
-          <h3>This review is out of date</h3>
+        <Notice role="status" tone="warn" title="This review is out of date">
           <p>
             Someone has typed in the shared draft, or another task was applied,
             since this candidate was built. Applying it would publish something
             that no longer matches the workspace.
           </p>
-          <button
-            className="primary"
+          <Button
+            size="sm"
+            variant="primary"
             disabled={busy}
             onClick={() =>
               void act(() => api.prepareReview(task.workspaceId, task.id))
             }
           >
             {busy ? "Refreshing…" : "Refresh review"}
-          </button>
-        </div>
+          </Button>
+        </Notice>
       )}
 
       {current.status === "applied" && (
-        <div className="notice" role="status">
-          <h3>These changes were applied</h3>
+        <Notice role="status" title="These changes were applied">
           <p>
             This is the record of what went onto the approved files. Nothing
             further is needed.
           </p>
-        </div>
+        </Notice>
       )}
 
       {detail && (
@@ -214,40 +225,42 @@ export function Changes({
             />
           )}
 
-          <section className="changed-files">
-            <h3>
+          <section className="space-y-2.5">
+            <h3 className="text-[13px] font-semibold tracking-tight">
               {detail.changedFiles.length === 0
                 ? "No file changes"
                 : `${detail.changedFiles.length} changed file${detail.changedFiles.length === 1 ? "" : "s"}`}
             </h3>
             {detail.changedFiles.length === 0 ? (
-              <p className="muted">
+              <p className="text-[13px] text-muted-foreground">
                 This candidate makes no change to any file. That is a real
                 outcome, not an error — the work may have been answered in
                 discussion.
               </p>
             ) : (
-              detail.changedFiles.map((file) => (
-                <ChangedFile
-                  key={file.path}
-                  file={file}
-                  workspaceId={task.workspaceId}
-                  reviewId={current.id}
-                />
-              ))
+              <div className="grid gap-2">
+                {detail.changedFiles.map((file) => (
+                  <ChangedFile
+                    key={file.path}
+                    file={file}
+                    workspaceId={task.workspaceId}
+                    reviewId={current.id}
+                  />
+                ))}
+              </div>
             )}
           </section>
 
           {/* §13.2: generated code is never executed as part of review. */}
-          <p className="muted">
+          <p className="text-[11.5px] text-muted-foreground">
             Generated content was not executed. Read it as text.
           </p>
 
           {current.status === "ready" &&
             (isOwner ? (
-              <div className="apply">
-                <button
-                  className="primary"
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-muted/30 p-4">
+                <Button
+                  variant="primary"
                   disabled={busy || detail.conflicts.length > 0}
                   onClick={() =>
                     void act(async () => {
@@ -262,16 +275,17 @@ export function Changes({
                     })
                   }
                 >
+                  <ShieldCheck aria-hidden="true" />
                   {busy ? "Applying…" : "Apply these changes"}
-                </button>
+                </Button>
                 {detail.conflicts.length > 0 && (
-                  <small className="muted">
+                  <small className="text-[11.5px] text-muted-foreground">
                     Resolve the conflicts above before applying.
                   </small>
                 )}
               </div>
             ) : (
-              <p className="muted">
+              <p className="text-[13px] text-muted-foreground">
                 Only the workspace owner can apply changes. You can still
                 discuss them on the task.
               </p>
@@ -303,66 +317,101 @@ function Conflicts({
   const ready = detail.conflicts.every((conflict) => choices[conflict.path]);
 
   return (
-    <section className="conflicts">
-      <h3>
-        {detail.conflicts.length} file
-        {detail.conflicts.length === 1 ? "" : "s"} need a decision
-      </h3>
-      <p className="muted">
-        These files were changed in more than one place. Choose which version to
-        keep. Resolving builds a new candidate — it does not overwrite anything.
-      </p>
+    <section className="space-y-3 rounded-xl border border-amber-300/70 bg-amber-50/50 p-4 dark:border-amber-900 dark:bg-amber-950/25">
+      <div>
+        <h3 className="text-[13px] font-semibold tracking-tight">
+          {detail.conflicts.length} file
+          {detail.conflicts.length === 1 ? "" : "s"} need a decision
+        </h3>
+        <p className="mt-1 text-[12.5px] text-muted-foreground">
+          These files were changed in more than one place. Choose which version
+          to keep. Resolving builds a new candidate — it does not overwrite
+          anything.
+        </p>
+      </div>
+
       {detail.conflicts.map((conflict) => (
-        <fieldset className="conflict" key={conflict.path}>
-          <legend>
-            <code className="path">{conflict.path}</code>
+        <fieldset
+          key={conflict.path}
+          className="space-y-2 rounded-lg border border-border bg-card p-3.5"
+        >
+          <legend className="px-1">
+            <Path>{conflict.path}</Path>
           </legend>
           {conflict.sides.map((side) => (
-            <label className="conflict-side" key={side.side}>
-              <input
-                type="radio"
-                name={`conflict:${conflict.path}`}
-                checked={choices[conflict.path] === side.side}
-                onChange={() =>
-                  setChoices((current) => ({
-                    ...current,
-                    [conflict.path]: side.side,
-                  }))
-                }
-              />
-              <span>
-                {SIDE_LABEL[side.side] ?? side.side}
-                {side.text === null && (
-                  <small> · this version deletes the file</small>
-                )}
+            <label
+              key={side.side}
+              className={cn(
+                "block cursor-pointer rounded-lg border p-3 transition-colors",
+                choices[conflict.path] === side.side
+                  ? "border-navy-300 bg-navy-50/70 dark:border-navy-700 dark:bg-navy-950/50"
+                  : "border-border hover:bg-muted/50",
+              )}
+            >
+              <span className="flex items-start gap-2.5">
+                <Checkbox
+                  type="radio"
+                  className="mt-0.5 rounded-full"
+                  name={`conflict:${conflict.path}`}
+                  checked={choices[conflict.path] === side.side}
+                  onChange={() =>
+                    setChoices((current) => ({
+                      ...current,
+                      [conflict.path]: side.side,
+                    }))
+                  }
+                />
+                <span className="min-w-0 flex-1 text-[12.5px] font-medium">
+                  {SIDE_LABEL[side.side] ?? side.side}
+                  {side.text === null && (
+                    <small className="font-normal text-muted-foreground">
+                      {" "}
+                      · this version deletes the file
+                    </small>
+                  )}
+                </span>
               </span>
               {side.text !== null && (
-                <pre className="side-text">{side.text}</pre>
+                <pre className="mt-2.5 max-h-56 overflow-auto rounded-lg bg-muted/70 p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
+                  {side.text}
+                </pre>
               )}
             </label>
           ))}
         </fieldset>
       ))}
-      <button
-        className="primary"
-        disabled={busy || !ready}
-        onClick={() =>
-          onResolve(
-            detail.conflicts.map((conflict) => ({
-              path: conflict.path,
-              choice: choices[conflict.path] as CandidateResolution["choice"],
-            })),
-          )
-        }
-      >
-        {busy ? "Resolving…" : "Use these versions"}
-      </button>
-      {!ready && (
-        <small className="muted">Choose a version for every file above.</small>
-      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="primary"
+          disabled={busy || !ready}
+          onClick={() =>
+            onResolve(
+              detail.conflicts.map((conflict) => ({
+                path: conflict.path,
+                choice: choices[conflict.path] as CandidateResolution["choice"],
+              })),
+            )
+          }
+        >
+          {busy ? "Resolving…" : "Use these versions"}
+        </Button>
+        {!ready && (
+          <small className="text-[11.5px] text-muted-foreground">
+            Choose a version for every file above.
+          </small>
+        )}
+      </div>
     </section>
   );
 }
+
+const CHANGE_TONE = {
+  added: "done",
+  modified: "info",
+  deleted: "danger",
+  renamed: "review",
+} as const;
 
 /**
  * One changed file: its diff, and for Markdown its rendered result (§4.6).
@@ -404,32 +453,66 @@ function ChangedFile({
         if (!controller.signal.aborted) setFailure(apiMessage(error));
       });
     return () => controller.abort();
-  }, [api, open, markdown, preview, workspaceId, reviewId, file.path, file.changeKind]);
+  }, [
+    api,
+    open,
+    markdown,
+    preview,
+    workspaceId,
+    reviewId,
+    file.path,
+    file.changeKind,
+  ]);
 
   return (
     <details
-      className="file-diff"
+      className="group overflow-hidden rounded-lg border border-border bg-card"
       onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}
     >
-      <summary>
-        <code className="path">{file.path}</code>
-        <span className={`change-kind ${file.changeKind}`}>{file.changeKind}</span>
+      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          aria-hidden="true"
+          className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+        />
+        <Path className="min-w-0 border-0 bg-transparent px-0">
+          {file.path}
+        </Path>
+        <Badge
+          tone={
+            CHANGE_TONE[file.changeKind as keyof typeof CHANGE_TONE] ??
+            "neutral"
+          }
+          size="sm"
+          className="ml-auto shrink-0"
+        >
+          {file.changeKind}
+        </Badge>
       </summary>
-      <pre className="diff">{file.diff}</pre>
-      {markdown && file.changeKind !== "deleted" && (
-        <div className="preview">
-          <h4>How this file would read</h4>
-          {failure ? (
-            <p role="alert" className="error">
-              {failure}
-            </p>
-          ) : preview ? (
-            <pre className="preview-text">{preview.text}</pre>
-          ) : (
-            <p role="status">Loading preview…</p>
-          )}
-        </div>
-      )}
+
+      <div className="border-t border-border">
+        <pre className="cf-diff max-h-96 overflow-auto p-3.5 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
+          {file.diff}
+        </pre>
+
+        {markdown && file.changeKind !== "deleted" && (
+          <div className="border-t border-border bg-muted/30 p-3.5">
+            <h4 className="mb-2 text-[12px] font-semibold">
+              How this file would read
+            </h4>
+            {failure ? (
+              <ErrorText role="alert">{failure}</ErrorText>
+            ) : preview ? (
+              <pre className="max-h-72 overflow-auto rounded-lg bg-card p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
+                {preview.text}
+              </pre>
+            ) : (
+              <p role="status" className="text-[12.5px] text-muted-foreground">
+                Loading preview…
+              </p>
+            )}
+          </div>
+        )}
+      </div>
     </details>
   );
 }

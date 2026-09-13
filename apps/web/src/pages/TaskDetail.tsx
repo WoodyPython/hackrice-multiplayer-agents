@@ -1,11 +1,24 @@
 import { useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { FileText, PencilLine, Square } from "lucide-react";
 import { type TaskDetail as Task } from "@app/contracts";
 import { statusPresentation } from "../board";
 import { inputLabel, type TaskInputOption } from "../task-inputs";
+import { cn } from "../lib/utils";
+import { BackLink, PageHeading } from "../components/PageHeading";
+import { Badge, Dot } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Eyebrow, Path } from "../components/ui/misc";
 
 export const tabs = ["Discussion", "Drafts", "Agents", "Changes"] as const;
 export type TaskTab = (typeof tabs)[number];
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <h3 className="mt-6 mb-2 text-[11px] font-semibold tracking-[0.1em] text-muted-foreground uppercase first:mt-0">
+      {children}
+    </h3>
+  );
+}
 
 /**
  * Task detail layout (design §4.2).
@@ -46,77 +59,132 @@ export function TaskDetail({
   initialTab?: TaskTab;
 }) {
   const [tab, setTab] = useState<TaskTab>(initialTab ?? "Discussion");
+  const presentation = statusPresentation[task.status];
+
   return (
     <>
-      <Link className="back-link" to={base}>
-        ← All tasks
-      </Link>
-      <header className="page-heading">
-        <div>
-          <span className={`status status-${task.status}`}>
-            {statusPresentation[task.status].label}
-          </span>
-          <h1>{task.title}</h1>
-          <p>
+      <BackLink to={base}>All tasks</BackLink>
+
+      <PageHeading
+        badge={
+          <Badge tone={presentation.tone}>
+            <Dot
+              tone={presentation.tone}
+              live={task.status === "working" || task.status === "planning"}
+            />
+            {presentation.label}
+          </Badge>
+        }
+        title={task.title}
+        description={
+          <>
             Posted by {task.creatorGuestLabel} · Version {task.version}
             {task.kind === "manual_edit" && " · Manual edit"}
-          </p>
-        </div>
-        {action}
-      </header>
-      {banner}
-      <div className="detail-grid">
-        <section className="panel requirements">
-          <div className="section-heading">
-            <span className="eyebrow">The brief</span>
-            <h2>Requirements</h2>
+          </>
+        }
+        actions={action}
+      />
+
+      {banner && <div className="mb-6 space-y-4">{banner}</div>}
+
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)] xl:gap-6">
+        <section className="rounded-xl border border-border bg-card p-5 shadow-xs lg:sticky lg:top-20">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <Eyebrow>The brief</Eyebrow>
+              <h2 className="mt-1.5 text-base font-semibold tracking-tight">
+                Requirements
+              </h2>
+            </div>
+            {onEditRequirements && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="shrink-0"
+                onClick={onEditRequirements}
+              >
+                <PencilLine aria-hidden="true" />
+                Edit requirements
+              </Button>
+            )}
           </div>
-          {onEditRequirements && (
-            <button type="button" onClick={onEditRequirements}>
-              Edit requirements
-            </button>
-          )}
-          <h3>Desired outcome</h3>
-          <p>{task.outcome || "No outcome added yet."}</p>
-          <h3>Acceptance criteria</h3>
+
+          <SectionLabel>Desired outcome</SectionLabel>
+          <p className="text-[13px] leading-relaxed text-muted-foreground text-pretty">
+            {task.outcome || "No outcome added yet."}
+          </p>
+
+          <SectionLabel>Acceptance criteria</SectionLabel>
           {task.criteria.length ? (
-            <ul className="criteria">
+            <ul className="space-y-2">
               {task.criteria.map((criterion, index) => (
-                <li key={index}>
-                  <span aria-hidden="true">□</span>
-                  {criterion}
+                <li key={index} className="flex gap-2.5">
+                  <Square
+                    aria-hidden="true"
+                    className="mt-[3px] size-3.5 shrink-0 text-muted-foreground/70"
+                  />
+                  <span className="text-[13px] leading-relaxed">
+                    {criterion}
+                  </span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="muted">No criteria added yet.</p>
+            <p className="text-[13px] text-muted-foreground">
+              No criteria added yet.
+            </p>
           )}
-          <h3>Selected inputs</h3>
+
+          <SectionLabel>Selected inputs</SectionLabel>
           {task.inputs.length ? (
-            <ul className="file-list">
+            <ul className="space-y-1.5">
               {task.inputs.map((input) => (
-                <li key={input.id}>▤ {inputLabel(input, options)}</li>
+                <li
+                  key={input.id}
+                  className="flex items-center gap-2 rounded-lg bg-muted/60 px-2.5 py-1.5"
+                >
+                  <FileText
+                    aria-hidden="true"
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  <span className="truncate text-[12.5px]">
+                    {inputLabel(input, options)}
+                  </span>
+                </li>
               ))}
             </ul>
           ) : (
-            <p className="muted">No inputs selected.</p>
+            <p className="text-[13px] text-muted-foreground">
+              No inputs selected.
+            </p>
           )}
-          <h3>Intended output paths</h3>
+
+          <SectionLabel>Intended output paths</SectionLabel>
           {task.outputPaths.length ? (
-            task.outputPaths.map((path) => (
-              <code className="path" key={path}>
-                {path}
-              </code>
-            ))
+            <ul className="flex flex-wrap gap-1.5">
+              {task.outputPaths.map((path) => (
+                <li key={path}>
+                  <Path>{path}</Path>
+                </li>
+              ))}
+            </ul>
           ) : (
-            <p className="muted">No output paths specified.</p>
+            <p className="text-[13px] text-muted-foreground">
+              No output paths specified.
+            </p>
           )}
         </section>
-        <section className="panel activity">
-          <div className="tabs" role="tablist" aria-label="Task activity">
+
+        <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+          <div
+            className="flex gap-1 overflow-x-auto border-b border-border px-2 cf-scrollbar-none"
+            role="tablist"
+            aria-label="Task activity"
+          >
             {tabs.map((name, index) => (
               <button
                 key={name}
+                type="button"
                 id={`tab-${name}`}
                 role="tab"
                 aria-selected={tab === name}
@@ -140,6 +208,12 @@ export function TaskDetail({
                     document.getElementById(`tab-${tabs[next]}`)?.focus();
                   }
                 }}
+                className={cn(
+                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-[13px] font-medium whitespace-nowrap transition-colors",
+                  tab === name
+                    ? "border-navy-700 text-navy-800 dark:border-navy-300 dark:text-navy-200"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
               >
                 {name}
               </button>
@@ -150,6 +224,7 @@ export function TaskDetail({
             id="activity-panel"
             aria-labelledby={`tab-${tab}`}
             tabIndex={0}
+            className="p-5 outline-none sm:p-6"
           >
             {renderTab(tab)}
           </div>

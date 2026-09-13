@@ -1,4 +1,5 @@
 import type { TaskEvent, TaskStatus } from "@app/contracts";
+import { Notice, Path } from "./ui/misc";
 
 /**
  * Why the current attempt ended up where it did (design §4.7).
@@ -85,14 +86,14 @@ export function RunOutcome({
     .find(
       (event) => (event.payload as StartPayload).reason === "context_captured",
     );
-  const omitted = strings((capture?.payload as StartPayload | undefined)?.omitted);
+  const omitted = strings(
+    (capture?.payload as StartPayload | undefined)?.omitted,
+  );
 
-  const outcome = [...starts]
-    .reverse()
-    .find((event) => {
-      const reason = (event.payload as StartPayload).reason;
-      return typeof reason === "string" && !INFORMATIONAL.has(reason);
-    });
+  const outcome = [...starts].reverse().find((event) => {
+    const reason = (event.payload as StartPayload).reason;
+    return typeof reason === "string" && !INFORMATIONAL.has(reason);
+  });
   const reason =
     outcome && typeof (outcome.payload as StartPayload).reason === "string"
       ? ((outcome.payload as StartPayload).reason as string)
@@ -109,39 +110,45 @@ export function RunOutcome({
   return (
     <>
       {omitted.length > 0 && (
-        <div className="notice" role="status">
-          <h3>Some selected inputs were not included</h3>
+        <Notice
+          role="status"
+          tone="warn"
+          title="Some selected inputs were not included"
+        >
           <p>
             These could not be read when the attempt started, so the agents did
             not see them. A material may have been removed, or a path may not
             exist on the approved branch.
           </p>
-          <ul className="file-list">
+          <ul className="flex flex-wrap gap-1.5">
             {omitted.map((item) => (
               <li key={item}>
-                <code className="path">{item}</code>
+                <Path>{item}</Path>
               </li>
             ))}
           </ul>
-        </div>
+        </Notice>
       )}
       {reason && settled && (
-        <div className="notice outcome" role="status">
-          <h3>{copy?.title ?? "This attempt did not complete"}</h3>
+        <Notice
+          role="status"
+          tone="warn"
+          title={copy?.title ?? "This attempt did not complete"}
+        >
           <p>
             {copy?.detail ??
               "Saved work is preserved and listed under Agents. You can retry from here."}
           </p>
           {paths.length > 0 && (
-            <ul className="file-list">
+            <ul className="flex flex-wrap gap-1.5">
               {paths.map((path) => (
                 <li key={path}>
-                  <code className="path">{path}</code>
+                  <Path>{path}</Path>
                 </li>
               ))}
             </ul>
           )}
-        </div>
+        </Notice>
       )}
     </>
   );

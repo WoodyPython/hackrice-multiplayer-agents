@@ -111,7 +111,7 @@ describe("A01 workspace shell", () => {
     );
     expect(screen.getByText("Posted", { exact: true })).toBeTruthy();
     expect(screen.getByText("Include examples")).toBeTruthy();
-    expect(screen.getByText(/▤ README.md/)).toBeTruthy();
+    expect(screen.getByText("README.md")).toBeTruthy();
     expect(screen.getByText("documents/contributing.md")).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Start task" }) as HTMLButtonElement)

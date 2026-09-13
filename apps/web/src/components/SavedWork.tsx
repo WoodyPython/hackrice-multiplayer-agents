@@ -1,4 +1,6 @@
 import type { SavedOutputOption } from "@app/contracts";
+import { Checkbox } from "./ui/field";
+import { Notice, Path } from "./ui/misc";
 
 /**
  * Work a failed attempt finished, offered to the next one (design §2.4, §4.7).
@@ -27,37 +29,39 @@ export function SavedWork({
   onToggle: (key: string) => void;
 }) {
   return (
-    <section className="notice saved-work" aria-label="Saved work">
-      <h3>Work the last attempt finished</h3>
-      <p>
-        These files were completed before the attempt stopped. Keep them and the
-        next attempt starts from them instead of redoing the work. A retry is a
-        new attempt — it does not give an agent back the time or tokens it
-        already spent.
-      </p>
-      <ul className="saved-list">
-        {outputs.map((output) => {
-          const key = `${output.agentInstanceId}:${output.path}`;
-          return (
-            <li key={key}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={keep.includes(key)}
-                  onChange={() => onToggle(key)}
-                />
-                <code className="path">{output.path}</code>
-              </label>
-            </li>
-          );
-        })}
-      </ul>
-      {keep.length === 0 && (
-        <p className="muted">
-          Nothing selected — the next attempt will redo all of this from the
-          current requirements.
+    <section aria-label="Saved work">
+      <Notice title="Work the last attempt finished">
+        <p>
+          These files were completed before the attempt stopped. Keep them and
+          the next attempt starts from them instead of redoing the work. A retry
+          is a new attempt — it does not give an agent back the time or tokens
+          it already spent.
         </p>
-      )}
+        <ul className="grid gap-1.5">
+          {outputs.map((output) => {
+            const key = `${output.agentInstanceId}:${output.path}`;
+            return (
+              <li key={key}>
+                <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border bg-card px-3 py-2">
+                  <Checkbox
+                    checked={keep.includes(key)}
+                    onChange={() => onToggle(key)}
+                  />
+                  <Path className="border-0 bg-transparent px-0">
+                    {output.path}
+                  </Path>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+        {keep.length === 0 && (
+          <p>
+            Nothing selected — the next attempt will redo all of this from the
+            current requirements.
+          </p>
+        )}
+      </Notice>
     </section>
   );
 }

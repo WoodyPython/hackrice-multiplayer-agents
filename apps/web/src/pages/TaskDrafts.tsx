@@ -1,9 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
+import { CircleAlert, GitCommitHorizontal, Plus } from "lucide-react";
 import { ApiError, uuidSchema, type DraftFile } from "@app/contracts";
 import { useBrowser } from "../browser-context";
 import { apiMessage } from "../workspace-api";
 import { EmptyState } from "../components/EmptyState";
+import { BackLink, PageHeading } from "../components/PageHeading";
+import { Button } from "../components/ui/button";
+import { Input, Label, Select } from "../components/ui/field";
+import { ErrorText, Notice, Path, Skeleton } from "../components/ui/misc";
 
 const SharedEditor = lazy(() =>
   import("../components/SharedEditor").then((module) => ({
@@ -40,7 +45,7 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
   const [closed, setClosed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const [newPath, setNewPath] = useState('');
+  const [newPath, setNewPath] = useState("");
   const valid = uuidSchema.safeParse(taskId).success;
   const reload = useCallback(() => setRetry((value) => value + 1), []);
 
@@ -93,41 +98,71 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
     <>
       {/* §4.4 requires a link back to the task, not to the workspace: the task
           is where the discussion and the review of this text live. */}
-      <Link className="back-link" to={valid ? `${base}/tasks/${taskId}` : base}>
-        ← Back to the task
-      </Link>
-      <header className="page-heading">
-        <div>
-          <span className="eyebrow">Shared editing</span>
-          <h1>Shared drafts</h1>
-          <p>
-            Everyone with the workspace link edits this text together. Changes
-            here are not approved until a review is applied.
-          </p>
-        </div>
-      </header>
+      <BackLink to={valid ? `${base}/tasks/${taskId}` : base}>
+        Back to the task
+      </BackLink>
 
-      {valid && <form className="panel edit-together" onSubmit={(event) => {
-        event.preventDefault();
-        void act(async () => {
-          const opened = await api.openTaskDraft(workspaceId, taskId!, newPath.trim());
-          setSelected(opened.id); setSaved(false); setClosed(false); setNewPath(''); reload();
-        });
-      }}>
-        <label htmlFor="task-draft-path">Draft file path</label>
-        <input id="task-draft-path" placeholder="documents/notes.md" value={newPath} onChange={(event) => setNewPath(event.target.value)} />
-        <button disabled={busy || !newPath.trim() || (!!draft && !saved)}>Open task draft</button>
-      </form>}
-      {failure && !draft && <p className="error" role="alert">{failure}</p>}
+      <PageHeading
+        eyebrow="Shared editing"
+        title="Shared drafts"
+        description="Everyone with the workspace link edits this text together. Changes here are not approved until a review is applied."
+      />
+
+      {valid && (
+        <form
+          className="mb-5 flex flex-col gap-2.5 rounded-xl border border-border bg-card p-4 shadow-xs sm:flex-row sm:items-end"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void act(async () => {
+              const opened = await api.openTaskDraft(
+                workspaceId,
+                taskId!,
+                newPath.trim(),
+              );
+              setSelected(opened.id);
+              setSaved(false);
+              setClosed(false);
+              setNewPath("");
+              reload();
+            });
+          }}
+        >
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <Label htmlFor="task-draft-path">Draft file path</Label>
+            <Input
+              id="task-draft-path"
+              placeholder="documents/notes.md"
+              value={newPath}
+              onChange={(event) => setNewPath(event.target.value)}
+              className="font-mono text-[12.5px]"
+            />
+          </div>
+          <Button
+            disabled={busy || !newPath.trim() || (!!draft && !saved)}
+            type="submit"
+          >
+            <Plus aria-hidden="true" />
+            Open task draft
+          </Button>
+        </form>
+      )}
+
+      {failure && !draft && <ErrorText role="alert">{failure}</ErrorText>}
 
       {status === "loading" ? (
-        <p role="status">Loading drafts…</p>
+        <>
+          <p role="status" className="sr-only">
+            Loading drafts…
+          </p>
+          <Skeleton aria-hidden="true" className="h-64" />
+        </>
       ) : status !== "ready" ? (
         <EmptyState
+          icon={CircleAlert}
           title={
             status === "missing" ? "Task not found" : "Could not load drafts"
           }
-          action={<button onClick={reload}>Try again</button>}
+          action={<Button onClick={reload}>Try again</Button>}
         >
           Check the editing link or try again.
         </EmptyState>
@@ -136,36 +171,39 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
           Open a text file above to edit it with collaborators on this task.
         </EmptyState>
       ) : (
-        <>
-          <div className="editor-toolbar">
-            <label>
-              Document
-              <select
-                value={selected}
-                onChange={(event) => {
-                  // Switching remounts the binding, so unsent text would be
-                  // lost rather than merged.
-                  if (
-                    saved ||
-                    window.confirm(
-                      "This draft has unsaved changes. Switch and discard those changes?",
-                    )
-                  ) {
-                    setSaved(false);
-                    setSelected(event.target.value);
-                  }
-                }}
-              >
-                {drafts.map((file) => (
-                  <option key={file.id} value={file.id}>
-                    {file.path}
-                  </option>
-                ))}
-              </select>
-            </label>
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor="draft-document">Document</Label>
+              <div className="w-full sm:w-72">
+                <Select
+                  id="draft-document"
+                  value={selected}
+                  onChange={(event) => {
+                    // Switching remounts the binding, so unsent text would be
+                    // lost rather than merged.
+                    if (
+                      saved ||
+                      window.confirm(
+                        "This draft has unsaved changes. Switch and discard those changes?",
+                      )
+                    ) {
+                      setSaved(false);
+                      setSelected(event.target.value);
+                    }
+                  }}
+                >
+                  {drafts.map((file) => (
+                    <option key={file.id} value={file.id}>
+                      {file.path}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
 
-            <div className="editor-actions">
-              <button
+            <div className="flex flex-wrap gap-2">
+              <Button
                 disabled={busy || !saved}
                 onClick={() =>
                   void act(async () => {
@@ -177,10 +215,11 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
                   })
                 }
               >
+                <GitCommitHorizontal aria-hidden="true" />
                 {busy ? "Working…" : "Checkpoint"}
-              </button>
-              <button
-                className="primary"
+              </Button>
+              <Button
+                variant="primary"
                 disabled={busy || !saved}
                 onClick={() =>
                   void act(async () => {
@@ -190,21 +229,21 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
                 }
               >
                 {busy ? "Working…" : "Request review"}
-              </button>
+              </Button>
             </div>
           </div>
 
           {closed && (
-            <div className="notice" role="alert">
-              <h3>This document was closed</h3>
+            <Notice role="alert" tone="warn" title="This document was closed">
               <p>
                 Applying a review closes the version everyone was editing and
                 opens a fresh one from the approved text. Your unsent words are
                 still below — copy anything you want to keep, then open the
                 current draft.
               </p>
-              <button
-                className="primary"
+              <Button
+                size="sm"
+                variant="primary"
                 onClick={() => {
                   setClosed(false);
                   setSaved(false);
@@ -212,37 +251,41 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
                 }}
               >
                 Open the current draft
-              </button>
-            </div>
+              </Button>
+            </Notice>
           )}
 
-          <p className="editor-state" aria-live="polite">
+          <p
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]"
+            aria-live="polite"
+          >
             {!saved && (
-              <span className="unsaved">
+              <span className="font-medium text-amber-700 dark:text-amber-400">
                 Unsaved — Checkpoint and Request review wait until the server
                 has the text.
               </span>
             )}
             {checkpoint ? (
-              <span className="checkpointed">
-                Checkpointed in Git at{" "}
-                <code className="path">{checkpoint.slice(0, 8)}</code>. Captured,
-                not approved.
+              <span className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
+                Checkpointed in Git at <Path>{checkpoint.slice(0, 8)}</Path>.
+                Captured, not approved.
               </span>
             ) : (
-              <span className="muted">
+              <span className="text-muted-foreground">
                 Not checkpointed yet in this session.
               </span>
             )}
           </p>
 
-          {failure && (
-            <p role="alert" className="error">
-              {failure}
-            </p>
-          )}
+          {failure && <ErrorText role="alert">{failure}</ErrorText>}
 
-          <Suspense fallback={<p role="status">Loading editor…</p>}>
+          <Suspense
+            fallback={
+              <p role="status" className="text-[13px] text-muted-foreground">
+                Loading editor…
+              </p>
+            }
+          >
             <SharedEditor
               key={`${draft.id}:${draft.epoch}`}
               room={{
@@ -256,7 +299,7 @@ export function TaskDrafts({ workspaceId }: { workspaceId: string }) {
               onClosed={() => setClosed(true)}
             />
           </Suspense>
-        </>
+        </div>
       )}
     </>
   );

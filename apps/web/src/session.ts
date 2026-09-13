@@ -7,7 +7,14 @@ export type GuestIdentity = Readonly<{
   name: string;
   color: string;
 }>;
-const colors = ["#286548", "#8560a8", "#356a9c", "#a4662d"];
+/**
+ * Cursor and avatar colours, drawn from the CoFlow palette.
+ *
+ * Each is dark enough to carry the white name label the collaborative editor
+ * paints on it. A guest whose stored colour is not in this list falls back to
+ * the first — only their colour changes, never their identity.
+ */
+const colors = ["#2c4270", "#7248a8", "#0f6f76", "#a2560f"];
 
 /** Browser-only display identity. It never confers permissions. */
 export class BrowserSession {
