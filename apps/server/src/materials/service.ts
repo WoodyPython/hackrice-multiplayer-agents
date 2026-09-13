@@ -28,6 +28,7 @@ export interface MaterialServiceDeps {
 export interface UploadInput {
   filename: string;
   bytes: Uint8Array;
+  contentType?: string | undefined;
   guestLabel: string;
   taskId?: string | undefined;
   discussionEntryId?: string | undefined;
@@ -51,7 +52,7 @@ export class PgMaterialService {
    * alternative ordering would leave a readable row pointing at nothing.
    */
   async upload(workspaceId: string, input: UploadInput): Promise<UploadResult> {
-    const validated = validateUpload(input.filename, input.bytes);
+    const validated = validateUpload(input.filename, input.bytes, input.contentType);
     const sha256 = createHash('sha256').update(validated.bytes).digest();
 
     // Section 3.2: reattaching reuses the ID and the bytes. The common case is

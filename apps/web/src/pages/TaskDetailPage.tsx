@@ -3,8 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { CircleAlert, FileText, Paperclip, Play, RotateCcw, Square, Upload } from "lucide-react";
 import {
   ApiError,
-  MAX_TEXT_FILE_BYTES,
-  SUPPORTED_TEXT_EXTENSIONS,
+  MAX_MATERIAL_FILE_BYTES,
   isStartableTaskStatus,
   uuidSchema,
   type DraftFile,
@@ -650,7 +649,6 @@ function TaskDetailState({
                 ref={fileInput}
                 type="file"
                 className="sr-only"
-                accept={SUPPORTED_TEXT_EXTENSIONS.join(",")}
                 disabled={uploading || busy}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -669,10 +667,10 @@ function TaskDetailState({
               ))}
             </ul>
           ) : (
-            <p className="text-[12px] text-muted-foreground">Add text, Markdown, or code for this task to use.</p>
+            <p className="text-[12px] text-muted-foreground">Add a reference file for this task.</p>
           )}
           <small className="block text-[10.5px] text-muted-foreground">
-            Up to {Math.round(MAX_TEXT_FILE_BYTES / 1024)} KB. Added files become task context.
+            Any type up to {Math.round(MAX_MATERIAL_FILE_BYTES / 1024 / 1024)} MB. Binary files stay read-only.
           </small>
           {uploadError && <ErrorText role="alert">{uploadError}</ErrorText>}
         </section>

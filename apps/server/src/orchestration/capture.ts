@@ -1,5 +1,5 @@
 import {
-  isActiveRunStatus, planningContextSchema, workspaceFilePathSchema,
+  isActiveRunStatus, isEditableMaterial, planningContextSchema, workspaceFilePathSchema,
   type CollaborationService, type ContextManifest, type GitService,
   type MaterialService, type PlanningContext, type StartSnapshotService,
 } from '@app/contracts';
@@ -149,8 +149,13 @@ export class StartCapture {
 
     const captured: ContextManifest['materials'] = [];
     for (const row of rows) {
-      // Pre-validated by B04: UTF-8, under 1 MiB, no NUL bytes, text extension.
+      // Binary reference files remain attached for people, but cannot enter a
+      // model's text context.
       const { material, bytes } = await this.deps.materials.readSelected(workspaceId, row.id);
+      if (!isEditableMaterial(material)) {
+        omitted.push(`material:${material.id}`);
+        continue;
+      }
       let text: string;
       try { text = utf8.decode(bytes); }
       catch { throw new CaptureError('capture_failed'); }

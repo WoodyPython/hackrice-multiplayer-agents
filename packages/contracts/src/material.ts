@@ -32,9 +32,12 @@ export type Material = z.infer<typeof materialSchema>;
  */
 export const MAX_TEXT_FILE_BYTES = 1024 * 1024;
 
+/** Uploaded reference files may be binary and are kept immutable. */
+export const MAX_MATERIAL_FILE_BYTES = 10 * 1024 * 1024;
+
 /**
- * Section 3.1: UTF-8 Markdown, TXT, and selected code/text extensions. CSV is
- * text with no spreadsheet interface. Anything not here is rejected at upload.
+ * UTF-8 formats that may enter the shared editor and agent text context. Other
+ * extensions may still be uploaded, but remain immutable reference files.
  */
 export const SUPPORTED_TEXT_EXTENSIONS = [
   '.md',
@@ -57,6 +60,11 @@ export const SUPPORTED_TEXT_EXTENSIONS = [
 export function isSupportedTextExtension(filename: string): boolean {
   const lower = filename.toLowerCase();
   return SUPPORTED_TEXT_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+/** Only small, validated text materials can become collaborative drafts. */
+export function isEditableMaterial(material: Pick<Material, 'filename' | 'byteSize'>): boolean {
+  return isSupportedTextExtension(material.filename) && material.byteSize <= MAX_TEXT_FILE_BYTES;
 }
 
 // --- link ------------------------------------------------------------------

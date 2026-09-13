@@ -24,19 +24,22 @@ export class PresenceRegistry {
   constructor(private readonly now: () => number = Date.now) {}
 
   /** Returns true when the visible roster changed and is worth broadcasting. */
-  announce(workspaceId: string, entry: { presenceId: string; name: string; color: string; isHost?: boolean }): boolean {
+  announce(workspaceId: string, entry: { presenceId: string; name: string; color: string; isHost?: boolean; isAccount?: boolean }): boolean {
     let room = this.rooms.get(workspaceId);
     if (!room) this.rooms.set(workspaceId, (room = new Map()));
     const existing = room.get(entry.presenceId);
     // A repeat heartbeat with the same label is the common case and must not
     // wake every other browser in the room.
     if (existing) {
-      const unchanged = existing.name === entry.name && existing.color === entry.color && !!existing.isHost === !!entry.isHost;
+      const unchanged = existing.name === entry.name && existing.color === entry.color &&
+        !!existing.isHost === !!entry.isHost && !!existing.isAccount === !!entry.isAccount;
       existing.lastSeen = this.now();
       existing.name = entry.name;
       existing.color = entry.color;
       if (entry.isHost) existing.isHost = true;
       else delete existing.isHost;
+      if (entry.isAccount) existing.isAccount = true;
+      else delete existing.isAccount;
       return !unchanged;
     }
     if (room.size >= PRESENCE_MAX_PARTICIPANTS) return false;
@@ -45,6 +48,7 @@ export class PresenceRegistry {
       name: entry.name,
       color: entry.color,
       ...(entry.isHost ? { isHost: true } : {}),
+      ...(entry.isAccount ? { isAccount: true } : {}),
       since: this.now(),
       lastSeen: this.now(),
     });

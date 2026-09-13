@@ -154,6 +154,11 @@ function server(overrides: Record<string, (call: Call) => Response> = {}) {
           return json(task);
         case "GET /materials":
           return json({ materials: [material] });
+        case `GET /materials/${materialId}`:
+          return new Response("Uploaded brief contents", {
+            status: 200,
+            headers: { "Content-Type": "text/plain" },
+          });
         case "GET /drafts":
           return json({ drafts: [draft] });
         case "GET /files":
@@ -531,17 +536,13 @@ describe("files", () => {
     expect(screen.getByRole("link", { name: "All files" })).toBeTruthy();
   });
 
-  it("rejects a binary before the request leaves the browser", async () => {
+  it("uploads a binary file as an immutable material", async () => {
     const { transport, calls } = server();
     open(`/w/${workspaceId}/files`, transport);
 
     const picker = (await screen.findByLabelText(
       "Upload materials",
     )) as HTMLInputElement;
-    // `accept` is a filter, not a guarantee: the OS dialog lets anyone switch
-    // to "All files" and pick a PNG, and a drop bypasses it entirely. The file
-    // is set directly rather than through user.upload, which honours `accept`
-    // and would never reach the code under test.
     const png = new File([new Uint8Array([137, 80, 78, 71])], "diagram.png", {
       type: "image/png",
     });
@@ -551,14 +552,9 @@ describe("files", () => {
     });
     fireEvent.change(picker);
 
-    expect(await screen.findByRole("alert")).toBeTruthy();
-    // Section 3.4 rejects binary server-side too; catching it here is what
-    // stops the user finding out by dragging a PDF in and reading an error.
-    expect(
-      calls.some(
-        (call) => call.method === "POST" && call.url.endsWith("/materials"),
-      ),
-    ).toBe(false);
+    await waitFor(() => expect(
+      calls.some((call) => call.method === "POST" && call.url.endsWith("/materials")),
+    ).toBe(true));
   });
 
   it("uploads several selected materials as one batch", async () => {
@@ -691,6 +687,7 @@ describe("files", () => {
     open(`/w/${workspaceId}/files`, transport);
 
     await user.click(await screen.findByRole("button", { name: /brief\.md/ }));
+    expect(await screen.findByText("Uploaded brief contents")).toBeTruthy();
     await user.click(await screen.findByRole("button", { name: "Edit together" }));
 
     await waitFor(() => expect(calls.find((call) => call.url.endsWith("/drafts/open"))?.body).toEqual({

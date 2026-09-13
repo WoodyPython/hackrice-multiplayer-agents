@@ -39,6 +39,8 @@ export const participantSchema = z.object({
    * be worse than no marker at all (section 1.3).
    */
   isHost: z.boolean().optional(),
+  /** Server-derived marker for a browser with an authenticated account. */
+  isAccount: z.boolean().optional(),
 });
 export type Participant = z.infer<typeof participantSchema>;
 

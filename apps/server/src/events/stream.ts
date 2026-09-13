@@ -72,7 +72,8 @@ export function registerRefreshStream(app: FastifyInstance, stream: RefreshStrea
     // already resolved this caller's membership, so the roster reports what
     // they actually are rather than what they claimed.
     const isHost = request.auth?.access === 'owner';
-    if (presence.announce(workspaceId, { ...entry, isHost })) broadcast(workspaceId);
+    const isAccount = Boolean(request.auth?.account);
+    if (presence.announce(workspaceId, { ...entry, isHost, isAccount })) broadcast(workspaceId);
     return reply.code(200).send(presenceRosterSchema.parse({
       workspaceId, participants: presence.list(workspaceId),
     }));

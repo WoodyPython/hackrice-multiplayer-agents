@@ -104,7 +104,7 @@ export function registerErrorHandler(app: {
       error.code === 'FST_REQ_FILE_TOO_LARGE' ||
       error.code === 'FST_ERR_CTP_BODY_TOO_LARGE'
     ) {
-      const api = new ApiError('VALIDATION_FAILED', 'File exceeds the 1 MiB limit.');
+      const api = new ApiError('VALIDATION_FAILED', 'File exceeds the 10 MiB limit.');
       void reply.status(api.httpStatus).send(api.toBody());
       return;
     }

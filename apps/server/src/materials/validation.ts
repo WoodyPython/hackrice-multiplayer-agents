@@ -1,16 +1,16 @@
-import { ApiError, MAX_TEXT_FILE_BYTES, isSupportedTextExtension } from '@app/contracts';
+import {
+  ApiError,
+  MAX_MATERIAL_FILE_BYTES,
+  MAX_TEXT_FILE_BYTES,
+  isSupportedTextExtension,
+} from '@app/contracts';
 
 /**
  * Upload validation (design section 3.4).
  *
- * "Validate UTF-8, permitted file type, byte size, and path safety. Reject
- * binary data, NUL content, archives, symlinks, and special files."
- *
- * Materials are therefore TEXT ONLY. No images, no PDFs, no archives. That
- * follows from how they are consumed: agents read them through a scoped text
- * tool (section 8.6), previews render them as inert text (section 13.3), and
- * "use as editable document" turns one into a Yjs draft (section 3.2). None of
- * those has a meaningful binary path.
+ * Text materials retain the strict UTF-8 checks required by the editor and
+ * agent tools. Other file types are accepted as immutable reference files;
+ * they can be previewed or downloaded, but never opened as a Yjs draft.
  */
 
 /** Written as escapes, never as literals, so the source stays plain ASCII. */
@@ -19,7 +19,7 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 export interface ValidatedUpload {
   filename: string;
-  text: string;
+  text?: string;
   bytes: Uint8Array;
   byteSize: number;
   contentType: string;
@@ -47,15 +47,20 @@ export function validateFilename(raw: string): string {
   if (CONTROL_CHARS.test(filename)) {
     throw new ApiError('INVALID_PATH', 'Filename must not contain control characters.');
   }
-  if (!isSupportedTextExtension(filename)) {
-    throw new ApiError(
-      'VALIDATION_FAILED',
-      'Unsupported file type. Materials are UTF-8 text: Markdown, plain text, or a supported code format.',
-      { filename },
-    );
-  }
-
   return filename;
+}
+
+export function validateMaterialBytes(bytes: Uint8Array): number {
+  if (bytes.byteLength === 0) {
+    throw new ApiError('VALIDATION_FAILED', 'File is empty.');
+  }
+  if (bytes.byteLength > MAX_MATERIAL_FILE_BYTES) {
+    throw new ApiError('VALIDATION_FAILED', 'File exceeds the 10 MiB limit.', {
+      byteSize: bytes.byteLength,
+      limit: MAX_MATERIAL_FILE_BYTES,
+    });
+  }
+  return bytes.byteLength;
 }
 
 /**
@@ -77,6 +82,10 @@ export function validateTextBytes(bytes: Uint8Array): { text: string; byteSize: 
     });
   }
 
+  return { text: decodeUtf8Text(bytes), byteSize: bytes.byteLength };
+}
+
+function decodeUtf8Text(bytes: Uint8Array): string {
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -94,7 +103,7 @@ export function validateTextBytes(bytes: Uint8Array): { text: string; byteSize: 
     throw new ApiError('VALIDATION_FAILED', 'File contains NUL bytes.');
   }
 
-  return { text, byteSize: bytes.byteLength };
+  return text;
 }
 
 /**
@@ -105,7 +114,7 @@ export function validateTextBytes(bytes: Uint8Array): { text: string; byteSize: 
  * scripting, so the read route always responds as text/plain regardless of what
  * is stored here. This value is display metadata only.
  */
-export function recordedContentType(filename: string): string {
+export function recordedContentType(filename: string, reported?: string): string {
   const lower = filename.toLowerCase();
   if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'text/markdown';
   if (lower.endsWith('.csv')) return 'text/csv';
@@ -113,17 +122,36 @@ export function recordedContentType(filename: string): string {
   if (lower.endsWith('.html')) return 'text/html';
   if (lower.endsWith('.css')) return 'text/css';
   if (lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'application/yaml';
-  return 'text/plain';
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.svg')) return 'image/svg+xml';
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.ogg')) return 'audio/ogg';
+  if (lower.endsWith('.mp4')) return 'video/mp4';
+  if (lower.endsWith('.webm')) return 'video/webm';
+  if (lower.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (lower.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (lower.endsWith('.pptx')) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  if (lower.endsWith('.zip')) return 'application/zip';
+  if (reported && /^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/i.test(reported)) {
+    return reported.toLowerCase();
+  }
+  return 'application/octet-stream';
 }
 
-export function validateUpload(rawFilename: string, bytes: Uint8Array): ValidatedUpload {
+export function validateUpload(rawFilename: string, bytes: Uint8Array, reportedContentType?: string): ValidatedUpload {
   const filename = validateFilename(rawFilename);
-  const { text, byteSize } = validateTextBytes(bytes);
+  const byteSize = validateMaterialBytes(bytes);
+  const text = isSupportedTextExtension(filename) ? decodeUtf8Text(bytes) : undefined;
   return {
     filename,
-    text,
+    ...(text !== undefined ? { text } : {}),
     bytes,
     byteSize,
-    contentType: recordedContentType(filename),
+    contentType: recordedContentType(filename, reportedContentType),
   };
 }
