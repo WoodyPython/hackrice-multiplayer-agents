@@ -536,7 +536,7 @@ describe("files", () => {
     open(`/w/${workspaceId}/files`, transport);
 
     const picker = (await screen.findByLabelText(
-      "Upload a material",
+      "Upload materials",
     )) as HTMLInputElement;
     // `accept` is a filter, not a guarantee: the OS dialog lets anyone switch
     // to "All files" and pick a PNG, and a drop bypasses it entirely. The file
@@ -559,6 +559,97 @@ describe("files", () => {
         (call) => call.method === "POST" && call.url.endsWith("/materials"),
       ),
     ).toBe(false);
+  });
+
+  it("uploads several selected materials as one batch", async () => {
+    const user = userEvent.setup();
+    let uploadNumber = 0;
+    const { transport, calls } = server({
+      "POST /materials": () => {
+        uploadNumber += 1;
+        return json(
+          {
+            material: {
+              ...material,
+              id: `30000000-0000-4000-8000-000000000bb${uploadNumber + 1}`,
+              filename: uploadNumber === 1 ? "one.md" : "two.txt",
+              sha256: String(uploadNumber).repeat(64),
+            },
+            created: true,
+          },
+          201,
+        );
+      },
+    });
+    open(`/w/${workspaceId}/files`, transport);
+
+    const picker = (await screen.findByLabelText("Upload materials")) as HTMLInputElement;
+    expect(picker.multiple).toBe(true);
+    await user.upload(picker, [
+      new File(["one"], "one.md", { type: "text/markdown" }),
+      new File(["two"], "two.txt", { type: "text/plain" }),
+    ]);
+
+    expect(await screen.findByText("2 materials uploaded.")).toBeTruthy();
+    expect(
+      calls.filter((call) => call.method === "POST" && call.url.endsWith("/materials")),
+    ).toHaveLength(2);
+  });
+
+  it("recursively uploads a folder dropped on the existing upload control", async () => {
+    let uploadNumber = 0;
+    const { transport, calls } = server({
+      "POST /materials": () => {
+        uploadNumber += 1;
+        return json(
+          {
+            material: {
+              ...material,
+              id: `30000000-0000-4000-8000-000000000bc${uploadNumber}`,
+              filename: uploadNumber === 1 ? "brief.md" : "notes.txt",
+              sha256: String(uploadNumber + 2).repeat(64),
+            },
+            created: true,
+          },
+          201,
+        );
+      },
+    });
+    open(`/w/${workspaceId}/files`, transport);
+    const picker = await screen.findByLabelText("Upload materials");
+    const target = picker.closest("label")!;
+    const files = [
+      new File(["brief"], "brief.md", { type: "text/markdown" }),
+      new File(["notes"], "notes.txt", { type: "text/plain" }),
+    ];
+    const fileEntry = (file: File) => ({
+      isFile: true,
+      isDirectory: false,
+      file: (success: (value: File) => void) => success(file),
+    });
+    let read = false;
+    const directory = {
+      isFile: false,
+      isDirectory: true,
+      createReader: () => ({
+        readEntries: (success: (entries: unknown[]) => void) => {
+          success(read ? [] : files.map(fileEntry));
+          read = true;
+        },
+      }),
+    };
+
+    fireEvent.drop(target, {
+      dataTransfer: {
+        items: [{ webkitGetAsEntry: () => directory }],
+        files: [],
+      },
+    });
+
+    expect(await screen.findByText("2 materials uploaded.")).toBeTruthy();
+    expect(
+      calls.filter((call) => call.method === "POST" && call.url.endsWith("/materials")),
+    ).toHaveLength(2);
   });
 
   it("opens a shared document and lands in the editor for its task", async () => {
