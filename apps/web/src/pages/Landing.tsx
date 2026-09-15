@@ -117,6 +117,26 @@ export function Landing() {
     document.title = "CoFlow — a shared workspace for agent-assisted work";
   }, []);
 
+  /*
+    The links in the header and the footer travel to their section rather than
+    cutting to it, so a visitor keeps their bearings and sees what they passed
+    on the way.
+
+    This sits on the document element because the viewport is what scrolls
+    here, not `main`, and it is a rule for this page alone: it is put back on
+    the way out so the rest of the app keeps the jump it has. Anyone who has
+    asked for reduced motion still gets that jump, since the stylesheet's
+    reduced-motion rule is `!important` and outranks an inline style.
+  */
+  useEffect(() => {
+    const root = document.documentElement;
+    const previous = root.style.scrollBehavior;
+    root.style.scrollBehavior = "smooth";
+    return () => {
+      root.style.scrollBehavior = previous;
+    };
+  }, []);
+
   return (
     <main className="relative min-h-screen overflow-x-clip">
       <Backdrop />
