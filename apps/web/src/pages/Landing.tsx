@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
@@ -21,7 +21,6 @@ import {
   Search,
   Settings,
   ShieldCheck,
-  Sparkles,
   UserPlus,
   Users,
   type LucideIcon,
@@ -208,34 +207,157 @@ function SiteFooter() {
 
 /* ------------------------------------------------------------------ hero */
 
+type PillWord = { word: string; pill: string; dot: string };
+
+/**
+ * The word inside the headline's pill, and the colour it wears while it is
+ * there.
+ *
+ * Every entry has to finish "Make room for ___ work" as a sentence, so they
+ * are all adjectives, and they are kept to a similar length: the pill is sized
+ * to the longest of them, and a short word in a pill cut for a long one looks
+ * slack. The tones are the board's own status hues, so a headline that changes
+ * colour never leaves the palette the rest of the app uses.
+ *
+ * The list is typed as a non-empty one so the rotation always has a word to
+ * land on.
+ */
+const HEADLINE_WORDS: [PillWord, ...PillWord[]] = [
+  {
+    word: "good",
+    pill: "bg-navy-100 text-navy-800 dark:bg-navy-800/60 dark:text-navy-50",
+    dot: "bg-navy-600 dark:bg-navy-300",
+  },
+  {
+    word: "deep",
+    pill: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-50",
+    dot: "bg-emerald-600 dark:bg-emerald-400",
+  },
+  {
+    word: "real",
+    pill: "bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-50",
+    dot: "bg-sky-600 dark:bg-sky-400",
+  },
+  {
+    word: "bold",
+    pill: "bg-violet-100 text-violet-900 dark:bg-violet-900/50 dark:text-violet-50",
+    dot: "bg-violet-600 dark:bg-violet-400",
+  },
+  {
+    word: "great",
+    pill: "bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-50",
+    dot: "bg-amber-600 dark:bg-amber-400",
+  },
+];
+
+/** How long each word holds before the next one takes its place. */
+const WORD_HOLD_MS = 2400;
+
+/**
+ * The headline's pill: one word that changes, and a colour that changes with
+ * it.
+ *
+ * All the words live in the same grid cell, so the pill is as wide as the
+ * longest of them from the first paint and the sentence around it never
+ * reflows while a word swaps. The word on its way out leaves upward and the
+ * next arrives from below, so the motion always reads in one direction.
+ *
+ * The pill is an inline block rather than a flex line so that the baseline it
+ * offers the sentence is the word's own; a flex pill hands out its first
+ * item's baseline, which is the dot, and that drops the word below the rest of
+ * the headline.
+ *
+ * A screen reader gets the sentence once as plain text, because a heading
+ * that rewrites itself every couple of seconds is noise rather than
+ * information, and the rotation stops altogether for anyone who has asked for
+ * reduced motion.
+ */
+function HeadlineWord() {
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    const motion =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-reduced-motion: reduce)")
+        : null;
+
+    let timer: number | undefined;
+    const sync = () => {
+      window.clearInterval(timer);
+      timer = motion?.matches
+        ? undefined
+        : window.setInterval(
+            () => setIndex((i) => (i + 1) % HEADLINE_WORDS.length),
+            WORD_HOLD_MS,
+          );
+    };
+
+    sync();
+    motion?.addEventListener("change", sync);
+    return () => {
+      window.clearInterval(timer);
+      motion?.removeEventListener("change", sync);
+    };
+  }, []);
+
+  const { word, pill, dot } = HEADLINE_WORDS[index] ?? HEADLINE_WORDS[0];
+  /*
+    The rotation is strictly in order, so the word on its way out is always
+    the one before this one. Every other word waits below rather than above,
+    which is what keeps the swap moving one way instead of crossing over.
+  */
+  const leaving = (index + HEADLINE_WORDS.length - 1) % HEADLINE_WORDS.length;
+
+  return (
+    <span
+      className={cn(
+        "mx-[0.04em] inline-block rounded-full px-[0.42em] pb-[0.04em] align-baseline whitespace-nowrap transition-colors duration-500",
+        pill,
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "mr-[0.28em] inline-block size-[0.3em] rounded-full align-middle animate-pulse-dot transition-colors duration-500",
+          dot,
+        )}
+      />
+      <span className="sr-only">{word}</span>
+      <span aria-hidden="true" className="inline-grid justify-items-center align-baseline">
+        {HEADLINE_WORDS.map(({ word: candidate }, i) => (
+          <span
+            key={candidate}
+            className={cn(
+              "col-start-1 row-start-1 transition-[opacity,translate] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              i === index && "translate-y-0 opacity-100",
+              i !== index &&
+                (i === leaving
+                  ? "-translate-y-[0.45em] opacity-0"
+                  : "translate-y-[0.45em] opacity-0"),
+            )}
+          >
+            {candidate}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
 function Hero() {
   return (
-    <section className="mx-auto w-full max-w-6xl px-6 pt-16 pb-8 sm:pt-24">
+    <section className="mx-auto w-full max-w-6xl px-6 pt-20 pb-8 sm:pt-28">
       <div className="mx-auto flex max-w-3xl flex-col items-center text-center">
-        <span className="inline-flex items-center gap-2 rounded-full border border-navy-200/80 bg-navy-50 py-1 pr-3 pl-1.5 text-[12px] font-medium text-navy-800 animate-rise dark:border-navy-800 dark:bg-navy-950/60 dark:text-navy-200">
-          <span className="grid size-5 place-items-center rounded-full bg-navy-800 text-white dark:bg-navy-100 dark:text-navy-900">
-            <Sparkles className="size-3" aria-hidden="true" />
-          </span>
-          Parallel agents, with a human review before anything lands
-        </span>
-
-        <h1 className="mt-6 text-[44px] leading-[1.02] font-semibold tracking-[-0.045em] text-balance animate-rise [animation-delay:60ms] sm:text-[64px] lg:text-[76px]">
-          Make room for{" "}
-          <span className="mx-[0.04em] inline-flex items-center gap-[0.28em] rounded-full bg-navy-100 px-[0.42em] pb-[0.04em] align-baseline whitespace-nowrap text-navy-800 dark:bg-navy-800/60 dark:text-navy-100">
-            <span
-              aria-hidden="true"
-              className="size-[0.3em] rounded-full bg-navy-600 animate-pulse-dot dark:bg-navy-300"
-            />
-            good work
-          </span>
+        <h1 className="text-[44px] leading-[1.02] font-semibold tracking-[-0.045em] text-balance animate-rise sm:text-[64px] lg:text-[76px]">
+          Make room for <HeadlineWord /> work
         </h1>
 
-        <p className="mt-6 max-w-xl text-[16px] leading-relaxed text-muted-foreground text-pretty animate-rise [animation-delay:120ms] sm:text-[18px]">
+        <p className="mt-6 max-w-xl text-[16px] leading-relaxed text-muted-foreground text-pretty animate-rise [animation-delay:60ms] sm:text-[18px]">
           A shared workspace where your team shapes the task, parallel agents
           do the work, and every change is reviewed before it is applied.
         </p>
 
-        <div className="mt-8 flex flex-col items-center gap-3 animate-rise [animation-delay:180ms] sm:flex-row">
+        <div className="mt-8 flex flex-col items-center gap-3 animate-rise [animation-delay:120ms] sm:flex-row">
           <ButtonLink variant="primary" size="lg" to="/signin?mode=up" className="w-full sm:w-auto">
             Create your account
           </ButtonLink>
@@ -244,7 +366,7 @@ function Hero() {
             <ArrowRight aria-hidden="true" />
           </ButtonLink>
         </div>
-        <p className="mt-4 text-[12.5px] text-muted-foreground animate-rise [animation-delay:240ms]">
+        <p className="mt-4 text-[12.5px] text-muted-foreground animate-rise [animation-delay:180ms]">
           Been sent a workspace link? Open it — you can read along without an
           account.
         </p>
@@ -357,7 +479,7 @@ function WorkspacePreview() {
     <div
       role="img"
       aria-label="A CoFlow workspace. The task board shows a task agents are working on, a question waiting for an answer, and a change ready for review."
-      className="relative mx-auto mt-14 w-full max-w-6xl animate-rise [animation-delay:300ms] sm:mt-20"
+      className="relative mx-auto mt-14 w-full max-w-6xl animate-rise [animation-delay:240ms] sm:mt-20"
     >
       <div aria-hidden="true" className="contents">
         <div className="absolute inset-x-8 -top-6 h-40 rounded-full bg-navy-300/40 blur-3xl dark:bg-navy-600/25" />
