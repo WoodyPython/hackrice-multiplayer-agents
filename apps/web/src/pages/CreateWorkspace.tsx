@@ -1,17 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  ArrowLeft,
-  ArrowRight,
-  GitBranch,
-  MessagesSquare,
-  ShieldCheck,
-} from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { createWorkspaceRequestSchema } from "@app/contracts";
 import { useAuth } from "../auth-context";
 import { useBrowser } from "../browser-context";
 import { workspaceError } from "../workspace-api";
-import { workspace as sample } from "../fixtures";
 import { Wordmark } from "../components/Logo";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { AccountMenu } from "../components/AccountMenu";
@@ -24,32 +17,17 @@ import {
   Textarea,
 } from "../components/ui/field";
 import { Eyebrow } from "../components/ui/misc";
-
-const PILLARS = [
-  {
-    icon: MessagesSquare,
-    title: "Talk it through first",
-    body: "Posting a task opens a discussion. No agent runs, and nothing is spent, until someone presses Start.",
-  },
-  {
-    icon: GitBranch,
-    title: "Parallel agents, one result",
-    body: "Agents can work on different files at the same time. Their changes come together for you to review.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Nothing ships unreviewed",
-    body: "Look over the changes before saving them to your workspace. Anyone can mark a task complete or unmark it later.",
-  },
-];
+import { Landing, PILLARS } from "./Landing";
 
 /**
- * The landing page, and the create form.
+ * The create form, and the front door for anyone who is not signed in.
  *
- * One component for both because they are the same page with a different right
- * column: signed out it explains what this is and offers an account, signed in
- * it takes a name and makes the workspace. Splitting them would mean
- * maintaining the pitch twice and letting the two drift.
+ * Signed out, this renders the landing page: creating a workspace needs an
+ * account, since ownership is a membership row and an anonymous one could
+ * never be administered or invited into, so the form would only fail. The
+ * pitch itself lives in one place — `PILLARS`, in Landing — so what a visitor
+ * read on the way in is what they see again when they make their first
+ * workspace.
  */
 export function CreateWorkspace() {
   const { api } = useBrowser();
@@ -61,9 +39,7 @@ export function CreateWorkspace() {
   const [fields, setFields] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    document.title = account
-      ? "New workspace — CoFlow"
-      : "CoFlow — a shared workspace for agent-assisted work";
+    if (account) document.title = "New workspace — CoFlow";
   }, [account]);
 
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -101,6 +77,8 @@ export function CreateWorkspace() {
       setPending(false);
     }
   }
+
+  if (!account) return <Landing />;
 
   return (
     <main className="relative min-h-screen overflow-hidden">
@@ -166,35 +144,6 @@ export function CreateWorkspace() {
         </section>
 
         <div className="w-full">
-          {!account ? (
-            /*
-              Signed out, this column is the way in rather than the form. The
-              form would only fail: creating a workspace needs an account, since
-              ownership is a membership row and an anonymous one could never be
-              administered or invited into.
-            */
-            <div className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-lg sm:p-7">
-              <div className="space-y-1">
-                <h2 className="text-lg font-semibold tracking-tight">
-                  Start collaborating
-                </h2>
-                <p className="text-[13px] text-muted-foreground">
-                  One account, as many workspaces as you like. They follow you
-                  to any device you sign in from.
-                </p>
-              </div>
-              <ButtonLink variant="primary" size="lg" to="/signin?mode=up" className="w-full">
-                Create your account
-              </ButtonLink>
-              <ButtonLink size="lg" to="/signin" className="w-full">
-                Sign in
-              </ButtonLink>
-              <p className="text-[12px] text-muted-foreground">
-                Been sent a workspace link? Open it — you can read along without
-                an account, and sign in when someone invites you in.
-              </p>
-            </div>
-          ) : (
           <form
             className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-lg sm:p-7"
             onSubmit={create}
@@ -255,25 +204,14 @@ export function CreateWorkspace() {
               {pending ? "Creating workspace…" : "Create workspace"}
             </Button>
           </form>
-          )}
 
-          {account ? (
-            <Link
-              className="mt-4 inline-flex items-center gap-1.5 rounded-md px-1 text-[12.5px] text-muted-foreground transition-colors hover:text-foreground"
-              to="/"
-            >
-              <ArrowLeft className="size-3.5" aria-hidden="true" />
-              Back to your workspaces
-            </Link>
-          ) : (
-            <Link
-              className="mt-4 inline-flex items-center gap-1.5 rounded-md px-1 text-[12.5px] text-muted-foreground transition-colors hover:text-foreground"
-              to={`/demo/w/${sample.id}`}
-            >
-              Explore the sample workspace
-              <ArrowRight className="size-3.5" aria-hidden="true" />
-            </Link>
-          )}
+          <Link
+            className="mt-4 inline-flex items-center gap-1.5 rounded-md px-1 text-[12.5px] text-muted-foreground transition-colors hover:text-foreground"
+            to="/"
+          >
+            <ArrowLeft className="size-3.5" aria-hidden="true" />
+            Back to your workspaces
+          </Link>
         </div>
       </div>
     </main>
