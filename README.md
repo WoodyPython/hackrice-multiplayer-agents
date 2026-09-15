@@ -120,21 +120,6 @@ Tests use Vitest, Testing Library, scripted model responses, and real PostgreSQL
 
 Migrations are checksum-verified, with new numbered migrations for schema changes. Database types and shared contracts stay in sync.
 
-## Deploy on Render
-
-The checked-in [Render Blueprint](render.yaml) configures a single Node 22 service in Oregon, with a 512 MB runtime and a 1 GB persistent disk mounted at `/data`.
-
-1. Create the service from the Blueprint at the repository root.
-2. Set its Supabase database, Auth, Storage, browser-public values, and Gemini credentials.
-3. Use the Supabase **session pooler** connection on port `5432` for `DATABASE_URL`; migrations rely on session-level advisory locking.
-4. Keep the `materials` bucket private and retain the `/data` disk across deployments.
-
-Render builds the application, runs migrations before deployment, and starts the server with `npm start`. `/health` reports process health and its boot ID. `PUBLIC_APP_URL` defaults to Render's external URL unless explicitly set.
-
-Run **one process/instance per Git data root**. The runtime owns in-memory document rooms, scheduling coordination, and Git locks. On restart, it marks previous attempts interrupted and reconciles pending applies; interrupted agents are retried explicitly.
-
-See [Hosting and operations](docs/hosting.md) for the full deployment procedure.
-
 ## Troubleshooting
 
 | Symptom | Check |
