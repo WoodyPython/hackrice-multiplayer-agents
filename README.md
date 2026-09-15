@@ -1,117 +1,150 @@
-# Collaborative Task Workspace
+# [Open CoFlow → https://try-coflow.us/](https://try-coflow.us/)
 
-Anonymous collaborators create tasks, discuss requirements, and co-edit drafts.
-An explicit **Start** action freezes a snapshot and dispatches parallel Gemini
-agents. The workspace creator reviews the result and applies the changes.
-Anyone can mark a task complete from its details, or unmark it to return it
-to its previous status. Applied changes stay in Review until marked complete.
-Settled tasks can move back to Posted or In review from
-task details. Agent tasks can run again from review or completed;
-any running attempt can be stopped.
+# CoFlow
 
-Use the top bar to copy the workspace link or switch between light and dark.
-The first visit follows your system theme until you choose one. Board filters
-show only matching tasks and columns, and History details link back to History.
-Live updates include a short polling fallback for missed events.
+**A shared workspace for people and AI agents to get work done together.**
 
-**New here? Start with [SETUP.md](SETUP.md).** Working alongside other roles? [docs/](docs) has the changelog, the per-role interface notes, and the handoff procedure.
+CoFlow brings task planning, discussion, collaborative document editing, and AI-generated work into one place. Your team defines the outcome, supplies reference materials, and starts a task when it is ready. Gemini agents divide the work into assignments, produce changes, and ask questions when they need help. People review and apply the result to the workspace's approved files.
 
-Connecting the hosted services: [docs/supabase-setup.md](docs/supabase-setup.md).
+Use it to draft documents, turn notes into deliverables, or collaborate on code and text files with an explicit review step.
 
-Full specification: [hackrice-final-mvp-design.md](hackrice-final-mvp-design.md).
+## What you can do
 
-Role C integration: [model adapter](apps/server/src/models/README.md) and
-[C02 budgets/deadlines](apps/server/src/agents/README.md), plus
-[C03 planning](apps/server/src/orchestration/README.md),
-[C04 worker tools](apps/server/src/workers/README.md),
-[C05 scheduling](apps/server/src/orchestration/SCHEDULER.md),
-[C06 Start orchestration](apps/server/src/orchestration/START.md) and
-[C07 review evidence](apps/server/src/orchestration/REVIEW.md).
+- **Organize work:** create tasks with outcomes, acceptance criteria, selected inputs, and discussion.
+- **Collaborate live:** edit shared drafts with other members, see their cursors, and track who is present.
+- **Run a team of agents:** let an orchestrator assign work to analysts, writers, coders, and reviewers, with independent assignments running in parallel.
+- **Stay involved:** answer agent questions, stop an attempt, or retry using selected saved outputs.
+- **Review changes:** inspect diffs, resolve conflicts, and apply a specific candidate to approved files.
+- **Catch up:** use the Inbox for questions and blockers, the Agents page for progress, and Overview for activity briefings.
+- **Manage a team:** invite members, switch between workspaces, and archive or restore finished projects.
 
-## Getting started
+Posting a task does not start an agent. **Start** is an explicit action. Generated code is saved for review; the application does not execute it.
 
-```bash
-npm install
-cp .env.example .env
-npm run db:up          # local Postgres 15 in Docker on port 54322
-npm run db:migrate
-npm test
+## Using CoFlow
+
+### 1. Create a workspace and invite your team
+
+Create an account or sign in with your username and password, then create a workspace with a name and purpose. You become its **host**. Add workspace guidance in Settings to give collaborators and agents shared instructions.
+
+Invite people from the workspace's membership controls. An invitation grants membership when accepted; the ordinary workspace link lets someone view the work.
+
+| Role | What they can do |
+|---|---|
+| Viewer | Read shared tasks, files, and history; appear in presence |
+| Member | Create and run tasks, edit documents, answer questions, apply reviews, and mark tasks complete |
+| Host | Everything a member can do, plus manage settings, invitations, roles, and workspace lifecycle |
+
+Your home page lists workspaces you belong to and workspaces you have opened by link. Opening a link does not grant editing access.
+
+### 2. Add materials and define a task
+
+Upload reference files and select the materials, approved files, or drafts the task should use. Give the task a concrete outcome and acceptance criteria. Use its discussion to clarify requirements before starting.
+
+For example:
+
+> **Task:** Turn our product notes into an onboarding guide.
+>
+> **Outcome:** A guide a new teammate can follow without assistance.
+>
+> **Criteria:** Include setup, the first task, and troubleshooting. Flag missing information.
+>
+> **Output:** `documents/onboarding.md`
+
+Material uploads can be up to **10 MiB**. Supported UTF-8 text files up to **1 MiB** can become collaborative drafts. Binary files can be stored as references, but there is no general PDF, Office, or image-to-text extraction pipeline for agents.
+
+### 3. Edit drafts together
+
+Open a task's drafts to work in the shared editor. Changes synchronize between connected collaborators, and the editor shows connection and save status. Markdown documents support a preview.
+
+You can also edit files through a manual-edit task and send those changes through review without running agents.
+
+### 4. Start and follow the work
+
+Press **Start** when the requirements and inputs are ready. CoFlow captures the task requirements, guidance, discussion cutoff, and file versions for that attempt.
+
+The orchestrator creates a dependency plan. Workers read their assigned context and produce scoped changes. Use the task details or **Agents** page to follow progress. If an agent needs clarification, answer its question in the task; **Inbox** also surfaces questions that need attention.
+
+Each agent execution has a ten-minute deadline. Each logical task-agent pair has a 256,000-token budget that carries across retries. Human-answer waits and provider backoff count toward the execution deadline.
+
+If an attempt fails or is interrupted, inspect the saved work and retry. A retry can reuse selected checkpoint files. Use a fresh Start when you need a new assignment plan. You can stop a running attempt from its task details.
+
+### 5. Review, apply, and complete
+
+When work is ready, open its review and inspect the changed files. CoFlow combines human edits, agent output, and current approved content. Resolve any conflicts before applying; if the sources change, refresh the stale review.
+
+You can request an AI assessment of the current candidate. Applying the review publishes that exact candidate to the workspace's approved files.
+
+For agent tasks, mark the task complete after checking the applied result. Applying a manual-edit task completes it automatically. Agent tasks can also be started again for further revisions.
+
+### 6. Return to the workspace
+
+- **Overview:** activity and “Catch me up” briefings with links to the underlying work. If AI summarization is unavailable, a factual activity recap is shown.
+- **Inbox:** unanswered questions, reviews, conflicts, and unsuccessful attempts requiring attention.
+- **Files:** approved content, shared drafts, and uploaded materials.
+- **Agents and History:** execution records, saved changes, and previous work.
+
+Hosts can archive a workspace to retain its contents while making it read-only, then restore it later. Members can leave; the last host must retain or transfer administration. Permanent deletion removes the workspace's database content, Git repository, and uploaded objects.
+
+## How it works
+
+| Layer | Technology and responsibility |
+|---|---|
+| Frontend | TypeScript, React 19, React Router, Vite, Tailwind CSS, Lucide icons |
+| Shared editor | Monaco Editor, Yjs, and `y-monaco`; document synchronization over WebSockets |
+| API and runtime | Node.js 22, Fastify, Zod validation, and shared TypeScript contracts |
+| Application database | PostgreSQL through Kysely and `pg`; stores tasks, accounts, runs, document state, events, and reviews |
+| Authentication | Supabase Auth verifies identities; the server issues HttpOnly session cookies and enforces workspace membership |
+| Uploaded materials | Private Supabase Storage, with a local-disk fallback |
+| AI | Google Gemini through `@google/genai`; custom planning, scheduling, tool validation, accounting, and retry logic |
+| Versioned files | Local Git repositories, separate human/worker branches, checkpoints, merges, and guarded publication to approved `main` |
+| Live workspace updates | Same-origin Server-Sent Events for refresh hints and presence, backed by polling; a Supabase Realtime adapter also exists but is not wired into the default runtime |
+| Hosting | One Render Node service with a persistent disk, backed by Supabase services |
+
+Start captures immutable input versions, so an attempt can be traced to the context it used. Workers can write only their assigned paths. A human applies the reviewed result; agent completion alone does not publish approved files.
+
+### Project layout
+
+```text
+apps/web/             React interface and browser tests
+apps/server/          API, authentication, agents, collaboration, Git, and recovery
+packages/contracts/   Shared schemas, types, statuses, and service interfaces
+db/migrations/        Forward-only PostgreSQL migrations
+docs/                 Detailed setup, architecture, and operations notes
+render.yaml           Render deployment Blueprint
+docker-compose.yml    Local PostgreSQL service
 ```
 
-`npm test` creates and migrates a separate `app_test` database, so it never
-touches development data.
+## Verification
 
-For daily work, run only the affected tests:
+Tests use Vitest, Testing Library, scripted model responses, and real PostgreSQL/Git integration tests. They cover permissions, task execution, collaboration, review, publication, and recovery. Ordinary test runs do not make live Gemini calls.
 
-```bash
-npm run test:unit                         # model adapters and plan validation; no database
-npm run test --workspace @app/server -- test/tasks.test.ts test/events.test.ts
-npm run test:retry --workspace @app/server # retry integration, including real Git
-npm run test --workspace @app/web          # browser components and collaboration
-```
+Migrations are checksum-verified, with new numbered migrations for schema changes. Database types and shared contracts stay in sync.
 
-Every test command incrementally builds the shared contracts before collection,
-including after a pull. `npm test` remains the comprehensive check. Database
-suites share one test database: use one invocation for several files, and never
-run two database test commands concurrently. Each invocation resets it once.
+## Deploy on Render
 
-After configuring `.env` and applying migrations, run `npm run dev` for the
-server, or `npm run build && npm start` for the compiled runtime. The API listens
-on port 3000 by default; `GET /health` returns its process boot ID.
+The checked-in [Render Blueprint](render.yaml) configures a single Node 22 service in Oregon, with a 512 MB runtime and a 1 GB persistent disk mounted at `/data`.
 
-Git repositories persist under `GIT_DATA_ROOT` (default: repository-root
-`data/`, regardless of the launch directory). Run exactly one runtime process
-against a data root. Production must mount persistent storage there; see the
-[D01 runtime notes](SETUP.md#d01-runtime).
+1. Create the service from the Blueprint at the repository root.
+2. Set its Supabase database, Auth, Storage, browser-public values, and Gemini credentials.
+3. Use the Supabase **session pooler** connection on port `5432` for `DATABASE_URL`; migrations rely on session-level advisory locking.
+4. Keep the `materials` bucket private and retain the `/data` disk across deployments.
 
-## Layout
+Render builds the application, runs migrations before deployment, and starts the server with `npm start`. `/health` reports process health and its boot ID. `PUBLIC_APP_URL` defaults to Render's external URL unless explicitly set.
 
-| Path | Owner | Contents |
-|---|---|---|
-| `packages/contracts` | B | Zod schemas, status enums, error codes, service interfaces. Consumed by every role |
-| `db/migrations` | B | Plain SQL, forward-only, immutable once applied |
-| `apps/server/src/db` | B | Kysely client, hand-written schema types, migration runner |
-| `apps/server/src/{http,config.ts}` | B | Non-listening application factory and configuration |
-| `apps/server/src/index.ts` | D | Process startup, shared HTTP server, and shutdown |
-| `apps/server/src/{workspaces,tasks,discussion,materials,events}` | B | Application data APIs |
-| `apps/server/src/{models,orchestration,agents,workers}` | C | Gemini adapter, budgets, planning, worker tools and dispatch |
-| `apps/server/src/{git,collaboration,reviews,recovery}` | D | Git service, Yjs rooms, review and apply |
-| `apps/web` | A | React frontend |
+Run **one process/instance per Git data root**. The runtime owns in-memory document rooms, scheduling coordination, and Git locks. On restart, it marks previous attempts interrupted and reconciles pending applies; interrupted agents are retried explicitly.
 
-## Working with the schema
+See [Hosting and operations](docs/hosting.md) for the full deployment procedure.
 
-`db/migrations` is the source of truth. The runner records a checksum per file
-and refuses to run if an already-applied file was edited, so everyone's database
-matches. Fix forward with a new numbered file; to start clean locally:
+## Troubleshooting
 
-```bash
-npm run db:reset && npm run db:migrate
-```
+| Symptom | Check |
+|---|---|
+| Sign-in or account creation fails | Check Supabase URL/public keys on both server and browser, plus the server secret key for registration; redeploy after browser configuration changes |
+| Uploads fail | Confirm that the configured private Storage bucket exists and the server key can access it |
+| A task ends with `model_configuration` | Check `GEMINI_API_KEY` and the configured model profiles |
+| Provider requests fail | Check server logs, the key's access to the selected models, and provider quota |
+| You can view but cannot edit | Accept a membership invitation; an ordinary workspace link grants viewing access |
+| A review becomes stale | Refresh it and inspect the new candidate before applying |
+| An attempt was interrupted | Inspect saved outputs and retry from the task details |
 
-Three files move together and must change in the same commit:
-
-- `db/migrations/0001_enums.sql`
-- `packages/contracts/src/enums.ts`
-- `apps/server/src/db/types.ts`
-
-`apps/server/test/schema.test.ts` asserts the database enums match the contracts
-package, so drift fails a test rather than surfacing at runtime.
-
-## Contracts are additive-only
-
-Until integration, add to `packages/contracts` freely but do not rename or
-remove anything. A rename there breaks three branches at once.
-
-## Conventions that are load-bearing
-
-- **Every uniqueness rule lives in the database.** Partial unique indexes and
-  composite foreign keys, not application checks. Services translate a `23505`
-  on a named constraint into the matching error code from design section 12.5,
-  rather than doing a racy `SELECT` then `INSERT`.
-- **IDs are UUIDs and are validated at every route boundary.** They end up in
-  filesystem paths and Yjs room names; a caller must never be able to pass a
-  path segment.
-- **The owner key is the only privilege boundary.** It travels in the
-  `x-owner-key` header, is compared against a stored SHA-256 in constant time,
-  and is never logged. An `isOwner` flag in a request body is never accepted.
-- **Never commit `.env`.**
+Further reading: [Account troubleshooting](docs/auth-debugging.md), [model adapter](apps/server/src/models/README.md), [orchestration](apps/server/src/orchestration/README.md), and [review evidence](apps/server/src/orchestration/REVIEW.md).
